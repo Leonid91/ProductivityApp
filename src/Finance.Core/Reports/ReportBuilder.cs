@@ -75,15 +75,20 @@ public static class ReportBuilder
                 col.Spacing(16);
                 col.Item().Element(c => OperationsTable(c, main, s.Currency, dateFormat, "No other operations in this period."));
                 if (recurringOut.Count > 0)
-                    col.Item().Element(c => Section(c, "Recurring payments & subscriptions", s.RecurringExpenses, s,
+                    col.Item().Element(c => Section(c, "Recurring payments & subscriptions", s.RecurringExpenses, s, Palette.NegativeSoft,
                         x => OperationsTable(x, recurringOut, s.Currency, dateFormat, "", frequency: true)));
                 if (recurringIn.Count > 0)
-                    col.Item().Element(c => Section(c, "Regular income", s.RecurringIncome, s,
+                    col.Item().Element(c => Section(c, "Regular income", s.RecurringIncome, s, Palette.PositiveSoft,
                         x => OperationsTable(x, recurringIn, s.Currency, dateFormat, "", frequency: true)));
                 if (o.Transfers == "separate" && s.Movements.Count > 0)
-                    col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s,
+                    col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s, Palette.Surface,
                         x => MovementsTable(x, s.Movements, s.Currency, dateFormat)));
-                col.Item().ShowEntire().Element(c => Totals(c, s));
+                col.Item().ShowEntire().Column(t =>
+                {
+                    t.Spacing(8);
+                    t.Item().Element(c => Totals(c, s));
+                    t.Item().Element(c => Ratios(c, s));
+                });
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per category", o.PieShowAll ? s.ByCategory : s.CategoryPie, s.Currency));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", o.PieShowAll ? s.ByBrand : s.BrandPie, s.Currency));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Recurring payments & subscriptions",
@@ -91,7 +96,7 @@ public static class ReportBuilder
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Regular income",
                     o.PieShowAll ? s.RecurringIncomePie : SummaryService.FoldPie(s.RecurringIncomePie), s.Currency, "No regular income in this period."));
                 col.Item().ShowEntire().Element(c => SeriesBlock(c, s));
-                if (s.Flows.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
+                if (s.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
             });
 
             page.Footer().PaddingTop(10).Row(row =>
@@ -113,7 +118,7 @@ public static class ReportBuilder
     private static string Day(string iso, string dateFormat) => Formatting.FormatDate(DateOnly.ParseExact(iso, "yyyy-MM-dd"), dateFormat);
 
     /// <summary>A titled table with its total in the corner.</summary>
-    private static void Section(IContainer container, string title, decimal total, PeriodSummary s, Action<IContainer> body)
+    private static void Section(IContainer container, string title, decimal total, PeriodSummary s, string tint, Action<IContainer> body)
     {
         container.Column(col =>
         {
@@ -121,7 +126,9 @@ public static class ReportBuilder
             {
                 r.RelativeItem().Text(title).SemiBold().FontSize(10.5f);
                 var per = s.Granularity == Granularity.Month ? "this month" : s.Granularity == Granularity.Year ? "this year" : "over the period";
-                r.AutoItem().Text($"Total {per}: {Formatting.Money(total, s.Currency)}").SemiBold().FontSize(9).EnableFontFeature("tnum");
+                // The total sits on a faint tint: red for payments, green for income.
+                r.AutoItem().Background(tint).CornerRadius(5).PaddingHorizontal(7).PaddingVertical(3)
+                    .Text($"Total {per}: {Formatting.Money(total, s.Currency)}").SemiBold().FontSize(9).EnableFontFeature("tnum");
             });
             col.Item().Element(body);
         });
@@ -228,6 +235,30 @@ public static class ReportBuilder
         });
     }
 
+    private static string Percent(double? share) => share is { } v ? $"{Math.Round(v * 100):0}%" : "-";
+
+    /// <summary>The subscription burden (recurring payments, rent excluded) and the share of earnings spent.</summary>
+    private static void Ratios(IContainer container, PeriodSummary s)
+    {
+        container.Row(row =>
+        {
+            row.Spacing(8);
+            void Stat(string label, string value, string note)
+            {
+                row.RelativeItem().Background(Palette.Surface).CornerRadius(8).Padding(12).Column(c =>
+                {
+                    c.Item().Text(label).FontSize(8).FontColor(Palette.InkSecondary);
+                    c.Item().PaddingTop(3).Text(value).FontSize(15).SemiBold().EnableFontFeature("tnum");
+                    c.Item().PaddingTop(2).Text(note).FontSize(7.5f).FontColor(Palette.InkMuted);
+                });
+            }
+            Stat("Recurring payments, rent excluded", Formatting.Money(s.RecurringWithoutHousing, s.Currency),
+                $"{Percent(s.RecurringWithoutHousingShare)} of earnings");
+            Stat("Expenses / earnings", Percent(s.ExpensesShare),
+                $"{Formatting.Money(s.Expenses, s.Currency)} spent of {Formatting.Money(s.Earnings, s.Currency)} earned");
+        });
+    }
+
     private static void PieBlock(IContainer container, string title, List<Slice> slices, string currency, string empty = "No expenses in this period.")
     {
         container.Border(0.6f).BorderColor(Palette.Hairline).CornerRadius(8).Padding(12).Column(col =>
@@ -278,20 +309,20 @@ public static class ReportBuilder
 
     private static void FlowBlock(IContainer container, PeriodSummary s)
     {
-        var rows = Math.Max(s.Flows.Select(f => f.From).Distinct().Count(), s.Flows.Select(f => f.To).Distinct().Count());
-        var height = Math.Max(150, rows * 52);
+        // The diagram keeps its proportions: drawn 508 points wide, as tall as its layout asks.
+        var height = s.Diagram.Height * 508 / s.Diagram.Width;
         container.Border(0.6f).BorderColor(Palette.Hairline).CornerRadius(8).Padding(12).Column(col =>
         {
             col.Item().Text("Money moved: transfers, card payments & investments").SemiBold().FontSize(10);
             col.Item().PaddingTop(3).Text(t =>
             {
                 t.DefaultTextStyle(x => x.FontSize(7.5f).FontColor(Palette.InkSecondary));
-                t.Span("■ ").FontColor(Palette.Accent);
+                t.Span("→ ").FontColor(Palette.Accent).SemiBold();
                 t.Span("between your accounts      ");
-                t.Span("■ ").FontColor(Palette.OutsideInk);
-                t.Span("to or from the outside (accounts not imported, other people, investments)");
+                t.Span("→ ").FontColor(Palette.OutsideInk).SemiBold();
+                t.Span("to or from outside the app (accounts not imported, other people, investments)");
             });
-            col.Item().PaddingTop(8).Height(height).Svg(size => SvgCharts.FlowDiagram(s.Flows, size.Width, size.Height, s.Currency));
+            col.Item().PaddingTop(8).Height((float)height).Svg(size => SvgCharts.FlowDiagram(s.Diagram, size.Width, size.Height, s.Currency));
         });
     }
 

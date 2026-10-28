@@ -20,6 +20,20 @@ public enum AccountKind { Bank = 0, CreditCard = 1, Savings = 2 }
 /// </summary>
 public enum BankingSystem { NorthAmerica = 0, France = 1 }
 
+/// <summary>Account types named the way the banking system names them (same words as the interface).</summary>
+public static class AccountTypes
+{
+    public static string Label(AccountKind kind, BankingSystem system) => (kind, system) switch
+    {
+        (AccountKind.CreditCard, BankingSystem.France) => "Deferred debit card",
+        (AccountKind.Savings, BankingSystem.France) => "Savings (livret)",
+        (AccountKind.Bank, BankingSystem.France) => "Current account",
+        (AccountKind.CreditCard, _) => "Credit card",
+        (AccountKind.Savings, _) => "Savings account",
+        _ => "Chequing account",
+    };
+}
+
 public sealed class Account
 {
     public long Id { get; set; }

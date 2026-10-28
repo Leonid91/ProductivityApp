@@ -14,23 +14,27 @@ import { FlowChart } from './FlowChart'
 import { MovementsTable } from './MovementsTable'
 import { TransactionTable } from './TransactionTable'
 
-function Stat({ label, value, color, bg }: { label: string; value: string; color?: string; bg: string }) {
+function Stat({ label, value, color, bg, note }: { label: string; value: string; color?: string; bg: string; note?: string }) {
   return (
     <Box data-stat={label} sx={{ flex: '1 1 180px', borderRadius: '18px', bgcolor: bg, px: 2.5, py: 2 }}>
       <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 520 }}>{label}</Typography>
       <Typography className="tnum" sx={{ fontSize: 26, fontWeight: 650, letterSpacing: '-0.02em', mt: 0.25, color }}>{value}</Typography>
+      {note && <Typography variant="body2" color="text.secondary" className="tnum" sx={{ mt: 0.25 }}>{note}</Typography>}
     </Box>
   )
 }
 
+const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`)
+
 /** A table under its own heading, with the total of the period on the right. */
-function Section({ icon, title, total, note, children, id }: { icon: ReactNode; title: string; total: string; note?: string; children: ReactNode; id: string }) {
+function Section({ icon, title, total, note, children, id, tint }: { icon: ReactNode; title: string; total: string; note?: string; children: ReactNode; id: string; tint: string }) {
   return (
     <Box data-section={id} sx={{ mt: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.25, mb: 1, flexWrap: 'wrap' }}>
         <Box sx={{ alignSelf: 'center', display: 'flex', color: 'text.secondary' }}>{icon}</Box>
         <Typography variant="h6" sx={{ flex: 1 }}>{title}</Typography>
-        <Typography className="tnum" sx={{ fontWeight: 650 }}>{total}</Typography>
+        {/* The total on a faint tint: red for payments, green for income. */}
+        <Typography data-section-total className="tnum" sx={{ fontWeight: 650, bgcolor: tint, borderRadius: '10px', px: 1.25, py: 0.4 }}>{total}</Typography>
         {note && <Typography variant="body2" color="text.secondary" className="tnum">{note}</Typography>}
       </Box>
       {children}
@@ -122,12 +126,12 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
           <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} empty="No other operations in this period" />
 
           {recurringOut.length > 0 && (
-            <Section id="recurring-payments" icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
+            <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
               <TransactionTable transactions={recurringOut} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} frequency />
             </Section>
           )}
           {recurringIn.length > 0 && (
-            <Section id="regular-income" icon={<Payments />} title="Regular income" total={`${money(summary.recurringIncome, currency)} ${per}`} note={monthly(summary.recurringIncome)}>
+            <Section id="regular-income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Regular income" total={`${money(summary.recurringIncome, currency)} ${per}`} note={monthly(summary.recurringIncome)}>
               <TransactionTable transactions={recurringIn} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} frequency />
             </Section>
           )}
@@ -158,6 +162,20 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
             <Stat label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
             <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
           </Box>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
+            <Stat
+              label="Recurring payments, rent excluded"
+              value={money(summary.recurringWithoutHousing, currency)}
+              note={`${percent(summary.recurringWithoutHousingShare)} of earnings ${per}`}
+              bg="surface.sunken"
+            />
+            <Stat
+              label="Expenses / earnings"
+              value={percent(summary.expensesShare)}
+              note={`${money(summary.expenses, currency)} spent of ${money(summary.earnings, currency)} earned`}
+              bg="surface.sunken"
+            />
+          </Box>
 
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5, alignItems: 'flex-start' }}>
             <ExpensePie title="Expenses per category" slices={fold(summary.byCategory)} currency={currency} />
@@ -171,7 +189,7 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
             <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
           </Box>
           <Box sx={{ mt: 1.5 }}>
-            <FlowChart flows={summary.flows} currency={currency} />
+            <FlowChart diagram={summary.diagram} flows={summary.flows} currency={currency} />
           </Box>
 
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2.5 }}>

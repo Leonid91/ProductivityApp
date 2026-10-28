@@ -47,7 +47,7 @@ internal sealed class AppServices : IDisposable
         Directory.CreateDirectory(dataDir);
         LogPath = Path.Combine(dataDir, "app.log");
         Db = new Database(Path.Combine(dataDir, "finances.db"));
-        Summaries = new SummaryService(Db);
+        Summaries = new SummaryService(Db, () => System);
         Transactions = new TransactionService(Db, () => Setting("currency"), () => System);
         Imports = new ImportService(Db, () => Setting("currency"), Transactions) { BankFocus = () => Setting("bankFocus") };
         if (Db.GetSetting("rulesVersion") != RulesVersion)

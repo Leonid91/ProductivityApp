@@ -43,6 +43,14 @@ public sealed class PeriodSummary
     /// <summary>Transfers, card payments and investments, each movement once, from one account to another.</summary>
     public required List<MovementView> Movements { get; init; }
     public required List<Flow> Flows { get; init; }
+    /// <summary>The money-moved diagram, laid out (same drawing on screen and in the PDF).</summary>
+    public required FlowDiagram Diagram { get; init; }
+    /// <summary>Recurring payments without housing (rent, mortgage): the subscription burden.</summary>
+    public required decimal RecurringWithoutHousing { get; init; }
+    /// <summary><see cref="RecurringWithoutHousing"/> as a share of earnings; null without earnings.</summary>
+    public double? RecurringWithoutHousingShare { get; init; }
+    /// <summary>Expenses as a share of earnings; null without earnings.</summary>
+    public double? ExpensesShare { get; init; }
     /// <summary>"day", "month" or "year": what one bar of <see cref="Series"/> stands for.</summary>
     public required string SeriesUnit { get; init; }
 }
@@ -51,7 +59,7 @@ public sealed record MonthEntry(int Year, int Month, int Count);
 
 public sealed record PeriodIndex(List<MonthEntry> Months, List<int> Years, List<string> Currencies, string? First, string? Last);
 
-public sealed class SummaryService(Database db)
+public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSystem = null)
 {
     /// <summary>Pies show this many slices, the rest folds into "Other".</summary>
     public const int PieSlices = 5;
@@ -75,7 +83,7 @@ public sealed class SummaryService(Database db)
         var recurring = RecurringDetector.Detect(everything);
         var byId = everything.ToDictionary(t => t.Id);
         var accounts = db.Accounts().ToDictionary(a => a.Id);
-        var movements = Movements.Build(txs, byId, accounts);
+        var movements = Movements.Build(txs, byId, accounts, bankingSystem?.Invoke() ?? BankingSystem.NorthAmerica);
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var toIso = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -106,6 +114,7 @@ public sealed class SummaryService(Database db)
         var recurringOut = txs.Where(t => t.Amount < 0 && recurring.ContainsKey(t.Id)).ToList();
         var recurringIn = txs.Where(t => t.Amount > 0 && recurring.ContainsKey(t.Id)).ToList();
         var recurringOutTotal = -recurringOut.Sum(t => t.Amount);
+        var burden = -recurringOut.Where(t => t.CategoryId != "housing").Sum(t => t.Amount);
         var recurringInTotal = recurringIn.Sum(t => t.Amount);
         var recurringOutSlices = Slices(recurringOut.GroupBy(t => t.Brand, StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, g.First().Brand, -g.Sum(t => t.Amount))), recurringOutTotal);
         var recurringInSlices = Slices(recurringIn.GroupBy(t => t.Brand, StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, g.First().Brand, g.Sum(t => t.Amount))), recurringInTotal);
@@ -138,6 +147,10 @@ public sealed class SummaryService(Database db)
             RecurringIncomePie = recurringInSlices,
             Movements = movements,
             Flows = Movements.Flows(movements),
+            Diagram = FlowDiagram.Build(movements),
+            RecurringWithoutHousing = burden,
+            RecurringWithoutHousingShare = earnings > 0 ? (double)(burden / earnings) : null,
+            ExpensesShare = earnings > 0 ? (double)(expenses / earnings) : null,
         };
     }
 

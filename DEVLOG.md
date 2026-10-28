@@ -141,3 +141,18 @@
   ("A. Sample (not imported)"), instead of "Outside (not imported)"; From and To wrap instead of being cut.
 - The category of a transfer can be changed from the transfers table, with the same question (this operation only or
   every one of that name): a friend paying you back set to "Refunds" then counts in earnings.
+
+## October 28th, 2026 - Money-moved diagram with arrows, subscription burden, spending ratio - Commit 6
+
+### Changed
+- Money-moved diagram redrawn: each account is a box with its name, then its type ("Chequing — Chequing account");
+  everything outside the app is one dashed blob listing who is behind it (investments, people, unnamed transfers)
+  with what was sent and received; one arrow per direction between two places, pointing where the money went,
+  as thick as the amount, with the amount on it. Laid out once by the engine, so the screen and the PDF match.
+- Transfers table: the type of each account under its name in From and To.
+- Recurring payments total on a faint red tint, regular income total on a faint green tint (screen and PDF).
+
+### Added
+- "Recurring payments, rent excluded" (the subscription burden) for the month, year or range, and its share of
+  earnings.
+- "Expenses / earnings": the share of what came in that was spent.

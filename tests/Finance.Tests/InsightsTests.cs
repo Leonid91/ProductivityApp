@@ -86,6 +86,12 @@ public class InsightsTests
             Assert.Equal(sum.Transactions.Where(t => t.Recurring is not null && t.Amount > 0).Sum(t => t.Amount), sum.RecurringIncome);
             Assert.Equal(sum.RecurringExpenses, sum.RecurringExpensePie.Sum(x => x.Amount));
             Assert.Equal(4201.10m, sum.RecurringIncome);
+            // Subscription burden: the recurring payments without the rent, and its share of earnings.
+            var rent = -sum.Transactions.Where(t => t.Recurring is not null && t.CategoryId == "housing").Sum(t => t.Amount);
+            Assert.True(rent > 0);
+            Assert.Equal(sum.RecurringExpenses - rent, sum.RecurringWithoutHousing);
+            Assert.Equal((double)(sum.RecurringWithoutHousing / sum.Earnings), sum.RecurringWithoutHousingShare!.Value, 9);
+            Assert.Equal((double)(sum.Expenses / sum.Earnings), sum.ExpensesShare!.Value, 9);
         }
         var year = s.Summaries.Summarize(new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31), Granularity.Year, "CAD");
         Assert.Equal(4 * 4201.10m, year.RecurringIncome);
@@ -122,6 +128,23 @@ public class InsightsTests
         Assert.Equal(sum.Movements.Sum(m => m.Amount), sum.Flows.Sum(f => f.Amount));
         // The card purchase of the same amount stays spending.
         Assert.Equal(80.10m, sum.Expenses);
+        // Diagram: one box per own account (name, then type), one outside blob naming who is behind it,
+        // one arrow per direction between two places, each with its head pointing at the destination.
+        var d = sum.Diagram;
+        Assert.Equal(["Card", "Chequing", "Savings"], d.Nodes.Where(n => !n.Outside).Select(n => n.Name).Order());
+        Assert.Equal("Credit card", d.Nodes.Single(n => n.Name == "Card").Type);
+        Assert.Equal("Savings account", d.Nodes.Single(n => n.Name == "Savings").Type);
+        var blob = d.Nodes.Single(n => n.Outside);
+        Assert.Contains(blob.Parties, x => x.Name == "Investments" && x.Sent == 500m);
+        Assert.Equal(535m, blob.Parties.Sum(x => x.Sent));
+        Assert.Equal(sum.Flows.Select(f => (f.FromOutside ? "out" : f.From, f.ToOutside ? "out" : f.To)).Distinct().Count(), d.Arrows.Count);
+        Assert.Contains(d.Arrows, a => a.From == "Chequing" && a.To == "Savings" && a.Amount == 250m && !a.Outside);
+        Assert.Contains(d.Arrows, a => a.From == "Chequing" && a.To == FlowDiagram.OutsideId && a.Amount == 535m && a.Outside);
+        Assert.All(d.Arrows, a => { Assert.StartsWith("M", a.Path); Assert.EndsWith("Z", a.Head); });
+        Assert.All(d.Nodes, n => Assert.InRange(n.Y + n.H / 2, 0, d.Height));
+        Assert.Equal("Chequing account", sum.Movements.First(m => m.From == "Chequing").FromType);
+        Assert.Null(sum.Movements.First(m => m.ToOutside).ToType);
+
         var pdf = ReportBuilder.Build(sum, "DD month YYYY", new DateTime(2026, 4, 1));
         Assert.True(pdf.Length > 1000);
     }

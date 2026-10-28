@@ -66,7 +66,16 @@ export interface MovementView {
   toOutside: boolean
   editId: number
   otherId: number | null
+  /** Type of an own account ("Chequing account"); null for the outside. */
+  fromType: string | null
+  toType: string | null
 }
+
+export interface OutsideParty { name: string; sent: number; received: number }
+/** An account box (centre x, y; size w, h) or the outside blob (an ellipse) with who is behind it. */
+export interface DiagramNode { id: string; name: string; type: string; outside: boolean; x: number; y: number; w: number; h: number; parties: OutsideParty[] }
+export interface DiagramArrow { from: string; to: string; amount: number; count: number; outside: boolean; path: string; head: string; width: number; labelX: number; labelY: number }
+export interface FlowDiagram { width: number; height: number; nodes: DiagramNode[]; arrows: DiagramArrow[] }
 
 export interface Flow { from: string; to: string; amount: number; fromOutside: boolean; toOutside: boolean; count: number }
 
@@ -95,6 +104,12 @@ export interface PeriodSummary {
   recurringIncomePie: Slice[]
   movements: MovementView[]
   flows: Flow[]
+  diagram: FlowDiagram
+  /** Recurring payments without housing (rent, mortgage). */
+  recurringWithoutHousing: number
+  /** Shares of earnings; null without earnings. */
+  recurringWithoutHousingShare: number | null
+  expensesShare: number | null
 }
 
 export interface MonthEntry { year: number; month: number; count: number }

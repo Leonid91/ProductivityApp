@@ -16,6 +16,7 @@ public static class Palette
     public const string Gold = "#9a6a00";
     /// <summary>Money going to or coming from outside the imported accounts.</summary>
     public const string OutsideInk = "#c4551f";
+    public const string OutsideSoft = "#fdf1ea";
     public const string NegativeSoft = "#fcf3f2";
     public const string PositiveSoft = "#f1f8f1";
     public const string NegativeStrong = "#f6d9d6";

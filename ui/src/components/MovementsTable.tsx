@@ -42,9 +42,13 @@ export function MovementsTable({ movements, transactions, currency, paged, onEdi
   const pages = Math.max(1, Math.ceil(rows.length / pageSize))
   const visible = paged ? rows.slice((Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize) : rows
 
-  const place = (name: string, outside: boolean) => (
-    <Typography variant="body2" title={name} sx={{ overflowWrap: "anywhere", fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : 'text.primary' }}>{name}</Typography>
+  const place = (name: string, outside: boolean, type: string | null) => (
+    <Box sx={{ minWidth: 0 }}>
+      <Typography variant="body2" title={name} sx={{ overflowWrap: 'anywhere', fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : 'text.primary', lineHeight: 1.3 }}>{name}</Typography>
+      {type && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.2 }}>{type}</Typography>}
+    </Box>
   )
+
 
   return (
     <Box>
@@ -83,9 +87,9 @@ export function MovementsTable({ movements, transactions, currency, paged, onEdi
                     <Typography variant="body2" noWrap title={tx?.rawLabel ?? m.label}>{m.label}</Typography>
                   </Box>
                 </TableCell>
-                <TableCell>{place(m.from, m.fromOutside)}</TableCell>
+                <TableCell>{place(m.from, m.fromOutside, m.fromType)}</TableCell>
                 <TableCell padding="none"><East sx={{ fontSize: 16, color: 'text.disabled', display: 'block' }} /></TableCell>
-                <TableCell>{place(m.to, m.toOutside)}</TableCell>
+                <TableCell>{place(m.to, m.toOutside, m.toType)}</TableCell>
                 <TableCell align="right" className="tnum" sx={{ fontWeight: 560, whiteSpace: 'nowrap' }}>{money(m.amount, currency)}</TableCell>
                 <TableCell padding="none" align="right">
                   {tx && (

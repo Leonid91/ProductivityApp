@@ -90,10 +90,13 @@ public static class RecurringDetector
 
 // ==================================================================================================== movements
 
-/// <summary>One movement of money, seen once: from an account (or the outside) to another account (or the outside).</summary>
+/// <summary>
+/// One movement of money, seen once: from an account (or the outside) to another account (or the outside).
+/// FromType / ToType name the type of an own account ("Chequing account"); null for the outside.
+/// </summary>
 public sealed record MovementView(
     string Date, string CategoryId, string Label, decimal Amount, string From, string To, bool FromOutside, bool ToOutside,
-    long EditId, long? OtherId);
+    long EditId, long? OtherId, string? FromType = null, string? ToType = null);
 
 /// <summary>The total moved from one place to another over a period.</summary>
 public sealed record Flow(string From, string To, decimal Amount, bool FromOutside, bool ToOutside, int Count);
@@ -116,7 +119,16 @@ public static class Movements
     /// are imported) make one line; a half alone goes to or comes from the outside: an account that is not imported,
     /// another person, an investment account.
     /// </summary>
-    public static List<MovementView> Build(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts)
+    public static List<MovementView> Build(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts,
+        BankingSystem system = BankingSystem.NorthAmerica)
+    {
+        string? Type(string name, bool outside) => outside ? null
+            : accounts.Values.FirstOrDefault(a => a.Name == name) is { } a ? AccountTypes.Label(a.Kind, system) : null;
+        var raw = BuildRaw(period, linked, accounts);
+        return raw.Select(m => m with { FromType = Type(m.From, m.FromOutside), ToType = Type(m.To, m.ToOutside) }).ToList();
+    }
+
+    private static List<MovementView> BuildRaw(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts)
     {
         var list = new List<MovementView>();
         var seen = new HashSet<long>();

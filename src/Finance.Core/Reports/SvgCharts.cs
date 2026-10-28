@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text;
 using ProductivityApp.Finance.Services;
-using Flow = ProductivityApp.Finance.Services.Flow;
 
 namespace ProductivityApp.Finance.Reports;
 
@@ -92,33 +91,50 @@ public static class SvgCharts
     }
 
     /// <summary>
-    /// Where the money moved: sources on the left (accounts, or the outside), destinations on the right, one band per
-    /// flow as wide as its amount. Blue between the person's own accounts, orange to or from the outside.
+    /// The money-moved diagram as laid out by the engine (<see cref="Services.FlowDiagram"/>): account boxes (name, then
+    /// type), the outside blob with who is behind it, and arrows pointing where the money went with their amounts.
+    /// Blue between own accounts, orange to or from the outside.
     /// </summary>
-    public static string FlowDiagram(IReadOnlyList<Flow> flows, double width, double height, string currency)
+    public static string FlowDiagram(Services.FlowDiagram d, double width, double height, string currency)
     {
-        var layout = FlowLayout.Compute(flows, width, height);
         var sb = new StringBuilder();
-        sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(width)}\" height=\"{F(height)}\" viewBox=\"0 0 {F(width)} {F(height)}\" font-family=\"Inter\">");
-        foreach (var b in layout.Bands)
+        sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(width)}\" height=\"{F(height)}\" viewBox=\"0 0 {F(d.Width)} {F(d.Height)}\" preserveAspectRatio=\"xMidYMid meet\" font-family=\"Inter\">");
+        foreach (var n in d.Nodes.Where(n => n.Outside))
         {
-            var color = b.Flow.FromOutside || b.Flow.ToOutside ? Palette.OutsideInk : Palette.Accent;
-            var xm = (layout.LeftX + layout.RightX) / 2;
-            sb.Append($"<path d=\"M{F(layout.LeftX)} {F(b.Y0)} C{F(xm)} {F(b.Y0)} {F(xm)} {F(b.Y1)} {F(layout.RightX)} {F(b.Y1)} L{F(layout.RightX)} {F(b.Y1 + b.Thickness)} C{F(xm)} {F(b.Y1 + b.Thickness)} {F(xm)} {F(b.Y0 + b.Thickness)} {F(layout.LeftX)} {F(b.Y0 + b.Thickness)} Z\" fill=\"{color}\" fill-opacity=\"0.32\"/>");
-            // The amount sits where the band leaves its source: bands never overlap there.
-            if (b.Thickness >= 9)
-                sb.Append($"<text x=\"{F(layout.LeftX + 6)}\" y=\"{F(b.Y0 + b.Thickness / 2 + 2.5)}\" font-size=\"7\" fill=\"{Palette.InkSecondary}\" text-anchor=\"start\">{Escape(Formatting.Money(b.Flow.Amount, currency))}</text>");
+            sb.Append($"<ellipse cx=\"{F(n.X)}\" cy=\"{F(n.Y)}\" rx=\"{F(n.W / 2)}\" ry=\"{F(n.H / 2)}\" fill=\"{Palette.OutsideSoft}\" stroke=\"{Palette.OutsideInk}\" stroke-width=\"1.5\" stroke-dasharray=\"6 4\"/>");
+            var y = n.Y - (n.Parties.Count * 20 + 34) / 2.0 + 12;
+            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(y)}\" font-size=\"15\" font-weight=\"700\" fill=\"{Palette.OutsideInk}\" text-anchor=\"middle\">{Escape(n.Name)}</text>");
+            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(y + 17)}\" font-size=\"11.5\" fill=\"{Palette.InkMuted}\" text-anchor=\"middle\">{Escape(n.Type)}</text>");
+            y += 17;
+            foreach (var p in n.Parties)
+            {
+                y += 20;
+                var parts = new List<string>();
+                if (p.Sent > 0) parts.Add("sent " + Formatting.Money(p.Sent, currency));
+                if (p.Received > 0) parts.Add("received " + Formatting.Money(p.Received, currency));
+                sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(y)}\" font-size=\"12.5\" fill=\"{Palette.InkSecondary}\" text-anchor=\"middle\"><tspan font-weight=\"600\" fill=\"{Palette.Ink}\">{Escape(p.Name)}</tspan>: {Escape(string.Join(", ", parts))}</text>");
+            }
         }
-        foreach (var n in layout.Nodes)
+        foreach (var a in d.Arrows)
         {
-            var color = n.Outside ? Palette.OutsideInk : Palette.Ink;
-            var x = n.Left ? layout.LeftX - FlowLayout.NodeWidth : layout.RightX;
-            sb.Append($"<rect x=\"{F(x)}\" y=\"{F(n.Y)}\" width=\"{F(FlowLayout.NodeWidth)}\" height=\"{F(Math.Max(1.5, n.Height))}\" rx=\"1.5\" fill=\"{color}\"/>");
-            var tx = n.Left ? x - 5 : x + FlowLayout.NodeWidth + 5;
-            var anchor = n.Left ? "end" : "start";
-            var cy = n.Y + Math.Max(1.5, n.Height) / 2;
-            sb.Append($"<text x=\"{F(tx)}\" y=\"{F(cy - 1)}\" font-size=\"7.5\" font-weight=\"600\" fill=\"{color}\" text-anchor=\"{anchor}\">{Escape(n.Name)}</text>");
-            sb.Append($"<text x=\"{F(tx)}\" y=\"{F(cy + 8)}\" font-size=\"7\" fill=\"{Palette.InkMuted}\" text-anchor=\"{anchor}\">{Escape(Formatting.Money(n.Total, currency))}</text>");
+            var color = a.Outside ? Palette.OutsideInk : Palette.Accent;
+            sb.Append($"<path d=\"{a.Path}\" fill=\"none\" stroke=\"{color}\" stroke-opacity=\"0.8\" stroke-width=\"{F(a.Width)}\" stroke-linecap=\"round\"/>");
+        }
+        // Arrowheads on top of every line, so none is hidden.
+        foreach (var a in d.Arrows)
+            sb.Append($"<path d=\"{a.Head}\" fill=\"{(a.Outside ? Palette.OutsideInk : Palette.Accent)}\" stroke=\"#ffffff\" stroke-width=\"1\"/>");
+        foreach (var a in d.Arrows)
+        {
+            var text = Formatting.Money(a.Amount, currency);
+            var w = text.Length * 7.4 + 14;
+            sb.Append($"<rect x=\"{F(a.LabelX - w / 2)}\" y=\"{F(a.LabelY - 11)}\" width=\"{F(w)}\" height=\"22\" rx=\"11\" fill=\"#ffffff\" stroke=\"{(a.Outside ? Palette.OutsideInk : Palette.Accent)}\" stroke-width=\"1\"/>");
+            sb.Append($"<text x=\"{F(a.LabelX)}\" y=\"{F(a.LabelY + 4.5)}\" font-size=\"12.5\" font-weight=\"600\" fill=\"{Palette.Ink}\" text-anchor=\"middle\">{Escape(text)}</text>");
+        }
+        foreach (var n in d.Nodes.Where(n => !n.Outside))
+        {
+            sb.Append($"<rect x=\"{F(n.X - n.W / 2)}\" y=\"{F(n.Y - n.H / 2)}\" width=\"{F(n.W)}\" height=\"{F(n.H)}\" rx=\"12\" fill=\"#ffffff\" stroke=\"{Palette.Ink}\" stroke-width=\"1.5\"/>");
+            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(n.Y - 3)}\" font-size=\"15\" font-weight=\"700\" fill=\"{Palette.Ink}\" text-anchor=\"middle\">{Escape(n.Name)}</text>");
+            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(n.Y + 16)}\" font-size=\"12\" fill=\"{Palette.InkMuted}\" text-anchor=\"middle\">{Escape(n.Type)}</text>");
         }
         sb.Append("</svg>");
         return sb.ToString();
