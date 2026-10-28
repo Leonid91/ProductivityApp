@@ -37,7 +37,8 @@ public class ServiceTests
     private static async Task<CommitResult> Import(TempStore s, Spec spec, string name, long? account = null)
     {
         var draft = await s.Imports.ParseAsync(name, Render(spec));
-        return s.Imports.Commit(new CommitRequest(draft.Id, account, null, spec.Currency, draft.Parse.Kind, []));
+        var kind = spec.Style == Style.EnglishCard ? AccountKind.CreditCard : AccountKind.Bank;
+        return s.Imports.Commit(new CommitRequest(draft.Id, account, null, spec.Currency, account is null ? kind : null, []));
     }
 
     [Fact]
@@ -75,7 +76,7 @@ public class ServiceTests
         // A second statement repeating the last week of the first one.
         var overlap = spec with { Transactions = spec.Transactions.Where(t => t.Date.Day >= 24).ToList(), Opening = 0 };
         var draft = await s.Imports.ParseAsync("b.pdf", Render(overlap));
-        s.Imports.SetAccount(draft.Id, first.AccountId);
+        s.Imports.Choose(draft.Id, first.AccountId, null);
         Assert.All(draft.Rows, r => Assert.True(r.Duplicate));
         var r2 = s.Imports.Commit(new CommitRequest(draft.Id, first.AccountId, null, "EUR", AccountKind.Bank, []));
         Assert.Equal(0, r2.Added);

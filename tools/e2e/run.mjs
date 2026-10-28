@@ -84,13 +84,34 @@ try {
   check('draft re-read with the template', await p.eval(`document.querySelector('[data-draft^="Mutuelle"]').innerText.includes('Balanced to the cent')`))
 
   // ---- save every draft (PDFs first; the CSVs of the same BNC accounts must then bring nothing new)
+  // Nothing may be pre-selected: every file waits for its account, and cannot be saved before.
+  check('no account chosen for any file', await p.eval(`[...document.querySelectorAll('[data-draft]')].every(c => c.innerText.includes('Choose the account'))`))
+  check('import impossible before choosing', await p.eval(`[...document.querySelectorAll('[data-draft]')].every(c => [...c.querySelectorAll('button')].filter(b => b.innerText.startsWith('Import')).every(b => b.disabled))`))
+  // The account (and type) of each file, chosen in the interface as a person would.
+  const groupOf = (f) => f.startsWith('BNC ') ? 'BNC ' + (f.includes('highinvacc') ? 'savings' : f.includes('debit') ? 'chequing' : 'card') : f.replace(/ \d{4}-\d{2}.*$/, '')
+  const typeOf = (f) => f.includes('highinvacc') ? 'Savings account' : f.startsWith('Fabrikam') || (f.startsWith('BNC ') && !f.includes('debit')) ? 'Credit card' : 'Chequing account'
+  const created = new Map()
   let csvNothingNew = 0
   for (let guard = 0; guard < 60; guard++) {
     const left = await p.eval(`document.querySelectorAll('[data-draft]').length`)
     if (left === 0) break
+    const file = await p.eval(`(() => { const cards = [...document.querySelectorAll('[data-draft]')]; return (cards.find(c => !c.dataset.draft.endsWith('.csv')) ?? cards[0]).dataset.draft })()`)
+    const sel = `[data-draft="${file.replace(/"/g, '\\"')}"]`
+    const group = groupOf(file)
+    await p.mouseClick(`${sel} [role=combobox]`, 0)
+    if (created.has(group)) {
+      await p.clickText(created.get(group), { selector: '[role=option]', partial: true })
+    } else {
+      await p.clickText('New account', { selector: '[role=option]' })
+      await sleep(300)
+      await p.mouseClick(`${sel} [role=combobox]`, 1)
+      await p.clickText(typeOf(file), { selector: '[role=option]' })
+    }
+    await p.waitFor(`[...document.querySelector('${sel}').querySelectorAll('button')].some(b => b.innerText.startsWith('Import') && !b.disabled) || document.querySelector('${sel}').innerText.includes('already imported')`, 20000, 'chosen ' + file)
+    await sleep(300)
+    const before = (await p.engine('accounts.list')).map((a) => a.id)
     const pick = await p.eval(`(() => {
-      const cards = [...document.querySelectorAll('[data-draft]')]
-      const card = cards.find(c => !c.dataset.draft.endsWith('.csv')) ?? cards[0]
+      const card = document.querySelector('${sel}')
       const buttons = [...card.querySelectorAll('button')]
       const imp = buttons.find(b => b.innerText.startsWith('Import') && !b.disabled)
       if (imp) { imp.click(); return 'import' }
@@ -99,6 +120,10 @@ try {
     })()`)
     if (pick === 'nothing-new') csvNothingNew++
     await p.waitFor(`document.querySelectorAll('[data-draft]').length < ${left}`, 20000, 'draft saved')
+    if (!created.has(group)) {
+      const added = (await p.engine('accounts.list')).find((a) => !before.includes(a.id))
+      if (added) created.set(group, added.name)
+    }
   }
   check('BNC CSVs after their PDFs bring nothing new', csvNothingNew === 3, `${csvNothingNew}/3`)
   await sleep(600)
@@ -122,6 +147,19 @@ try {
   await sleep(600)
   await shot(p, '09-periods-daily-chart.png')
 
+  // transfers, card payments and investments: in their own folded table
+  await p.eval(`document.querySelector('section[data-period="2025-08-01"]').scrollIntoView({ block: 'start' })`)
+  await p.waitFor(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordion-root') !== null`, 20000, 'transfers section')
+  const mainHasMoves = await p.eval(`[...document.querySelector('section[data-period="2025-08-01"] table').querySelectorAll('tbody tr')].some(r => /Credit card payment|Transfer between accounts/.test(r.innerText))`)
+  check('transfers kept out of the main table, folded apart', !mainHasMoves)
+  await p.eval(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordionSummary-root').click()`)
+  await sleep(700)
+  await p.eval(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordion-root').scrollIntoView({ block: 'center' })`)
+  await sleep(400)
+  await shot(p, '09b-transfers-folded-table.png')
+  const newest = await p.eval(`(() => { const d = [...document.querySelector('section[data-period="2025-08-01"] table').querySelectorAll('tbody tr td:first-child')].map(x => x.innerText); return d.length > 1 && new Date(d[0]) >= new Date(d[d.length - 1]) })()`)
+  check('newest first by default', newest)
+
   // date format menu
   await p.scrollMain(0)
   await p.clickText('Date', { selector: 'section th button' })
@@ -143,6 +181,10 @@ try {
   // correcting a category teaches the dictionary
   const before = await p.eval(`document.querySelector('section tbody tr td:nth-child(3)').innerText`)
   await p.click('section tbody tr td:nth-child(2) button', 0)
+  await sleep(300)
+  await p.eval(`[...document.querySelectorAll('.MuiListSubheader-root')].find(e => /exceptional/i.test(e.innerText)).scrollIntoView({ block: 'start' })`)
+  await sleep(300)
+  await shot(p, '12a-category-picker.png')
   await p.clickText('Entertainment', { selector: '[role=menuitem]' })
   await p.waitFor(`document.body.innerText.includes('Saved for')`, 10000, 'learned toast')
   await shot(p, '12-learned.png')
@@ -185,7 +227,7 @@ try {
   await shot(p, '18-brands.png')
   await p.clickText('Settings', { selector: 'nav button' })
   await sleep(800)
-  await p.mouseClick('[role=combobox]', 3)
+  await p.mouseClick('[role=combobox]', 4)
   await sleep(300)
   await shot(p, '19-settings-bank-menu.png')
   await p.clickText('Banque Nationale (BNC)', { selector: '[role=option]', partial: true })

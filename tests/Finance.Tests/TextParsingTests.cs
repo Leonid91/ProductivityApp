@@ -14,7 +14,7 @@ public class AmountParserTests
     [InlineData("−12,34", 12.34, SignMarker.Minus)]
     [InlineData("12.34-", 12.34, SignMarker.Minus)]
     [InlineData("(12.34)", 12.34, SignMarker.Minus)]
-    [InlineData("+45,00", 45.00, SignMarker.Plus)]
+    [InlineData("+46,00", 46.00, SignMarker.Plus)]
     [InlineData("12.34 CR", 12.34, SignMarker.Credit)]
     [InlineData("12.34CR", 12.34, SignMarker.Credit)]
     [InlineData("12.34 DR", 12.34, SignMarker.Debit)]

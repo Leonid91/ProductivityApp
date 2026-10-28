@@ -19,7 +19,7 @@ internal static class Api
         {
             version = typeof(Api).Assembly.GetName().Version?.ToString(3),
             settings = s.Settings(),
-            categories = Categories.All.Select(c => new { c.Id, c.Name, kind = c.Kind, c.Icon }),
+            categories = Categories.All.Select(c => new { c.Id, c.Name, kind = c.Kind, c.Icon, c.Group }),
             dateFormats = Formatting.DateFormats,
             ocrAvailable = Finance.Pdf.PdfReader.OcrAvailable,
             nonClientRegions,
@@ -120,15 +120,15 @@ internal static class Api
             var draft = await s.Imports.ParseAsync(Path.GetFileName(name), bytes);
             return DraftView(draft, s);
         });
-        b.Register("import.setAccount", p =>
+        // The person says which account the file belongs to (or the type of a new account); nothing is guessed.
+        b.RegisterBackground("import.choose", p =>
         {
             var id = p.Get<Guid>("draftId");
-            s.Imports.SetAccount(id, p.Opt<long?>("accountId"));
-            return DraftView(s.Imports.Get(id)!, s);
+            return Task.FromResult<object?>(DraftView(s.Imports.Choose(id, p.Opt<long?>("accountId"), p.Opt<AccountKind?>("kind")), s));
         });
         b.Register("import.commit", p => s.Imports.Commit(new CommitRequest(
             p.Get<Guid>("draftId"), p.Opt<long?>("accountId"), p.Opt<string>("newAccountName"),
-            p.Get<string>("currency"), p.Get<AccountKind>("kind"), p.Opt<List<DraftEdit>>("edits") ?? [])));
+            p.Get<string>("currency"), p.Opt<AccountKind?>("kind"), p.Opt<List<DraftEdit>>("edits") ?? [])));
         b.Register("import.discard", p => { s.Imports.Discard(p.Get<Guid>("draftId")); return null; });
         b.RegisterBackground("import.page", async p =>
         {
@@ -247,7 +247,8 @@ internal static class Api
             periodStart = p.PeriodStart?.ToString("yyyy-MM-dd"),
             periodEnd = p.PeriodEnd?.ToString("yyyy-MM-dd"),
             p.Currency,
-            kind = p.Kind,
+            kind = d.Kind,
+            accountId = d.AccountId,
             p.Bank,
             p.Last4,
             p.Method,
@@ -259,7 +260,6 @@ internal static class Api
             p.DateOrder,
             rowChecks = p.RowBalanceChecks,
             rowMismatches = p.RowBalanceMismatches,
-            d.SuggestedAccountId,
             defaultAccountName = ImportService.DefaultAccountName(p),
             template = d.Template,
             columns = p.Columns,

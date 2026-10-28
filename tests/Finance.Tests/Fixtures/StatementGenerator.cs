@@ -69,7 +69,7 @@ public static class StatementGenerator
         ("CB BOULANGERIE PAUL", 3.40m, 12.90m, null),
         ("CB FNAC", 14.99m, 189.00m, null),
         ("PRLV SEPA FREE MOBILE", 19.99m, 19.99m, null),
-        ("RETRAIT DAB", 20.00m, 100.00m, null),
+        ("RETRAIT DAB", 20.00m, 110.00m, null),
         ("CB RATP NAVIGO", 86.40m, 86.40m, null),
         ("CB PHARMACIE CENTRALE", 7.80m, 42.15m, null),
         ("FRAIS TENUE DE COMPTE", 2.50m, 2.50m, null),

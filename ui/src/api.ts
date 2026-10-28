@@ -8,9 +8,9 @@ export type KindHint = 'auto' | 'bank' | 'creditCard'
 export type AccountKind = 'bank' | 'creditCard' | 'savings'
 export type Verification = 'verified' | 'mismatch' | 'noBalances' | 'noTransactions'
 
-export interface Category { id: string; name: string; kind: CategoryKind; icon: string }
+export interface Category { id: string; name: string; kind: CategoryKind; icon: string; group: string | null }
 
-export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'bankingSystem' | 'bankFocus', string> & Record<string, string>
+export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'bankingSystem' | 'bankFocus' | 'periodTransfers' | 'calendarHideCardPayments', string> & Record<string, string>
 
 export interface BankProfile { id: string; name: string; proven: boolean }
 
@@ -34,7 +34,7 @@ export interface InitInfo {
 }
 
 export interface Slice { key: string; label: string; amount: number; share: number }
-export interface Bar { key: string; label: string; expenses: number; earnings: number }
+export interface Bar { key: string; label: string; expenses: number; earnings: number; moved: number; cardPaid: number }
 
 export interface TransactionView {
   id: number
@@ -106,7 +106,7 @@ export interface Draft {
   periodStart: string | null
   periodEnd: string | null
   currency: string
-  kind: AccountKind
+  kind: AccountKind | null
   bank: string | null
   last4: string | null
   method: string
@@ -118,7 +118,8 @@ export interface Draft {
   dateOrder: DateOrder
   rowChecks: number
   rowMismatches: number
-  suggestedAccountId: number | null
+  /** Account and type chosen by the person; null until they choose. */
+  accountId: number | null
   defaultAccountName: string
   template: BankTemplate | null
   columns: TemplateColumn[]
@@ -198,8 +199,8 @@ export const api = {
   imports: {
     parseFile: (path: string) => invoke<Draft>('import.parseFile', { path }),
     parseBytes: (name: string, base64: string) => invoke<Draft>('import.parseBytes', { name, base64 }),
-    setAccount: (draftId: string, accountId: number | null) => invoke<Draft>('import.setAccount', { draftId, accountId }),
-    commit: (p: { draftId: string; accountId: number | null; newAccountName: string | null; currency: string; kind: AccountKind; edits: DraftEdit[] }) =>
+    choose: (draftId: string, accountId: number | null, kind: AccountKind | null) => invoke<Draft>('import.choose', { draftId, accountId, kind }),
+    commit: (p: { draftId: string; accountId: number | null; newAccountName: string | null; currency: string; kind: AccountKind | null; edits: DraftEdit[] }) =>
       invoke<CommitResult>('import.commit', p),
     discard: (draftId: string) => invoke<null>('import.discard', { draftId }),
     page: (draftId: string, page: number, width: number) => invoke<PageImage>('import.page', { draftId, page, width }),

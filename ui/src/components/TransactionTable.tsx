@@ -99,7 +99,7 @@ export function TransactionTable({ transactions, currency, paged, onEdit }: {
   const { settings, setSetting, info, category, notify, fail, dataChanged } = useApp()
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
   const [catMenu, setCatMenu] = useState<HTMLElement | null>(null)
-  const [newestFirst, setNewestFirst] = useState(false)
+  const [newestFirst, setNewestFirst] = useState(true)
   const [filter, setFilter] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(1)
   const pageSize = 25
@@ -204,13 +204,13 @@ export function TransactionTable({ transactions, currency, paged, onEdit }: {
           </MenuItem>
         ))}
         <MenuDivider />
-        <MenuItem onClick={() => { setNewestFirst(false); setDateMenu(null) }}>
-          <ListItemText>Oldest first</ListItemText>
-          {!newestFirst && <Check fontSize="small" sx={{ color: 'primary.main', ml: 2 }} />}
-        </MenuItem>
         <MenuItem onClick={() => { setNewestFirst(true); setDateMenu(null) }}>
           <ListItemText>Newest first</ListItemText>
           {newestFirst && <Check fontSize="small" sx={{ color: 'primary.main', ml: 2 }} />}
+        </MenuItem>
+        <MenuItem onClick={() => { setNewestFirst(false); setDateMenu(null) }}>
+          <ListItemText>Oldest first</ListItemText>
+          {!newestFirst && <Check fontSize="small" sx={{ color: 'primary.main', ml: 2 }} />}
         </MenuItem>
       </Menu>
 

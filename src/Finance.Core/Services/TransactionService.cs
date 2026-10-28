@@ -25,8 +25,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         db.InTransaction(() =>
         {
             db.UpdateTransaction(t);
-            if (t.MerchantKey.Length > 0) db.UpsertKeyRule(t.MerchantKey, t.Brand, categoryId);
-            db.UpsertBrandCategory(t.Brand, categoryId);
+            Learn(t, t.Brand, categoryId);
         });
         return ReapplyRules();
     }
@@ -43,12 +42,12 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         db.InTransaction(() =>
         {
             db.UpdateTransaction(t);
-            if (t.MerchantKey.Length > 0) db.UpsertKeyRule(t.MerchantKey, brand, t.CategorySource == ValueSource.User ? t.CategoryId : null);
+            Learn(t, brand, t.CategorySource == ValueSource.User ? t.CategoryId : null);
         });
         // The brand may carry a learned category.
         if (t.CategorySource != ValueSource.User)
         {
-            var c = NewClassifier().Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount, t.BankCategory);
+            var c = NewClassifier().Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount, t.BankCategory, KindOf(t.AccountId));
             if (c.CategoryId != t.CategoryId) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; db.UpdateTransaction(t); }
         }
         return ReapplyRules();
@@ -74,16 +73,29 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         if (categoryChanged) t.CategorySource = ValueSource.User;
         if (input.AccountId is { } a && db.Accounts().Any(x => x.Id == a)) t.AccountId = a;
         db.UpdateTransaction(t);
-        if ((brandChanged || categoryChanged) && t.MerchantKey.Length > 0)
+        if (brandChanged || categoryChanged)
         {
-            db.UpsertKeyRule(t.MerchantKey, t.Brand, categoryChanged ? t.CategoryId : null);
-            if (categoryChanged) db.UpsertBrandCategory(t.Brand, t.CategoryId);
+            Learn(t, t.Brand, categoryChanged ? t.CategoryId : null);
             ReapplyRules();
         }
         return SummaryService.View(db.GetTransaction(id)!);
     }
 
     public void Delete(long id) => db.DeleteTransaction(id);
+
+    /// <summary>
+    /// Remembers a correction. A real merchant is learned by its name (and its brand for the category);
+    /// generic bank wording ("Paiement de facture", "Transfert entre comptes") only together with its exact amount.
+    /// </summary>
+    private void Learn(Transaction t, string brand, string? categoryId)
+    {
+        var label = t.RawLabel.Length > 0 ? t.RawLabel : brand;
+        var key = Classifier.LearningKey(label, t.Amount, t.BankCategory, System);
+        if (key.Length > 0) db.UpsertKeyRule(key, brand, categoryId);
+        if (categoryId is not null && !Classifier.IsGenericLabel(label, t.BankCategory, System)) db.UpsertBrandCategory(brand, categoryId);
+    }
+
+    private AccountKind KindOf(long accountId) => db.Accounts().FirstOrDefault(a => a.Id == accountId)?.Kind ?? AccountKind.Bank;
 
     private static void Apply(Transaction t, TransactionInput input, bool keepSources = false)
     {
@@ -120,12 +132,13 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
     {
         var before = db.AllTransactions().ToDictionary(t => t.Id, t => (t.Brand, t.CategoryId));
         var classifier = NewClassifier();
+        var kinds = db.Accounts().ToDictionary(a => a.Id, a => a.Kind);
         db.InTransaction(() =>
         {
             foreach (var t in db.AllTransactions())
             {
                 if (t.BrandSource == ValueSource.User && t.CategorySource == ValueSource.User) continue;
-                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount, t.BankCategory);
+                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount, t.BankCategory, kinds.GetValueOrDefault(t.AccountId));
                 var dirty = false;
                 if (t.BrandSource != ValueSource.User && t.RawLabel.Length > 0 && c.Brand != t.Brand) { t.Brand = c.Brand; t.BrandSource = c.BrandSource; dirty = true; }
                 if (t.CategorySource != ValueSource.User && (c.CategoryId != t.CategoryId || t.CategorySource == ValueSource.Linked)) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; dirty = true; }

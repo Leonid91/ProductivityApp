@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Box, Button, Chip, IconButton, InputBase, MenuItem, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
+import { Box, Button, Chip, IconButton, InputBase, MenuItem, Switch, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
 import Verified from '@mui/icons-material/VerifiedRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
@@ -46,6 +46,19 @@ export function SettingsPage() {
             <ToggleButton value="light">Light</ToggleButton>
             <ToggleButton value="dark">Dark</ToggleButton>
           </ToggleButtonGroup>
+        </Row>
+      </SectionCard>
+
+      <SectionCard title="Periods and calendar">
+        <Row label="Transfers, card payments and investments in the month view">
+          <TextField select size="small" value={settings.periodTransfers} onChange={(e) => void setSetting('periodTransfers', e.target.value)} sx={{ width: 260 }}>
+            <MenuItem value="separate">In a separate folded table</MenuItem>
+            <MenuItem value="hidden">Hidden</MenuItem>
+            <MenuItem value="inline">With the other operations</MenuItem>
+          </TextField>
+        </Row>
+        <Row label="Hide credit card payments on the calendar">
+          <Switch checked={settings.calendarHideCardPayments !== 'false'} onChange={(e) => void setSetting('calendarHideCardPayments', e.target.checked ? 'true' : 'false')} />
         </Row>
       </SectionCard>
 

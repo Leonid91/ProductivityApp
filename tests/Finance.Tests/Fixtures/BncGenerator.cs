@@ -36,7 +36,7 @@ public static class BncGenerator
         ("Cafe Exemple", "Cafes", 3.90m, 9.20m),
         ("Netflix", "Divertissement", 20.69m, 20.69m),
         ("Librairie Fictive", "Magasinage", 11.50m, 58.00m),
-        ("Telecom Imaginaire", "Internet", 45.00m, 45.00m),
+        ("Telecom Imaginaire", "Internet", 44.00m, 44.00m),
         ("Salon Modele", "Salon de coiffure", 38.00m, 72.00m),
     ];
 

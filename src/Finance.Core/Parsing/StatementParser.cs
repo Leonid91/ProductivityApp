@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Parsing;
 /// </summary>
 public static class StatementParser
 {
-    public static StatementParse Parse(IReadOnlyList<PageWords> pages, BankTemplate? template, string defaultCurrency)
+    public static StatementParse Parse(IReadOnlyList<PageWords> pages, BankTemplate? template, string defaultCurrency, StatementKindHint forcedKind = StatementKindHint.Auto)
     {
         if (pages.Count == 0) throw new ArgumentException("The PDF has no pages.", nameof(pages));
         var ctx = DocumentContext.Build(pages, defaultCurrency);
@@ -31,7 +31,7 @@ public static class StatementParser
         var bestScore = double.MinValue;
         foreach (var layout in layouts)
         {
-            AccountKind[] kinds = layout.Kind switch
+            AccountKind[] kinds = (forcedKind != StatementKindHint.Auto ? forcedKind : layout.Kind) switch
             {
                 StatementKindHint.Bank => [AccountKind.Bank],
                 StatementKindHint.CreditCard => [AccountKind.CreditCard],

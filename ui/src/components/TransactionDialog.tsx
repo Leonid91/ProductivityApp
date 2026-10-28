@@ -59,7 +59,8 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   const valid = date?.isValid() && Number.isFinite(value) && value > 0 && brand.trim().length > 0
 
   const grouped = useMemo(() => [
-    ['Expenses', categories.filter((c) => c.kind === 'expense')],
+    ['Expenses', categories.filter((c) => c.kind === 'expense' && c.group !== 'exceptional')],
+    ['Exceptional', categories.filter((c) => c.group === 'exceptional')],
     ['Income', categories.filter((c) => c.kind === 'income')],
     ['Between my accounts', categories.filter((c) => c.kind === 'transfer')],
   ] as const, [categories])

@@ -155,7 +155,8 @@ public static partial class CsvStatementReader
         return comma > dot ? ',' : '.';
     }
 
-    public static StatementParse Parse(byte[] bytes, string fileName, string defaultCurrency)
+    /// <param name="forcedKind">Account type chosen by the person; when null the file is only read, not typed.</param>
+    public static StatementParse Parse(byte[] bytes, string fileName, string defaultCurrency, AccountKind? forcedKind = null)
     {
         var text = Decode(bytes);
         var delimiter = DetectDelimiter(text);
@@ -249,7 +250,7 @@ public static partial class CsvStatementReader
         var newestFirst = earlier > later;
         if (newestFirst) rows.Reverse();
 
-        var kind = hasCard ? AccountKind.CreditCard : savings ? AccountKind.Savings : AccountKind.Bank;
+        var kind = forcedKind ?? (hasCard ? AccountKind.CreditCard : savings ? AccountKind.Savings : AccountKind.Bank);
         // A card export with one signed amount column: purchases may be written as positive numbers.
         if (kind == AccountKind.CreditCard && !cols.ContainsKey(Col.Debit) && !cols.ContainsKey(Col.Credit))
         {

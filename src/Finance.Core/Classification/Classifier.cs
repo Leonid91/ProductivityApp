@@ -6,18 +6,26 @@ namespace ProductivityApp.Finance.Classification;
 
 public sealed record Classification(string MerchantKey, string Brand, ValueSource BrandSource, string CategoryId, ValueSource CategorySource);
 
+/// <summary>What kind of bank movement a label describes, independently of any shop.</summary>
+public enum Movement { None, CardPayment, AccountTransfer, MoneyTransfer, BillPayment, Investment }
+
 /// <summary>
-/// Gives every operation a brand and a predefined category. Order of precedence: the user's own corrections
-/// (learned dictionary), the built-in brand dictionary, then wording such as "LOYER", "RETRAIT" or "PAYROLL".
+/// Gives every operation a brand and a predefined category. Order of precedence: the person's own corrections,
+/// the kind of bank movement (card payment, transfer, bill payment), the bank's own category, the built-in brand
+/// dictionary, then wording such as "LOYER", "RETRAIT" or "PAYROLL".
+/// Transfers, credit card payments and investments are kept apart from spending and income (they are shown in their
+/// own section); <see cref="Services.TransferMatcher"/> then links the two halves found in two imported accounts.
 /// </summary>
 public sealed class Classifier
 {
     private readonly Dictionary<string, BrandRule> _byKey;
     private readonly Dictionary<string, string> _brandCategory;
     private readonly List<(string Pattern, BrandEntry Entry)> _builtIn;
+    private readonly BankingSystem _system;
 
-    public Classifier(IEnumerable<BrandRule> learned)
+    public Classifier(IEnumerable<BrandRule> learned, BankingSystem system = BankingSystem.NorthAmerica)
     {
+        _system = system;
         var rules = learned.ToList();
         _byKey = rules.Where(r => r.MerchantKey.Length > 0).GroupBy(r => r.MerchantKey).ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.UpdatedAt).First());
         _brandCategory = rules.Where(r => r.MerchantKey.Length == 0 && r.CategoryId is not null)
@@ -29,22 +37,22 @@ public sealed class Classifier
             .ToList();
     }
 
-    private readonly BankingSystem _system;
-
-    public Classifier(IEnumerable<BrandRule> learned, BankingSystem system) : this(learned) => _system = system;
-
-    public Classification Classify(string rawLabel, decimal amount, string bankCategory = "")
+    public Classification Classify(string rawLabel, decimal amount, string bankCategory = "", AccountKind account = AccountKind.Bank)
     {
         var norm = Normalize(rawLabel);
         var key = MerchantKey(norm);
         var padded = " " + norm + " ";
+        var movement = MovementOf(padded, bankCategory, _system);
+        var salaryWords = KeywordCategory(padded, amount) == "salary";
+        if (salaryWords && movement is Movement.MoneyTransfer) movement = Movement.None;
 
         string? brand = null;
         var brandSource = ValueSource.Default;
         string? category = null;
         var categorySource = ValueSource.Default;
 
-        var rule = FindLearned(key);
+        var generic = IsGeneric(key, movement);
+        var rule = generic ? _byKey.GetValueOrDefault(AmountKey(norm, amount)) : FindLearned(key);
         if (rule is not null)
         {
             brand = rule.Brand;
@@ -52,41 +60,70 @@ public sealed class Classifier
             if (rule.CategoryId is not null && Categories.Exists(rule.CategoryId)) { category = rule.CategoryId; categorySource = ValueSource.Learned; }
         }
 
-        // The brand named first in the label wins ("STM-METRO BERRI" is the transit company, not the grocer);
-        // at the same position the longer pattern wins ("UBER EATS" over "UBER").
         BrandEntry? builtIn = null;
-        var bestAt = int.MaxValue;
-        foreach (var (pattern, entry) in _builtIn)
+        if (movement == Movement.None)
         {
-            var at = padded.IndexOf(pattern, StringComparison.Ordinal);
-            if (at >= 0 && at < bestAt) { bestAt = at; builtIn = entry; }
+            // The brand named first in the label wins ("STM-METRO BERRI" is the transit company, not the grocer);
+            // at the same position the longer pattern wins ("UBER EATS" over "UBER").
+            var bestAt = int.MaxValue;
+            foreach (var (pattern, entry) in _builtIn)
+            {
+                var at = padded.IndexOf(pattern, StringComparison.Ordinal);
+                if (at >= 0 && at < bestAt) { bestAt = at; builtIn = entry; }
+            }
         }
+
+        brand ??= movement switch
+        {
+            Movement.CardPayment => "Credit card payment",
+            Movement.AccountTransfer => "Transfer between accounts",
+            Movement.BillPayment => "Bill payment",
+            Movement.MoneyTransfer when key is "" or "VIREMENT" or "VIR" or "TRANSFER" or "TRANSFERT" or "E TRANSFER" or "ETRANSFER" => "Interac e-Transfer",
+            _ => null,
+        };
         if (brand is null && builtIn is not null) { brand = builtIn.Brand; brandSource = ValueSource.BuiltIn; }
         if (brand is null)
         {
-            brand = key.Length > 0 ? TextNorm.TitleCase(key) : TextNorm.TitleCase(TextNorm.CollapseSpaces(rawLabel));
+            brand = DisplayName(rawLabel, key);
             if (brand.Length == 0) brand = "Unknown";
         }
 
-        if (category is null && _brandCategory.TryGetValue(brand, out var learnedCat) && Categories.Exists(learnedCat))
+        if (category is null && !generic && _brandCategory.TryGetValue(brand, out var learnedCat) && Categories.Exists(learnedCat))
         {
             category = learnedCat;
             categorySource = ValueSource.Learned;
         }
 
+        if (category is null && movement != Movement.None)
+        {
+            var bankSays = BankCategories.Map(bankCategory, amount);
+            category = movement switch
+            {
+                Movement.CardPayment => Categories.CardPayments,
+                // "Paiement de facture" filed by the bank under investments is money sent to an investment account.
+                Movement.BillPayment => bankSays == Categories.Investments ? Categories.Investments : amount < 0 ? Categories.Bills : "refunds",
+                Movement.Investment => Categories.Investments,
+                _ => Categories.Transfers,
+            };
+            categorySource = bankSays == category ? ValueSource.Bank : ValueSource.Keyword;
+        }
+
         // The bank's own category, when its export has one, is more reliable than any guess from the label.
         if (category is null && BankCategories.Map(bankCategory, amount) is { } fromBank) { category = fromBank; categorySource = ValueSource.Bank; }
 
-        var keyword = KeywordCategory(padded, amount, _system);
+        var keyword = KeywordCategory(padded, amount);
         // Bank movements have no shop behind them: give them a plain name rather than leftover label words.
-        if (brandSource == ValueSource.Default && rule is null && builtIn is null && keyword is "cash" or "fees")
+        if (brandSource == ValueSource.Default && rule is null && builtIn is null && movement == Movement.None && keyword is "cash" or "fees")
             brand = keyword == "cash" ? "Cash withdrawal" : "Bank fees";
-        // Movement wording (transfers, cash, fees) is more telling than the brand: "VIREMENT ... COSTCO" is a transfer.
-        if (category is null && keyword is "transfers" or "cash" or "fees" or "salary") { category = keyword; categorySource = ValueSource.Keyword; }
+        if (brandSource == ValueSource.Default && rule is null && builtIn is null && movement == Movement.None && amount > 0
+            && (padded.Contains(" INTERETS ", StringComparison.Ordinal) || padded.Contains(" INTERET ", StringComparison.Ordinal) || padded.Contains(" INTEREST ", StringComparison.Ordinal)))
+            brand = "Interest";
+        if (category is null && keyword is "cash" or "fees" or "salary") { category = keyword; categorySource = ValueSource.Keyword; }
         if (category is null && builtIn is not null && builtIn.Brand == brand) { category = builtIn.CategoryId; categorySource = ValueSource.BuiltIn; }
         if (category is null && keyword is not null) { category = keyword; categorySource = ValueSource.Keyword; }
 
-        if (category is not null && categorySource is not (ValueSource.Learned or ValueSource.Bank) && amount > 0 && Categories.Get(category).Kind == CategoryKind.Expense && category != "fees")
+        if (category is not null && categorySource is not (ValueSource.Learned or ValueSource.Bank) && amount > 0
+            && Categories.Get(category).Kind == CategoryKind.Expense && category is not "fees")
         {
             // Money back from a shop is a refund, not negative spending.
             category = "refunds";
@@ -95,6 +132,63 @@ public sealed class Classifier
         if (category is null) { category = Categories.DefaultFor(amount); categorySource = ValueSource.Default; }
 
         return new Classification(key, brand, brandSource, category, categorySource);
+    }
+
+    /// <summary>
+    /// Key under which a correction is remembered. Generic bank wording ("Paiement de facture", "Transfert entre
+    /// comptes") says nothing about who was paid, so it is remembered together with the exact amount: correcting the
+    /// rent paid by bill payment does not turn every other bill payment into rent.
+    /// </summary>
+    public static string LearningKey(string rawLabel, decimal amount, string bankCategory = "", BankingSystem system = BankingSystem.NorthAmerica)
+    {
+        var norm = Normalize(rawLabel);
+        var key = MerchantKey(norm);
+        return IsGeneric(key, MovementOf(" " + norm + " ", bankCategory, system)) ? AmountKey(norm, amount) : key;
+    }
+
+    public static bool IsGenericLabel(string rawLabel, string bankCategory = "", BankingSystem system = BankingSystem.NorthAmerica)
+    {
+        var norm = Normalize(rawLabel);
+        return IsGeneric(MerchantKey(norm), MovementOf(" " + norm + " ", bankCategory, system));
+    }
+
+    private static string AmountKey(string norm, decimal amount) => "#" + norm + "|" + AmountParser.ToStorage(amount);
+
+    private static readonly HashSet<string> GenericKeys = ["DEPOT GUICHET", "DEPOT", "RETRAIT", "RETRAIT GUICHET", "DEPOSIT", "WITHDRAWAL", "MERCI", "INTERETS", "PAIEMENT INTERETS"];
+
+    private static bool IsGeneric(string key, Movement movement) => key.Length == 0 || movement != Movement.None || GenericKeys.Contains(key);
+
+    private static readonly string[] CardPaymentWords =
+    [
+        "PAIEMENT MASTERCARD", "PAIEMENT VISA", "PAIEMENT AMEX", "PAIEMENT RECU", "PAYMENT RECEIVED", "PAYMENT THANK YOU", "PAIEMENT MERCI",
+        "CREDIT CARD PAYMENT", "PAIEMENT CARTE DE CREDIT", "PAIEMENT CARTE CREDIT", "MASTERCARD PAYMENT", "VISA PAYMENT", "AMEX PAYMENT",
+    ];
+    private static readonly string[] DeferredCardWords = ["FACTURE CARTE", "RELEVE CB", "RELEVE CARTE", "DEBIT DIFFERE", "CARTE DIFFERE", "PRLV CARTE"];
+    private static readonly string[] AccountTransferWords =
+    [
+        "TRANSFERT ENTRE COMPTES", "VIREMENT ENTRE COMPTES", "TRANSFER BETWEEN ACCOUNTS", "ONLINE TRANSFER", "TRANSFERT EN LIGNE", "VIR INTERNE",
+        "VIREMENT INTERNE", "VERSEMENT LIVRET", "VIR LIVRET", "VIREMENT LIVRET", "VIR COMPTE EPARGNE", "INTERNAL TRANSFER",
+    ];
+    private static readonly string[] MoneyTransferWords =
+    [
+        "VIREMENT INTERAC", "INTERAC E TRANSFER", "E TRANSFER", "ETRANSFER", "VIREMENT", "VIR", "VIRT", "TRANSFER", "TRANSFERT", "TFR", "VIR SEPA", "VIR INST",
+    ];
+    private static readonly string[] BillPaymentWords = ["PAIEMENT DE FACTURE", "PAIEMENT FACTURE", "BILL PAYMENT", "PAIEMENT DE FACTURES"];
+    private static readonly string[] InvestmentWordsNorthAmerica =
+        ["COTISATION REER", "COTISATION CELI", "TFSA CONTRIBUTION", "RRSP CONTRIBUTION", "WEALTHSIMPLE", "QUESTRADE", "DISNAT", "COURTAGE"];
+    private static readonly string[] InvestmentWordsFrance = ["LIVRET A", "LDDS", "VERSEMENT PEA", "ASSURANCE VIE", "VERSEMENT PEL"];
+
+    public static Movement MovementOf(string padded, string bankCategory, BankingSystem system)
+    {
+        bool Has(string[] words) => words.Any(w => padded.Contains(" " + w + " ", StringComparison.Ordinal));
+        var bank = TextNorm.Fold(bankCategory ?? "").Trim();
+        if (Has(CardPaymentWords) || bank is "PAIEMENT CARTE DE CREDIT" or "CREDIT CARD PAYMENT" or "CREDIT CARD PAYMENTS") return Movement.CardPayment;
+        if (system == BankingSystem.France && Has(DeferredCardWords)) return Movement.CardPayment;
+        if (Has(BillPaymentWords)) return Movement.BillPayment;
+        if (Has(AccountTransferWords)) return Movement.AccountTransfer;
+        if (Has(system == BankingSystem.France ? InvestmentWordsFrance : InvestmentWordsNorthAmerica)) return Movement.Investment;
+        if (Has(MoneyTransferWords) || bank is "TRANSFERT" or "TRANSFERTS" or "TRANSFER" or "TRANSFERS" or "VIREMENTS") return Movement.MoneyTransfer;
+        return Movement.None;
     }
 
     private BrandRule? FindLearned(string key)
@@ -107,6 +201,7 @@ public sealed class Classifier
         var bestLen = 0;
         foreach (var (k, rule) in _byKey)
         {
+            if (k.StartsWith('#')) continue;
             var other = k.Split(' ');
             var common = 0;
             while (common < tokens.Length && common < other.Length && tokens[common] == other[common]) common++;
@@ -114,6 +209,28 @@ public sealed class Classifier
             if (enough && common > bestLen) { best = rule; bestLen = common; }
         }
         return best;
+    }
+
+    /// <summary>
+    /// The brand shown for a merchant the dictionary does not know: the words of the merchant key, written as the
+    /// bank wrote them when it used upper and lower case ("Le Petit Bistro Exemple"), title-cased when it wrote in capitals.
+    /// </summary>
+    public static string DisplayName(string rawLabel, string key)
+    {
+        var raw = TextNorm.CollapseSpaces(rawLabel);
+        if (key.Length == 0) return raw.Any(char.IsLower) ? raw : TextNorm.TitleCase(raw);
+        if (!raw.Any(char.IsLower)) return TextNorm.TitleCase(key);
+        var wanted = key.Split(' ').ToList();
+        var picked = new List<string>();
+        foreach (var word in raw.Split(' '))
+        {
+            if (picked.Count == wanted.Count) break;
+            if (Normalize(word) == wanted[picked.Count]) picked.Add(word.Trim(',', '.', ';', ':', '*', '#'));
+        }
+        if (picked.Count != wanted.Count) return TextNorm.TitleCase(key);
+        // A brand always starts with a capital, even when the bank wrote it in lower case.
+        picked[0] = char.ToUpperInvariant(picked[0][0]) + picked[0][1..];
+        return string.Join(' ', picked);
     }
 
     /// <summary>Folded, with punctuation turned into spaces (keeping &amp; and +).</summary>
@@ -132,7 +249,7 @@ public sealed class Classifier
         "SANS", "CONTACT", "APPLE", "PAY", "GOOGLE", "WWW", "COM", "INC", "LTD", "LTEE", "CORP", "SAS", "SARL", "SA", "CA", "CAN", "CANADA",
         "QC", "ON", "BC", "AB", "MB", "SK", "NS", "NB", "NL", "PE", "QUE", "ONT", "FR", "FRA", "FRANCE", "USA", "US", "PAYPAL", "SQ", "TST",
         "DE", "DU", "DES", "LE", "LA", "LES", "THE", "OF", "AND", "ET", "A", "AU", "AUX", "EN", "PAR", "CHEZ", "MAG", "MAGASIN", "STORE",
-        "CHQ", "FRAIS", "OPERATION", "OP", "TRANSACTION", "TRX", "RECU", "EMIS", "PRESENTE", "CARD", "CREDIT", "DEBITS", "ACH", "PPD",
+        "CHQ", "FRAIS", "OPERATION", "OP", "TRANSACTION", "TRX", "RECU", "EMIS", "PRESENTE", "CARD", "CREDIT", "DEBITS", "ACH", "PPD", "BY",
     ];
 
     private static readonly HashSet<string> Cities =
@@ -156,9 +273,7 @@ public sealed class Classifier
 
     private static readonly (string Category, string[] Words, int Sign)[] KeywordRules =
     [
-        ("salary", ["SALAIRE", "PAIE", "PAYROLL", "SALARY", "DEPOT DIRECT", "DIRECT DEP", "DIRECT DEPOSIT", "REMUNERATION"], 1),
-        ("transfers", ["VIREMENT", "VIR", "VIRT", "TRANSFER", "TRANSFERT", "TFR", "E TRANSFER", "ETRANSFER", "VIREMENT INTERAC", "PAIEMENT CARTE DE CREDIT",
-            "PAYMENT THANK YOU", "PAIEMENT MERCI", "CREDIT CARD PAYMENT", "PAIEMENT VISA", "PAIEMENT MASTERCARD", "PAIEMENT CARTE CREDIT", "EPARGNE", "SAVINGS"], 0),
+        ("salary", ["SALAIRE", "PAIE", "PAYROLL", "SALARY", "DEPOT DIRECT", "DIRECT DEP", "DIRECT DEPOSIT", "REMUNERATION", "DEPOT DE PAIE"], 1),
         ("cash", ["RETRAIT", "DAB", "GAB", "ATM", "WITHDRAWAL", "GUICHET", "RETRAIT DAB", "CASH"], -1),
         ("otherincome", ["INTERET", "INTERETS", "INTEREST", "DIVIDENDE", "DIVIDEND", "ALLOCATION", "PENSION", "CASHBACK", "REMISE", "PRESTATION", "CAF", "GST", "TPS", "DEPOT", "DEPOSIT"], 1),
         ("refunds", ["REMBOURSEMENT", "REFUND", "RETOUR", "AVOIR", "RETURN"], 1),
@@ -182,26 +297,9 @@ public sealed class Classifier
         ("subscriptions", ["ABONNEMENT", "SUBSCRIPTION", "MEMBERSHIP"], -1),
     ];
 
-    /// <summary>Wording of movements between one's own accounts, which depends on how the banking system works.</summary>
-    private static readonly (string Category, string[] Words, int Sign)[] NorthAmericaRules =
-    [
-        ("transfers", ["PAIEMENT MASTERCARD", "PAIEMENT VISA", "PAIEMENT AMEX", "PAIEMENT RECU", "PAIEMENT RECU MERCI", "PAYMENT RECEIVED",
-            "TRANSFERT ENTRE COMPTES", "VIREMENT ENTRE COMPTES", "TRANSFER BETWEEN ACCOUNTS", "ONLINE TRANSFER", "TRANSFERT EN LIGNE",
-            "PAYMENT THANK YOU", "PAIEMENT MERCI", "CREDIT CARD PAYMENT", "PAIEMENT CARTE DE CREDIT", "MASTERCARD PAYMENT", "VISA PAYMENT"], 0),
-        ("investments", ["COTISATION REER", "COTISATION CELI", "TFSA CONTRIBUTION", "RRSP CONTRIBUTION", "PLACEMENT", "WEALTHSIMPLE", "QUESTRADE",
-            "DISNAT", "COURTAGE", "INVESTISSEMENT"], -1),
-    ];
-
-    private static readonly (string Category, string[] Words, int Sign)[] FranceRules =
-    [
-        ("transfers", ["FACTURE CARTE", "RELEVE CB", "RELEVE CARTE", "DEBIT DIFFERE", "CARTE DIFFERE", "PRLV CARTE", "VIR INTERNE", "VIREMENT INTERNE",
-            "VERSEMENT LIVRET", "VIR LIVRET", "VIREMENT LIVRET", "VIR COMPTE EPARGNE", "VIR PERMANENT"], 0),
-        ("investments", ["LIVRET A", "LDDS", "PEL", "PEA", "ASSURANCE VIE", "VERSEMENT PEA"], -1),
-    ];
-
-    private static string? KeywordCategory(string padded, decimal amount, BankingSystem system)
+    private static string? KeywordCategory(string padded, decimal amount)
     {
-        foreach (var (category, words, sign) in (system == BankingSystem.France ? FranceRules : NorthAmericaRules).Concat(KeywordRules))
+        foreach (var (category, words, sign) in KeywordRules)
         {
             if (sign > 0 && amount <= 0) continue;
             if (sign < 0 && amount > 0) continue;

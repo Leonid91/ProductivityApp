@@ -23,7 +23,11 @@ export function StatusChip({ draft }: { draft: Draft }) {
     case 'mismatch':
       return <Chip size="small" color="warning" icon={<ErrorOutline />} label={`Off by ${money(Math.abs(draft.difference ?? 0), draft.currency)}`} variant="outlined" />
     case 'noBalances':
-      return <Chip size="small" icon={<HelpOutline />} label="No balances to check against" variant="outlined" />
+      return (
+        <Tooltip title="This file prints no opening, closing or running balance, so its total cannot be checked">
+          <Chip size="small" icon={<HelpOutline />} label="No balances to check against" variant="outlined" />
+        </Tooltip>
+      )
     default:
       return <Chip size="small" color="error" icon={<ErrorOutline />} label="No operations found" variant="outlined" />
   }
@@ -33,9 +37,10 @@ export function StatusChip({ draft }: { draft: Draft }) {
 export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (saved: boolean) => void }) {
   const { accounts, settings, notify, fail, dataChanged, refreshAccounts } = useApp()
   const [draft, setDraft] = useState(initial)
-  const [accountId, setAccountId] = useState<number | 'new'>(initial.suggestedAccountId ?? 'new')
-  const [name, setName] = useState(initial.defaultAccountName)
-  const [kind, setKind] = useState<AccountKind>(initial.kind)
+  // Nothing is chosen for the person: the file waits until they say which account it belongs to.
+  const [accountId, setAccountId] = useState<number | 'new' | ''>('')
+  const [name, setName] = useState('')
+  const [kind, setKind] = useState<AccountKind | ''>('')
   const [currency, setCurrency] = useState(initial.currency || settings.currency)
   const [edits, setEdits] = useState<Map<number, DraftEdit>>(new Map())
   const [busy, setBusy] = useState(false)
@@ -43,27 +48,22 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
 
   useEffect(() => { void refreshAccounts() }, [refreshAccounts])
 
-  // A statement read before its account was created by another import: use that account.
-  useEffect(() => {
-    if (accountId !== 'new') return
-    const sameKind = accounts.filter((a) => a.kind === draft.kind && a.currency === draft.currency)
-    const byNumber = draft.last4 ? sameKind.find((a) => a.last4 === draft.last4 && (!a.bank || !draft.bank || a.bank === draft.bank)) : undefined
-    // Without an account number, the only account of that bank and type is the one.
-    const byBank = !draft.last4 && draft.bank ? sameKind.filter((a) => a.bank === draft.bank) : []
-    const same = byNumber ?? (byBank.length === 1 ? byBank[0] : undefined)
-    if (same) void pickAccount(same.id)
-  }, [accounts])
-
-  const pickAccount = async (v: number | 'new') => {
-    setAccountId(v)
+  const choose = async (account: number | 'new', newKind: AccountKind | '') => {
+    setAccountId(account)
+    const a = accounts.find((x) => x.id === account)
+    if (a) { setCurrency(a.currency); setKind(a.kind) }
+    else setKind(newKind)
+    if (account === 'new' && newKind === '') return
     try {
-      setDraft(await api.imports.setAccount(draft.id, v === 'new' ? null : v))
+      // The file is read again for the chosen type, and checked against that account only.
+      setDraft(await api.imports.choose(draft.id, account === 'new' ? null : account, account === 'new' ? newKind as AccountKind : null))
     } catch (e) {
       fail(e)
     }
-    const a = accounts.find((x) => x.id === v)
-    if (a) { setCurrency(a.currency); setKind(a.kind) }
   }
+
+  const kindLabel = (k: AccountKind) => accountKinds(settings.bankingSystem).find((x) => x.value === k)?.label ?? k
+  const chosen = accountId !== '' && (accountId !== 'new' || kind !== '')
 
   const edit = (index: number, change: Partial<DraftEdit>) => {
     const next = new Map(edits)
@@ -80,10 +80,10 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
     try {
       const r = await api.imports.commit({
         draftId: draft.id,
-        accountId: accountId === 'new' ? null : accountId,
+        accountId: accountId === 'new' || accountId === '' ? null : accountId,
         newAccountName: accountId === 'new' ? name : null,
         currency,
-        kind,
+        kind: kind === '' ? null : kind,
         edits: [...edits.values()],
       })
       notify(`${plural(r.added, 'operation')} imported` + (r.skippedDuplicates ? ` · ${r.skippedDuplicates} already there` : ''))
@@ -141,16 +141,39 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
       {!draft.alreadyImported && draft.rows.length > 0 && (
         <>
           <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 2 }}>
-            <TextField select size="small" label="Account" value={accountId} onChange={(e) => void pickAccount(e.target.value === 'new' ? 'new' : Number(e.target.value))} sx={{ minWidth: 240 }}>
+            <TextField
+              select
+              size="small"
+              label="Account"
+              value={accountId}
+              error={accountId === ''}
+              onChange={(e) => void choose(e.target.value === 'new' ? 'new' : Number(e.target.value), '')}
+              sx={{ minWidth: 280 }}
+              slotProps={{ select: { displayEmpty: true, renderValue: (v) => v === '' ? 'Choose the account' : v === 'new' ? 'New account' : accounts.find((a) => a.id === v)?.name ?? '' }, inputLabel: { shrink: true } }}
+            >
+              {accounts.map((a) => (
+                <MenuItem key={a.id} value={a.id}>
+                  <Box sx={{ flex: 1 }}>{a.name}</Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>{kindLabel(a.kind)} · {a.currency}</Typography>
+                </MenuItem>
+              ))}
               <MenuItem value="new">New account</MenuItem>
-              {accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name}</MenuItem>)}
             </TextField>
             {accountId === 'new' && (
               <>
-                <TextField size="small" label="Name" value={name} onChange={(e) => setName(e.target.value)} sx={{ minWidth: 260, flex: '1 1 260px' }} />
-                <TextField select size="small" label="Type" value={kind} onChange={(e) => setKind(e.target.value as AccountKind)} sx={{ width: 190 }}>
+                <TextField
+                  select
+                  size="small"
+                  label="Type"
+                  value={kind}
+                  error={kind === ''}
+                  onChange={(e) => void choose('new', e.target.value as AccountKind)}
+                  sx={{ width: 210 }}
+                  slotProps={{ select: { displayEmpty: true, renderValue: (v) => v === '' ? 'Choose the type' : kindLabel(v as AccountKind) }, inputLabel: { shrink: true } }}
+                >
                   {accountKinds(settings.bankingSystem).map((k) => <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>)}
                 </TextField>
+                <TextField size="small" label="Name" value={name} placeholder={draft.defaultAccountName} onChange={(e) => setName(e.target.value)} sx={{ minWidth: 260, flex: '1 1 260px' }} slotProps={{ inputLabel: { shrink: true } }} />
                 <TextField select size="small" label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)} sx={{ width: 110 }}>
                   {[...new Set([currency, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
                 </TextField>
@@ -213,7 +236,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         )}
         <Button onClick={() => void discard()}>{draft.alreadyImported ? 'Close' : 'Discard'}</Button>
         {!draft.alreadyImported && (
-          <Button variant="contained" disabled={busy || included.length === 0} onClick={() => void commit()}>
+          <Button variant="contained" disabled={busy || !chosen || included.length === 0} onClick={() => void commit()}>
             Import {plural(included.length, 'operation')}
           </Button>
         )}

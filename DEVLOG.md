@@ -59,3 +59,24 @@
 - "EUR" was found inside French words (VALEUR, DEBITEUR) and turned Canadian statements into euros.
 - A shop named in the transactions could be taken for the bank: the bank is now read above the table only.
 - A chequing statement mentioning credit card payments was read as a credit card statement.
+
+## October 28th, 2026 - Import never guesses the account, transfers apart, exceptional expenses - Commit 3
+
+### Added
+- Each imported file waits until the person chooses its account (or a new account and its type); it cannot be saved
+  before, and it is then read for that type. No account or type is ever chosen automatically.
+- Month view: transfers, credit card payments and investments in their own folded table (setting: folded table,
+  hidden, or with the other operations). Dates newest first by default.
+- Exceptional expenses, shown in gold: Flights, Trips & holidays, Special gifts, Celebrations & events,
+  Big purchases, Unexpected repairs, Medical emergencies, Other exceptional.
+- Calendar: spending in red, income in green, money moved between accounts or invested in black; credit card
+  payments hidden by default (setting).
+- Categories "Credit card payments", "Credit card spending" (card paid while no card account is imported) and
+  "Bill payments"; card payments are named "Credit card payment".
+
+### Bug fixed
+- Lines were dropped as "already imported" when another operation had the same date and amount: a duplicate must
+  now also be the same operation (label).
+- A card purchase could be paired with a transfer of the same amount and left out of spending.
+- Transfer pairs depended on the order files were imported in: everything is linked again after each import.
+- Brands keep the bank's own capitalisation ("Il ..." not "IL ...").

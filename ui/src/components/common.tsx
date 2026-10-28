@@ -26,16 +26,22 @@ export function CategoryMenu({ anchor, value, onClose, onPick }: {
   onPick: (id: string) => void
 }) {
   const { categories } = useApp()
-  const groups: [string, string][] = [['expense', 'Expenses'], ['income', 'Income'], ['transfer', 'Between my accounts']]
+  const theme = useTheme()
+  const groups: [string, string, (c: (typeof categories)[number]) => boolean][] = [
+    ['expense', 'Expenses', (c) => c.kind === 'expense' && c.group !== 'exceptional'],
+    ['exceptional', 'Exceptional', (c) => c.group === 'exceptional'],
+    ['income', 'Income', (c) => c.kind === 'income'],
+    ['transfer', 'Between my accounts', (c) => c.kind === 'transfer'],
+  ]
   return (
-    <Menu anchorEl={anchor} open={anchor !== null} onClose={onClose} slotProps={{ paper: { sx: { maxHeight: 460, width: 250 } } }}>
-      {groups.flatMap(([kind, label]) => [
-        <ListSubheader key={'h' + kind} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, letterSpacing: '.04em', textTransform: 'uppercase', bgcolor: 'background.paper' }}>
+    <Menu anchorEl={anchor} open={anchor !== null} onClose={onClose} slotProps={{ paper: { sx: { maxHeight: 480, width: 260 } } }}>
+      {groups.flatMap(([kind, label, test]) => [
+        <ListSubheader key={'h' + kind} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, letterSpacing: '.04em', textTransform: 'uppercase', bgcolor: 'background.paper', color: kind === 'exceptional' ? theme.palette.gold.text : undefined }}>
           {label}
         </ListSubheader>,
-        ...categories.filter((c) => c.kind === kind).map((c) => (
-          <MenuItem key={c.id} selected={c.id === value} onClick={() => { onPick(c.id); onClose() }}>
-            <ListItemIcon><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
+        ...categories.filter(test).map((c) => (
+          <MenuItem key={c.id} selected={c.id === value} onClick={() => { onPick(c.id); onClose() }} sx={c.group === 'exceptional' ? { color: theme.palette.gold.text, fontWeight: 600 } : undefined}>
+            <ListItemIcon sx={c.group === 'exceptional' ? { color: theme.palette.gold.text } : undefined}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
             <ListItemText>{c.name}</ListItemText>
             {c.id === value && <Check fontSize="small" sx={{ color: 'primary.main', ml: 1 }} />}
           </MenuItem>
@@ -52,6 +58,7 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const c = category(id)
   const dark = theme.palette.mode === 'dark'
+  const gold = c.group === 'exceptional'
   return (
     <>
       <Box
@@ -70,16 +77,16 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
           maxWidth: '100%',
           font: 'inherit',
           fontSize: 13,
-          fontWeight: 520,
-          color: c.kind === 'transfer' ? 'text.secondary' : 'text.primary',
-          bgcolor: dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)',
+          fontWeight: gold ? 620 : 520,
+          color: gold ? theme.palette.gold.text : c.kind === 'transfer' ? 'text.secondary' : 'text.primary',
+          bgcolor: gold ? theme.palette.gold.soft : dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)',
           cursor: onChange ? 'pointer' : 'default',
           transition: 'background-color 120ms',
           '&:hover:not(:disabled)': { bgcolor: dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.075)' },
           '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}` },
         }}
       >
-        <CategoryIcon name={c.icon} sx={{ fontSize: 16, color: 'text.secondary' }} />
+        <CategoryIcon name={c.icon} sx={{ fontSize: 16, color: gold ? theme.palette.gold.text : 'text.secondary' }} />
         <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</Box>
       </Box>
       {onChange && <CategoryMenu anchor={anchor} value={id} onClose={() => setAnchor(null)} onPick={onChange} />}

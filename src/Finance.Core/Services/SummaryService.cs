@@ -6,7 +6,8 @@ namespace ProductivityApp.Finance.Services;
 
 public sealed record Slice(string Key, string Label, decimal Amount, double Share);
 
-public sealed record Bar(string Key, string Label, decimal Expenses, decimal Earnings);
+/// <summary>One day, month or year. Moved is money moved between own accounts or to investments; CardPaid is credit card payments.</summary>
+public sealed record Bar(string Key, string Label, decimal Expenses, decimal Earnings, decimal Moved = 0, decimal CardPaid = 0);
 
 public sealed record TransactionView(
     long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, string CategorySource,
@@ -128,6 +129,10 @@ public sealed class SummaryService(Database db)
         return head;
     }
 
+    /// <summary>The larger of what left and what arrived: a movement seen on both of its accounts counts once.</summary>
+    private static decimal Moved(IEnumerable<Transaction> t) =>
+        Math.Max(-t.Where(x => x.Amount < 0).Sum(x => x.Amount), t.Where(x => x.Amount > 0).Sum(x => x.Amount));
+
     private static (List<Bar>, string) Series(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g)
     {
         var counted = txs.Where(t => Categories.Get(t.CategoryId).Kind != CategoryKind.Transfer).ToList();
@@ -138,8 +143,10 @@ public sealed class SummaryService(Database db)
             for (var d = from; d <= to; d = d.AddDays(1))
             {
                 var day = counted.Where(t => t.Date == d).ToList();
+                var moves = txs.Where(t => t.Date == d && Categories.IsTransfer(t.CategoryId)).ToList();
                 bars.Add(new Bar(d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), d.Day.ToString(CultureInfo.InvariantCulture),
-                    -day.Where(t => t.Amount < 0).Sum(t => t.Amount), day.Where(t => t.Amount > 0).Sum(t => t.Amount)));
+                    -day.Where(t => t.Amount < 0).Sum(t => t.Amount), day.Where(t => t.Amount > 0).Sum(t => t.Amount),
+                    Moved(moves.Where(t => t.CategoryId != Categories.CardPayments)), Moved(moves.Where(t => t.CategoryId == Categories.CardPayments))));
             }
             return (bars, "day");
         }

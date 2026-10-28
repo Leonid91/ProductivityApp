@@ -20,6 +20,7 @@ import { TransactionDialog } from '../components/TransactionDialog'
 /** Month calendar: what went out and came in each day; a day opens its operations. */
 export function CalendarPage() {
   const { settings, dataVersion, fail, category } = useApp()
+  const hideCard = settings.calendarHideCardPayments !== 'false'
   const theme = useTheme()
   const dark = theme.palette.mode === 'dark'
   const [month, setMonth] = useState(() => { const t = parts(today()); return { y: t.y, m: t.m } })
@@ -48,13 +49,20 @@ export function CalendarPage() {
 
   const events = useMemo(() => {
     if (!summary) return []
-    return summary.series.flatMap((b) => [
-      ...(b.expenses > 0 ? [{ id: 'e' + b.key, start: b.key, allDay: true, title: money(-b.expenses, currency), extendedProps: { kind: 'out' } }] : []),
-      ...(b.earnings > 0 ? [{ id: 'i' + b.key, start: b.key, allDay: true, title: money(b.earnings, currency, { sign: true }), extendedProps: { kind: 'in' } }] : []),
-    ])
-  }, [summary, currency])
+    return summary.series.flatMap((b) => {
+      const moved = b.moved + (hideCard ? 0 : b.cardPaid)
+      return [
+        ...(b.earnings > 0 ? [{ id: 'i' + b.key, start: b.key, allDay: true, title: money(b.earnings, currency, { sign: true }), extendedProps: { kind: 'in' } }] : []),
+        ...(b.expenses > 0 ? [{ id: 'e' + b.key, start: b.key, allDay: true, title: money(-b.expenses, currency), extendedProps: { kind: 'out' } }] : []),
+        ...(moved > 0 ? [{ id: 'm' + b.key, start: b.key, allDay: true, title: '⇄ ' + money(moved, currency), extendedProps: { kind: 'move' } }] : []),
+      ]
+    })
+  }, [summary, currency, hideCard])
 
-  const dayTx = useMemo(() => summary?.transactions.filter((t) => t.date === day) ?? [], [summary, day])
+  const dayTx = useMemo(
+    () => summary?.transactions.filter((t) => t.date === day && !(hideCard && t.categoryId === 'cardpayments')) ?? [],
+    [summary, day, hideCard],
+  )
   const brands = useMemo(() => [...new Set(summary?.transactions.map((t) => t.brand) ?? [])], [summary])
 
   const shift = (delta: number) => {
@@ -121,9 +129,12 @@ export function CalendarPage() {
                 className="tnum"
                 sx={{
                   width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 12, fontWeight: 600, textAlign: 'right',
-                  color: arg.event.extendedProps.kind === 'in' ? theme.palette.money.positive : theme.palette.text.primary,
-                  bgcolor: arg.event.extendedProps.kind === 'in'
-                    ? (dark ? 'rgba(76,194,106,.12)' : 'rgba(0,99,0,.07)')
+                  // Income in green, spending in red, money moved between own accounts or invested in black.
+                  color: arg.event.extendedProps.kind === 'in' ? theme.palette.money.positive
+                    : arg.event.extendedProps.kind === 'out' ? theme.palette.money.negative
+                    : theme.palette.money.zero,
+                  bgcolor: arg.event.extendedProps.kind === 'in' ? (dark ? 'rgba(76,194,106,.12)' : 'rgba(0,99,0,.07)')
+                    : arg.event.extendedProps.kind === 'out' ? (dark ? 'rgba(239,107,107,.12)' : 'rgba(208,59,59,.07)')
                     : (dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)'),
                 }}
               >
@@ -158,7 +169,12 @@ export function CalendarPage() {
                   <Typography variant="body2" noWrap sx={{ fontWeight: 560 }}>{t.brand}</Typography>
                   <Typography variant="caption" color="text.secondary" noWrap component="div">{c.name}</Typography>
                 </Box>
-                <Money value={t.amount} currency={currency} sign muted={c.kind === 'transfer'} />
+                <Money
+                  value={t.amount}
+                  currency={currency}
+                  sign
+                  sx={{ color: c.kind === 'transfer' ? theme.palette.money.zero : t.amount < 0 ? theme.palette.money.negative : theme.palette.money.positive }}
+                />
               </Box>
             )
           })}

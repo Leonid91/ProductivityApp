@@ -63,16 +63,18 @@ public class BncAndCsvTests
     public async Task Bnc_month_counts_nothing_twice_and_csv_after_pdf_adds_nothing()
     {
         using var s = new TempStore();
-        foreach (var a in new[] { BncAccount.Card, BncAccount.Chequing, BncAccount.Savings })
+        var kinds = new Dictionary<BncAccount, AccountKind> { [BncAccount.Card] = AccountKind.CreditCard, [BncAccount.Chequing] = AccountKind.Bank, [BncAccount.Savings] = AccountKind.Savings };
+        var ids = new Dictionary<BncAccount, long>();
+        foreach (var a in kinds.Keys)
         {
             var d = await s.Imports.ParseAsync(FileName(a, "pdf"), BncGenerator.Pdf(Sept, a));
-            s.Imports.Commit(new CommitRequest(d.Id, d.SuggestedAccountId, null, "CAD", d.Parse.Kind, []));
+            Assert.Null(d.AccountId);
+            ids[a] = s.Imports.Commit(new CommitRequest(d.Id, null, null, "CAD", kinds[a], [])).AccountId;
         }
-        foreach (var a in new[] { BncAccount.Card, BncAccount.Chequing, BncAccount.Savings })
+        foreach (var a in kinds.Keys)
         {
             var d = await s.Imports.ParseAsync(FileName(a, "csv"), Csv(Sept, a));
-            Assert.NotNull(d.SuggestedAccountId);
-            var r = s.Imports.Commit(new CommitRequest(d.Id, d.SuggestedAccountId, null, "CAD", d.Parse.Kind, []));
+            var r = s.Imports.Commit(new CommitRequest(d.Id, ids[a], null, "CAD", null, []));
             Assert.Equal(0, r.Added);
         }
         Assert.Equal(3, s.Db.Accounts().Count);
@@ -83,9 +85,48 @@ public class BncAndCsvTests
         Assert.Equal(2 * 2310.45m + 3.17m, sum.Earnings);
         var all = s.Db.AllTransactions();
         Assert.All(all.Where(t => t.RawLabel.StartsWith("Paiement", StringComparison.Ordinal) && t.RawLabel != "Paiement des interets" && t.RawLabel != "Paiement de facture"),
-            t => Assert.Equal(Categories.Transfers, t.CategoryId));
+            t => Assert.Equal(Categories.CardPayments, t.CategoryId));
+        Assert.All(all.Where(t => t.CategoryId == Categories.CardPayments), t => Assert.Equal("Credit card payment", t.Brand));
         Assert.Equal(Categories.Investments, all.Single(t => t.RawLabel == "Paiement de facture").CategoryId);
         Assert.Equal(2, all.Count(t => t.RawLabel == "Transfert entre comptes" && t.CategoryId == Categories.Transfers));
+    }
+
+    [Fact]
+    public async Task Nothing_is_imported_before_the_person_chooses_the_account()
+    {
+        using var s = new TempStore();
+        var d = await s.Imports.ParseAsync(FileName(BncAccount.Chequing, "csv"), Csv(Sept, BncAccount.Chequing));
+        Assert.Null(d.AccountId);
+        Assert.Null(d.Kind);
+        Assert.Throws<ArgumentException>(() => s.Imports.Commit(new CommitRequest(d.Id, null, null, "CAD", null, [])));
+        Assert.Empty(s.Db.Accounts());
+    }
+
+    [Fact]
+    public async Task Lines_of_another_account_in_the_same_account_are_never_taken_for_duplicates()
+    {
+        // Two files of the same day and amounts but different operations, both put into one account by the person:
+        // every line must be kept.
+        using var s = new TempStore();
+        var savings = Csv(Sept, BncAccount.Savings);
+        var chequing = Csv(Sept, BncAccount.Chequing);
+        var d1 = await s.Imports.ParseAsync("a.csv", savings);
+        var id = s.Imports.Commit(new CommitRequest(d1.Id, null, null, "CAD", AccountKind.Bank, [])).AccountId;
+        var d2 = await s.Imports.ParseAsync("b.csv", chequing);
+        var r = s.Imports.Commit(new CommitRequest(d2.Id, id, null, "CAD", null, []));
+        Assert.Equal(Sept.Chequing.Count(l => l.Amount != 0), r.Added);
+        Assert.Equal(0, r.SkippedDuplicates);
+    }
+
+    [Fact]
+    public void Lines_dated_in_the_next_month_are_kept_in_that_month()
+    {
+        var csv = "Date;Description;Categorie;Debit;Credit;Solde\n\"2025-10-01\";\"Loyer Exemple\";\"Hypotheque et loyer\";\"1500.0\";\"0\";\"500.00\"\n\"2025-09-29\";Salaire;Revenus;\"0\";\"1975.0\";\"1975.00\"\n";
+        var p = CsvStatementReader.Parse(Encoding.UTF8.GetBytes(csv), "x.csv", "CAD");
+        Assert.Equal(2, p.Rows.Count);
+        Assert.Equal(new DateOnly(2025, 10, 1), p.Rows[1].Date);
+        Assert.Equal(-1500m, p.Rows[1].Amount);
+        Assert.Equal("housing", new Classifier([]).Classify(p.Rows[1].Label, p.Rows[1].Amount, p.Rows[1].BankCategory).CategoryId);
     }
 
     [Fact]
@@ -116,11 +157,11 @@ public class BncAndCsvTests
     [Fact]
     public void French_csv_with_comma_decimals_in_windows_encoding()
     {
-        var csv = "Date;Libellé;Montant;Devise\n12/10/2025;CB CARREFOUR MARKET;-1 234,56;EUR\n13/10/2025;VIR SEPA RECU SALAIRE;2 100,00;EUR\n";
+        var csv = "Date;Libellé;Montant;Devise\n12/10/2025;CB CARREFOUR MARKET;-1 234,56;EUR\n13/10/2025;VIR SEPA RECU SALAIRE;2 150,00;EUR\n";
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         var p = CsvStatementReader.Parse(Encoding.GetEncoding(1252).GetBytes(csv), "releve.csv", "CAD");
         Assert.Equal("EUR", p.Currency);
-        Assert.Equal([-1234.56m, 2100.00m], p.Rows.Select(r => r.Amount));
+        Assert.Equal([-1234.56m, 2150.00m], p.Rows.Select(r => r.Amount));
         Assert.Equal(new DateOnly(2025, 10, 12), p.Rows[0].Date);
         Assert.Equal(VerificationStatus.NoBalances, p.Status);
     }
@@ -140,13 +181,13 @@ public class BncAndCsvTests
         var na = new Classifier([], BankingSystem.NorthAmerica);
         Assert.Equal("groceries", na.Classify("Commerce Inconnu", -12m, "Epicerie").CategoryId);
         Assert.Equal(ValueSource.Bank, na.Classify("Commerce Inconnu", -12m, "Epicerie").CategorySource);
-        Assert.Equal("transfers", na.Classify("Paiement recu merci!", 120m, "Paiement carte de credit").CategoryId);
-        Assert.Equal("transfers", na.Classify("PAIEMENT MASTERCARD", -120m).CategoryId);
+        Assert.Equal("cardpayments", na.Classify("Paiement recu merci!", 120m, "Paiement carte de credit", AccountKind.CreditCard).CategoryId);
+        Assert.Equal("cardpayments", na.Classify("PAIEMENT MASTERCARD", -120m).CategoryId);
         Assert.Equal("investments", na.Classify("Paiement de facture", -500m, "Investissements").CategoryId);
         Assert.Equal("otherincome", na.Classify("Paiement des interets", 3.17m, "Revenu d'interets").CategoryId);
 
         var fr = new Classifier([], BankingSystem.France);
-        Assert.Equal("transfers", fr.Classify("PRLV FACTURE CARTE 0925", -642.10m).CategoryId);
+        Assert.Equal("cardpayments", fr.Classify("PRLV FACTURE CARTE 0925", -642.10m).CategoryId);
         Assert.Equal("groceries", fr.Classify("CB CARREFOUR MARKET", -31.20m).CategoryId);
     }
 

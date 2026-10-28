@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Accordion, AccordionDetails, AccordionSummary, Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfOutlined'
+import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
+import SwapHoriz from '@mui/icons-material/SwapHorizRounded'
 import { api, type Granularity, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { money } from '../format'
@@ -29,7 +31,7 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
   onEdit: (tx: TransactionView) => void
   onLoaded?: (s: PeriodSummary) => void
 }) {
-  const { dataVersion, fail } = useApp()
+  const { dataVersion, fail, category, settings } = useApp()
   const theme = useTheme()
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
@@ -52,6 +54,15 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
     return () => { live = false }
   }, [visible, from, to, granularity, currency, dataVersion, fail, onLoaded])
 
+  // Transfers, card payments and investments: in their own folded table, hidden, or with the rest (Settings).
+  const mode = settings.periodTransfers || 'separate'
+  const [main, moves] = useMemo(() => {
+    const all = summary?.transactions ?? []
+    if (mode === 'inline') return [all, []]
+    const isMove = (t: (typeof all)[number]) => category(t.categoryId).kind === 'transfer'
+    return [all.filter((t) => !isMove(t)), mode === 'hidden' ? [] : all.filter(isMove)]
+  }, [summary, mode, category])
+
   const balanceColor = !summary ? undefined
     : summary.balance > 0 ? theme.palette.money.positive
     : summary.balance < 0 ? theme.palette.money.negative
@@ -73,7 +84,26 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
       ) : (
         <>
           <Typography variant="h5" component="h2" sx={{ mb: 2.5 }}>{summary.title}</Typography>
-          <TransactionTable transactions={summary.transactions} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
+          <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
+          {moves.length > 0 && (
+            <Accordion
+              disableGutters
+              elevation={0}
+              slotProps={{ transition: { unmountOnExit: true } }}
+              sx={{ mt: 2, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '&::before': { display: 'none' } }}
+            >
+              <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2.5, minHeight: 52 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                  <SwapHoriz sx={{ color: 'text.secondary', fontSize: 20 }} />
+                  <Typography sx={{ fontWeight: 600 }}>Transfers, card payments & investments</Typography>
+                  <Typography color="text.secondary" className="tnum">{moves.length}</Typography>
+                </Box>
+              </AccordionSummary>
+              <AccordionDetails sx={{ px: 2.5, pt: 0, pb: 2 }}>
+                <TransactionTable transactions={moves} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
+              </AccordionDetails>
+            </Accordion>
+          )}
 
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 3.5 }}>
             <Stat label="Expenses" value={money(summary.expenses, currency)} />

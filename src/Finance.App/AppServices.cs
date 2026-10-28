@@ -23,7 +23,14 @@ internal sealed class AppServices : IDisposable
         ["reportsFolder"] = "",
         ["bankingSystem"] = "northAmerica",
         ["bankFocus"] = "auto",
+        // Month view: transfers, card payments and investments in their own folded table ("separate"), left out
+        // ("hidden"), or among the other operations ("inline").
+        ["periodTransfers"] = "separate",
+        ["calendarHideCardPayments"] = "true",
     };
+
+    /// <summary>Raised whenever classification rules change, so existing operations are classified again at start.</summary>
+    private const string RulesVersion = "3";
 
     /// <summary>Banks whose statements and exports the reader has been proven on.</summary>
     public static readonly (string Id, string Name, bool Proven)[] BankProfiles = [("auto", "Any bank", false), ("bnc", "Banque Nationale (BNC)", true)];
@@ -39,6 +46,11 @@ internal sealed class AppServices : IDisposable
         Summaries = new SummaryService(Db);
         Transactions = new TransactionService(Db, () => Setting("currency"), () => System);
         Imports = new ImportService(Db, () => Setting("currency"), Transactions) { BankFocus = () => Setting("bankFocus") };
+        if (Db.GetSetting("rulesVersion") != RulesVersion)
+        {
+            Transactions.ReapplyRules();
+            Db.SetSetting("rulesVersion", RulesVersion);
+        }
     }
 
     public string Setting(string key) => Db.GetSetting(key) ?? DefaultSettings.GetValueOrDefault(key) ?? "";
@@ -66,7 +78,11 @@ internal sealed class AppServices : IDisposable
                 throw new ArgumentException("Unknown banking system.");
             case "bankFocus" when !BankProfiles.Any(p => p.Id == value):
                 throw new ArgumentException("Unknown bank.");
-            case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window" or "bankingSystem" or "bankFocus":
+            case "periodTransfers" when value is not ("separate" or "hidden" or "inline"):
+                throw new ArgumentException("Unknown choice.");
+            case "calendarHideCardPayments" when value is not ("true" or "false"):
+                throw new ArgumentException("Unknown choice.");
+            case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window" or "bankingSystem" or "bankFocus" or "periodTransfers" or "calendarHideCardPayments":
                 Db.SetSetting(key, value);
                 break;
             default:

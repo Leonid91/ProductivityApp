@@ -12,11 +12,13 @@ declare module '@mui/material/styles' {
     surface: { base: string; raised: string; sunken: string; hover: string }
     chart: { series: string[]; other: string; grid: string; axis: string }
     money: { positive: string; negative: string; zero: string }
+    gold: { text: string; soft: string }
   }
   interface PaletteOptions {
     surface?: { base: string; raised: string; sunken: string; hover: string }
     chart?: { series: string[]; other: string; grid: string; axis: string }
     money?: { positive: string; negative: string; zero: string }
+    gold?: { text: string; soft: string }
   }
 }
 
@@ -51,6 +53,8 @@ export function makeTheme(mode: 'light' | 'dark'): Theme {
       money: dark
         ? { positive: '#4cc26a', negative: '#ef6b6b', zero: text.primary }
         : { positive: '#006300', negative: '#d03b3b', zero: '#000000' },
+      // Exceptional expenses: a warm gold that stays readable on both themes.
+      gold: dark ? { text: '#e8c25a', soft: 'rgba(232,194,90,.14)' } : { text: '#9a6a00', soft: 'rgba(201,150,30,.13)' },
     },
     shape: { borderRadius: 12 },
     typography: {

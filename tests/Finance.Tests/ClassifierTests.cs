@@ -30,13 +30,13 @@ public class ClassifierTests
     [InlineData("VIR SEPA RECU SALAIRE EXEMPLE SAS", 1845.20, "salary")]
     [InlineData("PAYROLL DEPOSIT EXAMPLE CORP", 2140.55, "salary")]
     [InlineData("E-TRANSFER RECEIVED A SAMPLE", 120.00, "transfers")]
-    [InlineData("PAYMENT - THANK YOU", 750.00, "transfers")]
+    [InlineData("PAYMENT - THANK YOU", 750.00, "cardpayments")]
     [InlineData("RETRAIT DAB", -40.00, "cash")]
     [InlineData("FRAIS MENSUELS DU COMPTE", -4.95, "fees")]
     [InlineData("LOYER OCTOBRE", -925.00, "housing")]
     [InlineData("RESTAURANT LE PETIT BISTRO", -48.00, "restaurants")]
     [InlineData("QUINCAILLERIE INCONNUE", -12.00, "other")]
-    [InlineData("SOMETHING UNKNOWN", 15.00, "otherincome")]
+    [InlineData("SOMETHING UNKNOWN", 16.00, "otherincome")]
     public void Wording_gives_the_category(string label, double amount, string category) =>
         Assert.Equal(category, Plain.Classify(label, (decimal)amount).CategoryId);
 

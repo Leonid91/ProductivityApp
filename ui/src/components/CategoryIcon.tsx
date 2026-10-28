@@ -24,11 +24,23 @@ import Theaters from '@mui/icons-material/TheatersRounded'
 import TrendingUp from '@mui/icons-material/TrendingUpRounded'
 import Wifi from '@mui/icons-material/WifiRounded'
 import Work from '@mui/icons-material/WorkRounded'
+import Receipt from '@mui/icons-material/ReceiptLongRounded'
+import CreditCard from '@mui/icons-material/CreditCardRounded'
+import CreditScore from '@mui/icons-material/CreditScoreRounded'
+import FlightTakeoff from '@mui/icons-material/FlightTakeoffRounded'
+import Luggage from '@mui/icons-material/LuggageRounded'
+import Redeem from '@mui/icons-material/RedeemRounded'
+import Celebration from '@mui/icons-material/CelebrationRounded'
+import Chair from '@mui/icons-material/ChairRounded'
+import Build from '@mui/icons-material/BuildRounded'
+import MedicalServices from '@mui/icons-material/MedicalServicesRounded'
+import AutoAwesome from '@mui/icons-material/AutoAwesomeRounded'
 
 const icons: Record<string, React.ComponentType<SvgIconProps>> = {
   AccountBalance, Bolt, CardGiftcard, DirectionsBus, Flight, Home, LocalAtm, LocalGasStation, LocalPharmacy, MoreHoriz,
   Percent, Replay, Restaurant, Savings, School, Shield, ShoppingBag, ShoppingBasket, Spa, Subscriptions, SwapHoriz,
-  Theaters, TrendingUp, Wifi, Work,
+  Theaters, TrendingUp, Wifi, Work, Receipt, CreditCard, CreditScore, FlightTakeoff, Luggage, Redeem, Celebration, Chair, Build,
+  MedicalServices, AutoAwesome,
 }
 
 export function CategoryIcon({ name, ...props }: { name: string } & SvgIconProps) {
