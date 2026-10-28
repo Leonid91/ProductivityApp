@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Autocomplete, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment, ListItemIcon, ListItemText, ListSubheader,
-  MenuItem, TextField, ToggleButton, ToggleButtonGroup,
+  MenuItem, TextField, ToggleButton, ToggleButtonGroup, useTheme,
 } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -23,7 +23,9 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   defaultDate?: string
   onClose: () => void
 }) {
-  const { categories, accounts, settings, notify, fail, dataChanged, refreshAccounts } = useApp()
+  const { categories, accounts, settings, notify, fail, dataChanged, refreshAccounts, askScope, category } = useApp()
+  const theme = useTheme()
+  const gold = theme.palette.gold.text
   const [date, setDate] = useState<Dayjs | null>(dayjs())
   const [direction, setDirection] = useState<'out' | 'in'>('out')
   const [amount, setAmount] = useState('')
@@ -75,8 +77,15 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
       accountId: accountId === 'manual' ? null : accountId,
       note: note.trim() || null,
     }
+    // A new category: for this operation only, or for the whole brand (the person decides).
+    let allOfBrand = true
+    if (tx && categoryId !== tx.categoryId) {
+      const answer = await askScope(input.brand, category(categoryId).name)
+      if (answer === null) return
+      allOfBrand = answer
+    }
     try {
-      if (tx) await api.tx.update(tx.id, input)
+      if (tx) await api.tx.update(tx.id, input, allOfBrand)
       else await api.tx.create(input)
       notify(tx ? 'Operation updated' : 'Operation added')
       dataChanged()
@@ -122,17 +131,27 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
           onInputChange={(_, v) => setBrand(v)}
           renderInput={(p) => <TextField {...p} label="Brand Name" />}
         />
-        <TextField select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+        <TextField
+          select
+          label="Category"
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          // Exceptional expenses are gold everywhere, here too: the chosen value, the heading and every item.
+          slotProps={{ select: { sx: category(categoryId).group === 'exceptional' ? { color: gold, fontWeight: 600, '& .MuiListItemIcon-root': { color: gold } } : undefined } }}
+        >
           {grouped.flatMap(([label, list]) => [
-            <ListSubheader key={label} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</ListSubheader>,
-            ...list.map((c) => (
-              <MenuItem key={c.id} value={c.id}>
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <ListItemIcon sx={{ minWidth: 32 }}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
-                  <ListItemText>{c.name}</ListItemText>
-                </Box>
-              </MenuItem>
-            )),
+            <ListSubheader key={label} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em', color: label === 'Exceptional' ? gold : undefined }}>{label}</ListSubheader>,
+            ...list.map((c) => {
+              const exceptional = c.group === 'exceptional'
+              return (
+                <MenuItem key={c.id} value={c.id} data-exceptional={exceptional || undefined} sx={exceptional ? { color: gold, fontWeight: 600 } : undefined}>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <ListItemIcon sx={{ minWidth: 32, color: exceptional ? gold : undefined }}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
+                    <ListItemText slotProps={{ primary: { sx: exceptional ? { color: gold, fontWeight: 600 } : undefined } }}>{c.name}</ListItemText>
+                  </Box>
+                </MenuItem>
+              )
+            }),
           ])}
         </TextField>
         <TextField select label="Account" value={accountId} onChange={(e) => setAccountId(e.target.value === 'manual' ? 'manual' : Number(e.target.value))}>

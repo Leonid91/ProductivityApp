@@ -135,7 +135,10 @@ public static class StatementGenerator
             page.Header().Element(h => Header(h, spec));
             page.Content().PaddingTop(12).Element(b => Body(b, spec));
             page.Footer().AlignRight().Text(t => { t.Span(spec.Style is Style.EnglishCard or Style.EnglishWithdrawalsDeposits ? "Page " : "Page "); t.CurrentPageNumber(); t.Span(" / "); t.TotalPages(); });
-        })).GeneratePdf();
+        }))
+        // A fixed date in the file: the same statement rendered twice is byte for byte the same file, as a real one is.
+        .WithMetadata(new DocumentMetadata { CreationDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), ModifiedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) })
+        .GeneratePdf();
     }
 
     private static void Header(IContainer h, Spec s)
@@ -369,6 +372,6 @@ public static class StatementGenerator
         {
             foreach (var img in images)
                 c.Page(p => { p.Size(PageSizes.Letter); p.Margin(0); p.Content().Image(img).FitArea(); });
-        }).GeneratePdf();
+        }).WithMetadata(new DocumentMetadata { CreationDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), ModifiedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) }).GeneratePdf();
     }
 }

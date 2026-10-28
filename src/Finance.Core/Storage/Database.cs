@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 2;
+    private const int SchemaVersion = 3;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -67,6 +67,12 @@ public sealed class Database : IDisposable
         if (version < 2)
         {
             Exec("ALTER TABLE transactions ADD COLUMN bank_category TEXT NOT NULL DEFAULT ''; PRAGMA user_version = 2;");
+        }
+        if (version < 3)
+        {
+            // linked_id: the other half of a movement between own accounts. estimated: added by the person from a balance
+            // gap (an operation no imported file contains), replaced by the real one when its statement is imported.
+            Exec("ALTER TABLE transactions ADD COLUMN linked_id INTEGER; ALTER TABLE transactions ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0; PRAGMA user_version = 3;");
         }
     }
 
@@ -196,7 +202,7 @@ public sealed class Database : IDisposable
 
     // ---------------------------------------------------------------- transactions
 
-    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category";
+    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, linked_id, estimated";
 
     private static Transaction ReadTx(SqliteDataReader r) => new()
     {
@@ -204,12 +210,13 @@ public sealed class Database : IDisposable
         Amount = AmountParser.FromStorage(r.GetString(4)), Currency = r.GetString(5), RawLabel = r.GetString(6), MerchantKey = r.GetString(7),
         Brand = r.GetString(8), BrandSource = (ValueSource)r.GetInt32(9), CategoryId = r.GetString(10), CategorySource = (ValueSource)r.GetInt32(11),
         Note = r.GetString(12), BankCategory = r.GetString(13),
+        LinkedId = r.IsDBNull(14) ? null : r.GetInt64(14), Estimated = r.GetInt32(15) == 1,
     };
 
     public long AddTransaction(Transaction t) => (long)Scalar($"""
-        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category)
-        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n, $bc) RETURNING id
-        """, ("$bc", t.BankCategory),
+        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, estimated)
+        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n, $bc, $e) RETURNING id
+        """, ("$bc", t.BankCategory), ("$e", t.Estimated ? 1 : 0),
         ("$a", t.AccountId), ("$s", t.StatementId), ("$d", D(t.Date)), ("$m", AmountParser.ToStorage(t.Amount)), ("$c", t.Currency),
         ("$r", t.RawLabel), ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId),
         ("$cs", (int)t.CategorySource), ("$n", t.Note))!;
@@ -222,7 +229,13 @@ public sealed class Database : IDisposable
         ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId), ("$cs", (int)t.CategorySource),
         ("$n", t.Note), ("$id", t.Id));
 
-    public void DeleteTransaction(long id) => Exec("DELETE FROM transactions WHERE id = $id", ("$id", id));
+    public void DeleteTransaction(long id) => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id = $id; DELETE FROM transactions WHERE id = $id", ("$id", id));
+
+    /// <summary>Forgets every pairing of movements between own accounts (they are found again right after).</summary>
+    public void ClearLinks() => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id IS NOT NULL");
+
+    /// <summary>Records that two operations are the two halves of one movement between own accounts.</summary>
+    public void SetLink(long a, long b) => Exec("UPDATE transactions SET linked_id = $b WHERE id = $a; UPDATE transactions SET linked_id = $a WHERE id = $b", ("$a", a), ("$b", b));
 
     public Transaction? GetTransaction(long id) => Query($"SELECT {TxColumns} FROM transactions WHERE id = $id", ReadTx, ("$id", id)).FirstOrDefault();
 

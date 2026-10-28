@@ -15,19 +15,41 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
 
     public const string ManualAccountName = "Cash & manual entries";
 
-    /// <summary>Sets the category of one operation and teaches it for the merchant and the brand. Returns how many other operations followed.</summary>
-    public int SetCategory(long id, string categoryId)
+    /// <summary>
+    /// Sets the category of one operation. With <paramref name="allOfBrand"/>, every operation of the same brand, past and
+    /// future, gets it too (the brand is learned); otherwise only this one changes and nothing is learned.
+    /// Returns how many other operations changed.
+    /// </summary>
+    public int SetCategory(long id, string categoryId, bool allOfBrand = true)
     {
         if (!Categories.Exists(categoryId)) throw new ArgumentException($"Unknown category '{categoryId}'.");
         var t = db.GetTransaction(id) ?? throw new KeyNotFoundException("This operation no longer exists.");
+        var before = db.AllTransactions().ToDictionary(x => x.Id, x => x.CategoryId);
         t.CategoryId = categoryId;
         t.CategorySource = ValueSource.User;
         db.InTransaction(() =>
         {
             db.UpdateTransaction(t);
-            Learn(t, t.Brand, categoryId);
+            if (allOfBrand) ApplyToBrand(t, categoryId);
         });
-        return ReapplyRules();
+        ReapplyRules();
+        return db.AllTransactions().Count(x => x.Id != id && before.TryGetValue(x.Id, out var c) && c != x.CategoryId);
+    }
+
+    /// <summary>Every operation of the brand takes the category, and new ones will too.</summary>
+    private void ApplyToBrand(Transaction t, string categoryId)
+    {
+        var label = t.RawLabel.Length > 0 ? t.RawLabel : t.Brand;
+        var key = Classifier.LearningKey(label, t.Amount, t.BankCategory, System);
+        if (key.Length > 0) db.UpsertKeyRule(key, t.Brand, categoryId);
+        db.UpsertBrandCategory(t.Brand, categoryId);
+        foreach (var other in db.AllTransactions().Where(x => x.Id != t.Id && string.Equals(x.Brand, t.Brand, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (other.CategoryId == categoryId && other.CategorySource == ValueSource.User) continue;
+            other.CategoryId = categoryId;
+            other.CategorySource = ValueSource.User;
+            db.UpdateTransaction(other);
+        }
     }
 
     /// <summary>Renames the brand of one operation and teaches it for the merchant. Returns how many other operations followed.</summary>
@@ -63,7 +85,8 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         return SummaryService.View(t);
     }
 
-    public TransactionView Update(long id, TransactionInput input)
+    /// <summary>Saves the edits of one operation. A new category goes to the whole brand only with <paramref name="allOfBrand"/>.</summary>
+    public TransactionView Update(long id, TransactionInput input, bool allOfBrand = true)
     {
         var t = db.GetTransaction(id) ?? throw new KeyNotFoundException("This operation no longer exists.");
         var brandChanged = input.Brand.Trim() != t.Brand;
@@ -75,10 +98,45 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         db.UpdateTransaction(t);
         if (brandChanged || categoryChanged)
         {
-            Learn(t, t.Brand, categoryChanged ? t.CategoryId : null);
+            db.InTransaction(() =>
+            {
+                if (brandChanged) Learn(t, t.Brand, null);
+                if (categoryChanged && allOfBrand) ApplyToBrand(t, t.CategoryId);
+            });
             ReapplyRules();
         }
         return SummaryService.View(db.GetTransaction(id)!);
+    }
+
+    /// <summary>
+    /// Adds operations the balances prove happened but no imported file contains (from a balance gap), marked as
+    /// estimated. Importing the statement that holds the real ones replaces them.
+    /// </summary>
+    public int AddEstimated(long accountId, IReadOnlyList<GapSuggestion> items, string from, string to)
+    {
+        var account = db.Accounts().FirstOrDefault(a => a.Id == accountId) ?? throw new KeyNotFoundException("This account no longer exists.");
+        if (items.Count == 0) throw new ArgumentException("Nothing to add.");
+        var classifier = NewClassifier();
+        db.InTransaction(() =>
+        {
+            foreach (var i in items)
+            {
+                if (!DateOnly.TryParseExact(i.Date, "yyyy-MM-dd", out var date)) throw new ArgumentException("The date is not valid.");
+                if (i.Amount == 0) throw new ArgumentException("The amount cannot be zero.");
+                var label = string.IsNullOrWhiteSpace(i.Label) ? i.Brand : i.Label;
+                var c = classifier.Classify(label, i.Amount, "", account.Kind);
+                var category = Categories.Exists(i.CategoryId) ? i.CategoryId : c.CategoryId;
+                db.AddTransaction(new Transaction
+                {
+                    AccountId = accountId, Date = date, Amount = decimal.Round(i.Amount, 2), Currency = account.Currency, RawLabel = label,
+                    MerchantKey = c.MerchantKey, Brand = string.IsNullOrWhiteSpace(i.Brand) ? c.Brand : i.Brand.Trim(), BrandSource = ValueSource.User,
+                    CategoryId = category, CategorySource = ValueSource.User, Estimated = true,
+                    Note = $"Estimated: the balances show it between {from} and {to}, but no imported file contains it.",
+                });
+            }
+        });
+        ReapplyRules();
+        return items.Count;
     }
 
     public void Delete(long id) => db.DeleteTransaction(id);

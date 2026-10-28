@@ -279,6 +279,9 @@ public static partial class CsvStatementReader
         var withBalance = rows.Where(x => x.Balance is not null).ToList();
         decimal? opening = withBalance.Count > 0 && rows[0].Balance is { } fb ? fb - rows[0].Amount : null;
         decimal? closing = withBalance.Count > 0 ? rows[^1].Balance ?? withBalance[^1].Balance : null;
+        // Lines of zero (waived fees) are left out, but their dates still count for the period the balances cover:
+        // they prove the balance on those days.
+        var allDates = rows.Select(x => x.Date).ToList();
         rows = rows.Where(x => x.Amount != 0).ToList();
 
         var profile = IsBncHeader(headerIndex >= 0 ? table[headerIndex] : []) ? "bnc" : null;
@@ -296,8 +299,8 @@ public static partial class CsvStatementReader
             ClosingBalance = closing,
             ComputedClosing = opening is { } o ? o + rows.Sum(x => x.Amount) : null,
             Difference = status == VerificationStatus.Verified ? 0 : null,
-            PeriodStart = rows.Count > 0 ? rows.Min(x => x.Date) : null,
-            PeriodEnd = rows.Count > 0 ? rows.Max(x => x.Date) : null,
+            PeriodStart = rows.Count > 0 ? allDates.Min() : null,
+            PeriodEnd = rows.Count > 0 ? allDates.Max() : null,
             Currency = currency,
             Language = french ? "fr" : "en",
             Kind = kind,

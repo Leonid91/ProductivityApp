@@ -33,9 +33,78 @@ export function StatusChip({ draft }: { draft: Draft }) {
   }
 }
 
+/**
+ * The balance check in plain words: what the file says it starts and ends with, what its lines add up to, and whether
+ * it follows on from what is already saved for the chosen account.
+ */
+function BalanceCheck({ draft, accountName }: { draft: Draft; accountName: string | null }) {
+  const { settings } = useApp()
+  const d = (x: string | null) => (x ? formatDate(x, settings.dateFormat) : '')
+  const m = (v: number, sign = false) => money(v, draft.currency, { sign })
+  const lines = draft.rows.length
+  const sum = draft.rows.reduce((s, r) => s + r.amount, 0)
+  const c = draft.continuity
+  let body: React.ReactNode
+  let severity: 'success' | 'warning' | 'info' = 'info'
+  if (draft.status === 'verified' && draft.opening !== null && draft.closing !== null) {
+    severity = 'success'
+    body = (
+      <>
+        The file starts with a balance of <b>{m(draft.opening)}</b> ({d(draft.periodStart)}) and ends with <b>{m(draft.closing)}</b> ({d(draft.periodEnd)}).
+        The {plural(lines, 'operation')} read from it add up to <b>{m(sum, true)}</b>, exactly the difference between the two balances.
+        So no line of this file was missed or read twice.
+      </>
+    )
+  } else if (draft.status === 'mismatch') {
+    severity = 'warning'
+    body = (
+      <>
+        The file starts with <b>{m(draft.opening ?? 0)}</b> and ends with <b>{m(draft.closing ?? 0)}</b>, a change of {m((draft.closing ?? 0) - (draft.opening ?? 0), true)}.
+        The operations read add up to {m(sum, true)}: off by <b>{m(Math.abs(draft.difference ?? 0))}</b>. Some lines were misread or skipped:
+        set the columns, or check the lines below.
+      </>
+    )
+  } else if (draft.status === 'noBalances') {
+    body = (
+      <>
+        This file prints no balance (card exports usually do not), so the app cannot prove that no line is missing.
+        Its {plural(lines, 'operation')} add up to <b>{m(sum, true)}</b>: compare with your bank if in doubt.
+      </>
+    )
+  } else return null
+  return (
+    <Box data-balance-check sx={{ mb: 2, display: 'grid', gap: 1 }}>
+      <Alert severity={severity} icon={false} sx={{ '& .MuiAlert-message': { width: '100%' } }}>
+        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Balance check of this file</Typography>
+        <Typography variant="body2" component="div">{body}</Typography>
+      </Alert>
+      {c && accountName && (Math.abs(c.missing) < 0.005 ? (
+        <Alert severity="success" icon={false} data-continuity="ok">
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Follows on from what is saved</Typography>
+          <Typography variant="body2">
+            {accountName} had <b>{m(c.knownBalance)}</b> on {d(c.knownDate)}; with the operations saved since ({m(c.savedSince, true)}) that makes {m(c.expected)},
+            exactly where this file starts ({d(c.fileStart)}). Nothing is missing in between.
+          </Typography>
+        </Alert>
+      ) : (
+        <Alert severity="warning" data-continuity="gap">
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Operations are missing before this file</Typography>
+          <Typography variant="body2">
+            {accountName} had <b>{m(c.knownBalance)}</b> on {d(c.knownDate)}. With the operations saved since ({m(c.savedSince, true)}) it should start this file
+            with {m(c.expected)}, but the file starts with <b>{m(c.fileOpening)}</b> on {d(c.fileStart)}.
+            So <b>{m(Math.abs(c.missing))}</b> {c.missing < 0 ? 'went out' : 'came in'} between {d(c.gapFrom)} and {d(c.gapTo)} and is in none of your files.
+            Import the statement that covers those days; otherwise, once this file is saved, the month view shows the gap and the operations it most
+            likely is (for example the rent), and adds them as estimated in one click.
+          </Typography>
+        </Alert>
+      ))}
+    </Box>
+  )
+}
+
 /** A statement read from a PDF, waiting for the person to check it and save it. */
 export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (saved: boolean) => void }) {
-  const { accounts, settings, notify, fail, dataChanged, refreshAccounts } = useApp()
+  const { accounts, settings, notify, fail, dataChanged, refreshAccounts, askScope, category } = useApp()
   const [draft, setDraft] = useState(initial)
   // Nothing is chosen for the person: the file waits until they say which account it belongs to.
   const [accountId, setAccountId] = useState<number | 'new' | ''>('')
@@ -69,6 +138,22 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
     const next = new Map(edits)
     const current = next.get(index) ?? { index, brand: null, categoryId: null, include: true }
     next.set(index, { ...current, ...change })
+    setEdits(next)
+  }
+
+  /** A new category for one line: for it only, or for every line of the same brand (and learned for later imports). */
+  const changeCategory = async (index: number, id: string) => {
+    const row = draft.rows.find((r) => r.index === index)
+    if (!row) return
+    const brand = edits.get(index)?.brand ?? row.brand
+    const all = await askScope(brand, category(id).name)
+    if (all === null) return
+    const next = new Map(edits)
+    const targets = all ? draft.rows.filter((r) => (edits.get(r.index)?.brand ?? r.brand).toLowerCase() === brand.toLowerCase()) : [row]
+    for (const r of targets) {
+      const current = next.get(r.index) ?? { index: r.index, brand: null, categoryId: null, include: true }
+      next.set(r.index, { ...current, categoryId: id, allOfBrand: all })
+    }
     setEdits(next)
   }
 
@@ -121,11 +206,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         </Box>
       </Box>
 
-      {draft.status === 'verified' && draft.opening !== null && draft.closing !== null && (
-        <Typography variant="body2" color="text.secondary" className="tnum" sx={{ mb: 2 }}>
-          {money(draft.opening, draft.currency)} → {money(draft.closing, draft.currency)}
-        </Typography>
-      )}
+      {!draft.alreadyImported && <BalanceCheck draft={draft} accountName={accounts.find((a) => a.id === accountId)?.name ?? null} />}
       {needsColumns && draft.pageCount > 0 && (
         <Alert
           severity={draft.status === 'mismatch' ? 'warning' : 'error'}
@@ -215,7 +296,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
                           sx={{ fontSize: 13.5, fontWeight: 520, width: '100%', px: 1, mx: -1, borderRadius: 2, '&:hover, &.Mui-focused': { bgcolor: 'action.hover' } }}
                         />
                       </TableCell>
-                      <TableCell><CategoryPill id={e?.categoryId ?? r.categoryId} onChange={(id) => edit(r.index, { categoryId: id })} /></TableCell>
+                      <TableCell><CategoryPill id={e?.categoryId ?? r.categoryId} onChange={(id) => void changeCategory(r.index, id)} /></TableCell>
                       <TableCell align="right"><Money value={r.amount} currency={currency} sign /></TableCell>
                     </TableRow>
                   )

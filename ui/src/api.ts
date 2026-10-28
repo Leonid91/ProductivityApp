@@ -10,7 +10,7 @@ export type Verification = 'verified' | 'mismatch' | 'noBalances' | 'noTransacti
 
 export interface Category { id: string; name: string; kind: CategoryKind; icon: string; group: string | null }
 
-export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'bankingSystem' | 'bankFocus' | 'periodTransfers' | 'calendarHideCardPayments', string> & Record<string, string>
+export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'bankingSystem' | 'bankFocus' | 'periodTransfers' | 'calendarHideCardPayments' | 'calendarHideTransfers' | 'pieShowAll', string> & Record<string, string>
 
 export interface BankProfile { id: string; name: string; proven: boolean }
 
@@ -49,6 +49,46 @@ export interface TransactionView {
   note: string
   accountId: number
   statementId: number | null
+  /** How often it comes back ("monthly", "twice a month", "yearly"); null when it is not recurring. */
+  recurring: string | null
+  /** Added from a balance gap: no imported file contains it yet. */
+  estimated: boolean
+  linkedId: number | null
+}
+
+/** One movement of money, once, from an account (or the outside) to another (or the outside). */
+export interface MovementView {
+  date: string
+  categoryId: string
+  label: string
+  amount: number
+  from: string
+  to: string
+  fromOutside: boolean
+  toOutside: boolean
+  editId: number
+  otherId: number | null
+  estimated: boolean
+}
+
+export interface Flow { from: string; to: string; amount: number; fromOutside: boolean; toOutside: boolean; count: number }
+
+export interface GapSuggestion { date: string; brand: string; label: string; categoryId: string; amount: number; seenOn: string }
+
+/** Money that left (or arrived in) an account on days no imported file covers. */
+export interface BalanceGap {
+  accountId: number
+  account: string
+  currency: string
+  from: string
+  to: string
+  knownDate: string
+  knownBalance: number
+  nextDate: string
+  nextBalance: number
+  explained: number
+  missing: number
+  suggestions: GapSuggestion[]
 }
 
 export interface PeriodSummary {
@@ -69,6 +109,13 @@ export interface PeriodSummary {
   brandPie: Slice[]
   series: Bar[]
   seriesUnit: 'day' | 'month' | 'year'
+  recurringExpenses: number
+  recurringIncome: number
+  recurringExpensePie: Slice[]
+  recurringIncomePie: Slice[]
+  movements: MovementView[]
+  flows: Flow[]
+  gaps: BalanceGap[]
 }
 
 export interface MonthEntry { year: number; month: number; count: number }
@@ -126,9 +173,24 @@ export interface Draft {
   pageCount: number
   suggestedMatch: string
   rows: DraftRow[]
+  /** How the file follows on from the balance already saved for the chosen account; null for a first file. */
+  continuity: Continuity | null
 }
 
-export interface DraftEdit { index: number; brand: string | null; categoryId: string | null; include: boolean }
+export interface Continuity {
+  knownDate: string
+  knownBalance: number
+  savedSince: number
+  expected: number
+  fileStart: string
+  fileOpening: number
+  missing: number
+  gapFrom: string
+  gapTo: string
+}
+
+/** allOfBrand false: the new category is for this line only. */
+export interface DraftEdit { index: number; brand: string | null; categoryId: string | null; include: boolean; allOfBrand?: boolean }
 export interface CommitResult { statementId: number; accountId: number; added: number; skippedDuplicates: number; firstDate: string | null; lastDate: string | null }
 
 export interface StatementInfo {
@@ -175,10 +237,10 @@ export const api = {
       invoke<PeriodSummary>('periods.summary', { from, to, granularity, currency }),
   },
   tx: {
-    setCategory: (id: number, categoryId: string) => invoke<{ changed: number }>('tx.setCategory', { id, categoryId }),
+    setCategory: (id: number, categoryId: string, allOfBrand: boolean) => invoke<{ changed: number }>('tx.setCategory', { id, categoryId, allOfBrand }),
     setBrand: (id: number, brand: string) => invoke<{ changed: number }>('tx.setBrand', { id, brand }),
     create: (input: TransactionInput) => invoke<TransactionView>('tx.create', { input }),
-    update: (id: number, input: TransactionInput) => invoke<TransactionView>('tx.update', { id, input }),
+    update: (id: number, input: TransactionInput, allOfBrand = true) => invoke<TransactionView>('tx.update', { id, input, allOfBrand }),
     remove: (id: number) => invoke<null>('tx.delete', { id }),
   },
   brands: {
@@ -224,6 +286,9 @@ export const api = {
       invoke<{ folder: string; fileName: string }>('report.defaults', { from, to, granularity, currency }),
     export: (p: { from: string; to: string; granularity: Granularity; currency: string; folder: string; fileName: string }) =>
       invoke<{ path: string }>('report.export', p),
+  },
+  gaps: {
+    fill: (accountId: number, items: GapSuggestion[], from: string, to: string) => invoke<{ added: number }>('gaps.fill', { accountId, items, from, to }),
   },
   eraseAll: () => invoke<null>('data.eraseAll'),
 }

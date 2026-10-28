@@ -27,10 +27,14 @@ internal sealed class AppServices : IDisposable
         // ("hidden"), or among the other operations ("inline").
         ["periodTransfers"] = "separate",
         ["calendarHideCardPayments"] = "true",
+        // Calendar: every transfer, card payment and investment left out (only spending and income shown).
+        ["calendarHideTransfers"] = "true",
+        // Pies: every category and brand ("true"), or the five largest and "Other" ("false").
+        ["pieShowAll"] = "true",
     };
 
     /// <summary>Raised whenever classification rules change, so existing operations are classified again at start.</summary>
-    private const string RulesVersion = "3";
+    private const string RulesVersion = "4";
 
     /// <summary>Banks whose statements and exports the reader has been proven on.</summary>
     public static readonly (string Id, string Name, bool Proven)[] BankProfiles = [("auto", "Any bank", false), ("bnc", "Banque Nationale (BNC)", true)];
@@ -80,9 +84,10 @@ internal sealed class AppServices : IDisposable
                 throw new ArgumentException("Unknown bank.");
             case "periodTransfers" when value is not ("separate" or "hidden" or "inline"):
                 throw new ArgumentException("Unknown choice.");
-            case "calendarHideCardPayments" when value is not ("true" or "false"):
+            case "calendarHideCardPayments" or "calendarHideTransfers" or "pieShowAll" when value is not ("true" or "false"):
                 throw new ArgumentException("Unknown choice.");
-            case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window" or "bankingSystem" or "bankFocus" or "periodTransfers" or "calendarHideCardPayments":
+            case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window" or "bankingSystem" or "bankFocus" or "periodTransfers"
+                or "calendarHideCardPayments" or "calendarHideTransfers" or "pieShowAll":
                 Db.SetSetting(key, value);
                 break;
             default:

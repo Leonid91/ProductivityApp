@@ -186,6 +186,10 @@ try {
   await sleep(300)
   await shot(p, '12a-category-picker.png')
   await p.clickText('Entertainment', { selector: '[role=menuitem]' })
+  // The person is asked: this operation only, or every operation of the brand.
+  await p.waitFor(`document.querySelector('[data-scope-dialog]') !== null`, 5000, 'scope question')
+  await shot(p, '12b-scope-question.png')
+  await p.clickText('All “', { selector: '[role=dialog] button', partial: true })
   await p.waitFor(`document.body.innerText.includes('Saved for')`, 10000, 'learned toast')
   await shot(p, '12-learned.png')
   const rules = (await p.engine('brands.list')).rules

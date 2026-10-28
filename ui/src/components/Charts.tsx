@@ -4,12 +4,25 @@ import { BarChart } from '@mui/x-charts/BarChart'
 import type { Bar, Slice } from '../api'
 import { money, percent } from '../format'
 
-function sliceColor(colors: string[], other: string, slice: Slice, index: number) {
-  return slice.key === '__other' ? other : colors[index % colors.length]
+/** HSL to #rrggbb, the same arithmetic as the PDF palette (Palette.Series in the engine). */
+function hsl(h: number, s: number, l: number): string {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  const hex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0')
+  return `#${hex(r)}${hex(g)}${hex(b)}`
 }
 
-/** Donut of expenses with a legend that carries names, amounts and shares in text colours. */
-export function ExpensePie({ title, slices, currency }: { title: string; slices: Slice[]; currency: string }) {
+/** The eight series colours, then evenly spread hues: any number of slices stays distinguishable. */
+function sliceColor(colors: string[], other: string, slice: Slice, index: number) {
+  if (slice.key === '__other') return other
+  if (index < colors.length) return colors[index]
+  return hsl(((index - colors.length) * 137.508) % 360, 0.55, 0.52)
+}
+
+/** Donut with a legend that carries names, amounts and shares in text colours. */
+export function ExpensePie({ title, slices, currency, empty = 'No expenses' }: { title: string; slices: Slice[]; currency: string; empty?: string }) {
   const theme = useTheme()
   const { series, other } = theme.palette.chart
   const total = slices.reduce((s, x) => s + x.amount, 0)
@@ -17,9 +30,9 @@ export function ExpensePie({ title, slices, currency }: { title: string; slices:
     <Box sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, flex: '1 1 340px', minWidth: 0, bgcolor: 'background.paper' }}>
       <Typography variant="subtitle1" sx={{ mb: 1.5 }}>{title}</Typography>
       {slices.length === 0 ? (
-        <Typography color="text.secondary" sx={{ py: 6, textAlign: 'center' }}>No expenses</Typography>
+        <Typography color="text.secondary" sx={{ py: 6, textAlign: 'center' }}>{empty}</Typography>
       ) : (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
+        <Box data-pie={title} sx={{ display: 'flex', alignItems: slices.length > 12 ? 'flex-start' : 'center', gap: 2.5 }}>
           <Box sx={{ position: 'relative', width: 168, height: 168, flex: '0 0 168px' }}>
             <PieChart
               width={168}
@@ -44,7 +57,7 @@ export function ExpensePie({ title, slices, currency }: { title: string; slices:
               </Box>
             </Box>
           </Box>
-          <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0, flex: 1, minWidth: 0, display: 'grid', gap: 0.9 }}>
+          <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0, flex: 1, minWidth: 0, display: 'grid', gap: slices.length > 14 ? 0.5 : 0.9 }}>
             {slices.map((s, i) => (
               <Box component="li" key={s.key} sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                 <Box sx={{ width: 10, height: 10, borderRadius: '3px', flex: '0 0 10px', bgcolor: sliceColor(series, other, s, i) }} />
@@ -65,9 +78,10 @@ export function ExpenseBars({ bars, unit, currency }: { bars: Bar[]; unit: 'day'
   const theme = useTheme()
   const title = unit === 'day' ? 'Expenses per day' : unit === 'month' ? 'Expenses per month' : 'Expenses per year'
   const max = Math.max(0, ...bars.map((b) => b.expenses))
-  const every = bars.length <= 14 ? 1 : bars.length <= 31 ? 5 : Math.ceil(bars.length / 12)
+  // Every day of a month is on the axis, from the 1st to the last; longer series keep about twelve labels.
+  const every = bars.length <= 31 ? 1 : Math.ceil(bars.length / 12)
   return (
-    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, pb: 1, bgcolor: 'background.paper' }}>
+    <Box data-bars sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, pb: 1, bgcolor: 'background.paper' }}>
       <Typography variant="subtitle1">{title}</Typography>
       {max === 0 ? (
         <Typography color="text.secondary" sx={{ py: 6, textAlign: 'center' }}>No expenses</Typography>
@@ -81,9 +95,11 @@ export function ExpenseBars({ bars, unit, currency }: { bars: Bar[]; unit: 'day'
           xAxis={[{
             scaleType: 'band',
             data: bars.map((b) => b.label),
-            categoryGapRatio: bars.length > 20 ? 0.35 : 0.45,
+            categoryGapRatio: bars.length > 20 ? 0.3 : 0.45,
             tickLabelInterval: (_v: unknown, i: number) => every === 1 || i === 0 || (i + 1) % every === 0,
             disableTicks: true,
+            // Never drop a day label to make room: all of them are wanted.
+            tickLabelMinGap: 0,
             tickLabelStyle: { fontSize: 11, fill: theme.palette.chart.axis },
             valueFormatter: (v: string, ctx) => (ctx.location === 'tooltip' ? (unit === 'day' ? `Day ${v}` : v) : v),
           }]}

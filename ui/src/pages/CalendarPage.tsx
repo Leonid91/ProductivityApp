@@ -20,7 +20,9 @@ import { TransactionDialog } from '../components/TransactionDialog'
 /** Month calendar: what went out and came in each day; a day opens its operations. */
 export function CalendarPage() {
   const { settings, dataVersion, fail, category } = useApp()
-  const hideCard = settings.calendarHideCardPayments !== 'false'
+  // Settings: every transfer, card payment and investment hidden (default), or only credit card payments.
+  const hideMoves = settings.calendarHideTransfers !== 'false'
+  const hideCard = hideMoves || settings.calendarHideCardPayments !== 'false'
   const theme = useTheme()
   const dark = theme.palette.mode === 'dark'
   const [month, setMonth] = useState(() => { const t = parts(today()); return { y: t.y, m: t.m } })
@@ -50,18 +52,20 @@ export function CalendarPage() {
   const events = useMemo(() => {
     if (!summary) return []
     return summary.series.flatMap((b) => {
-      const moved = b.moved + (hideCard ? 0 : b.cardPaid)
+      const moved = hideMoves ? 0 : b.moved + (hideCard ? 0 : b.cardPaid)
       return [
         ...(b.earnings > 0 ? [{ id: 'i' + b.key, start: b.key, allDay: true, title: money(b.earnings, currency, { sign: true }), extendedProps: { kind: 'in' } }] : []),
         ...(b.expenses > 0 ? [{ id: 'e' + b.key, start: b.key, allDay: true, title: money(-b.expenses, currency), extendedProps: { kind: 'out' } }] : []),
         ...(moved > 0 ? [{ id: 'm' + b.key, start: b.key, allDay: true, title: '⇄ ' + money(moved, currency), extendedProps: { kind: 'move' } }] : []),
       ]
     })
-  }, [summary, currency, hideCard])
+  }, [summary, currency, hideCard, hideMoves])
 
   const dayTx = useMemo(
-    () => summary?.transactions.filter((t) => t.date === day && !(hideCard && t.categoryId === 'cardpayments')) ?? [],
-    [summary, day, hideCard],
+    () => summary?.transactions.filter((t) => t.date === day
+      && !(hideMoves && category(t.categoryId).kind === 'transfer')
+      && !(hideCard && t.categoryId === 'cardpayments')) ?? [],
+    [summary, day, hideCard, hideMoves, category],
   )
   const brands = useMemo(() => [...new Set(summary?.transactions.map((t) => t.brand) ?? [])], [summary])
 

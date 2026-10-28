@@ -16,8 +16,11 @@ public static class TransferMatcher
     {
         var accounts = db.Accounts().ToDictionary(a => a.Id);
         var changed = CardSpendingWithoutCard(db, accounts);
+        db.ClearLinks();
         if (accounts.Count < 2) return changed;
-        var txs = db.AllTransactions().Where(t => t.CategorySource != ValueSource.User).ToList();
+        // A movement the person marked by hand still pairs with its other half (to show where the money went);
+        // anything else they categorised by hand stays out of the pairing.
+        var txs = db.AllTransactions().Where(t => t.CategorySource != ValueSource.User || IsMovement(t)).ToList();
         var outgoing = txs.Where(t => t.Amount < 0).OrderBy(t => t.Date).ToList();
         var incoming = txs.Where(t => t.Amount > 0).GroupBy(t => (t.Amount, t.Currency)).ToDictionary(g => g.Key, g => g.OrderBy(t => t.Date).ToList());
         var used = new HashSet<long>();
@@ -52,8 +55,10 @@ public static class TransferMatcher
                 var category = cardInvolved ? Categories.CardPayments
                     : o.CategoryId == Categories.Investments || best.CategoryId == Categories.Investments ? Categories.Investments
                     : Categories.Transfers;
+                db.SetLink(o.Id, best.Id);
                 foreach (var t in new[] { o, best })
                 {
+                    if (t.CategorySource == ValueSource.User) continue;
                     if (t.CategoryId == category && t.CategorySource == ValueSource.Linked) continue;
                     t.CategoryId = category;
                     t.CategorySource = ValueSource.Linked;

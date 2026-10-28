@@ -1,0 +1,282 @@
+using System.Globalization;
+using ProductivityApp.Finance.Classification;
+using ProductivityApp.Finance.Model;
+using ProductivityApp.Finance.Storage;
+
+namespace ProductivityApp.Finance.Services;
+
+// ==================================================================================================== recurring
+
+/// <summary>
+/// Finds the payments and income that come back regularly (rent, insurance, phone, subscriptions, salary...),
+/// over the whole history, so each period can show them apart with their total.
+/// </summary>
+public static class RecurringDetector
+{
+    /// <summary>Recurring by nature: one payment in these categories is enough.</summary>
+    public static readonly HashSet<string> BillCategories = ["housing", "utilities", "telecom", "subscriptions", "insurance", "salary"];
+
+    /// <summary>
+    /// Bought again and again at the same price without being a commitment (a coffee, a bus fare, the same take-away):
+    /// never recurring, whatever the amounts.
+    /// </summary>
+    public static readonly HashSet<string> EverydayCategories = ["groceries", "restaurants", "transport", "car", "cash", "travel", "gifts", "refunds"];
+
+    /// <summary>
+    /// Returns, for every recurring operation, how often it comes back ("monthly", "twice a month", "yearly").
+    /// Operations are grouped by brand and direction, then by amount (two phone lines at the same operator are two
+    /// series). A series is recurring when it shows up in at least two different months at a steady amount, at most
+    /// a few times a month.
+    /// </summary>
+    public static Dictionary<long, string> Detect(IReadOnlyList<Transaction> all)
+    {
+        var result = new Dictionary<long, string>();
+        var counted = all.Where(t => Categories.Get(t.CategoryId).Kind != CategoryKind.Transfer && Categories.Get(t.CategoryId).Group is null).ToList();
+
+        // A bill category is enough on its own, except for a known shop the bank filed under a bill heading
+        // (an Amazon purchase under "Internet"): that one must come back like anything else.
+        var shops = BuiltInBrands.All.Where(b => !BillCategories.Contains(b.CategoryId)).Select(b => b.Brand).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in counted.Where(t => BillCategories.Contains(t.CategoryId) && !shops.Contains(t.Brand)))
+            result[t.Id] = "monthly";
+
+        foreach (var group in counted.GroupBy(t => (Brand: t.Brand.Trim().ToUpperInvariant(), In: t.Amount > 0)))
+        {
+            var income = group.Key.In;
+            var tolerance = income ? 1.4m : 1.25m;
+            foreach (var series in Clusters(group.ToList(), tolerance))
+            {
+                var months = series.GroupBy(t => t.Date.Year * 12 + t.Date.Month).ToList();
+                if (months.Count < 2) continue;
+                var perMonth = (double)series.Count / months.Count;
+                var category = series.GroupBy(t => t.CategoryId).OrderByDescending(g => g.Count()).First().Key;
+                if (EverydayCategories.Contains(category)) continue;
+                var bill = (BillCategories.Contains(category) && !shops.Contains(series[0].Brand)) || income;
+                // Something else (a hairdresser, an online shop) must come back exactly once a month at a near-equal price.
+                if (!bill && (months.Any(m => m.Count() != 1) || Spread(series) > 1.06m)) continue;
+                if (perMonth > 2.5) continue;
+                var span = months.Max(m => m.Key) - months.Min(m => m.Key);
+                var frequency = months.Count >= 2 && span >= 11 * (months.Count - 1) ? "yearly"
+                    : perMonth >= 1.8 ? "twice a month"
+                    : "monthly";
+                foreach (var t in series) result[t.Id] = frequency;
+            }
+        }
+        return result;
+    }
+
+    private static decimal Spread(List<Transaction> s)
+    {
+        var a = s.Select(t => Math.Abs(t.Amount)).ToList();
+        return a.Min() == 0 ? decimal.MaxValue : a.Max() / a.Min();
+    }
+
+    /// <summary>Splits operations into series of similar amounts (each within <paramref name="tolerance"/> times the smallest).</summary>
+    private static IEnumerable<List<Transaction>> Clusters(List<Transaction> items, decimal tolerance)
+    {
+        var sorted = items.OrderBy(t => Math.Abs(t.Amount)).ToList();
+        var current = new List<Transaction>();
+        foreach (var t in sorted)
+        {
+            if (current.Count > 0 && Math.Abs(t.Amount) > Math.Abs(current[0].Amount) * tolerance)
+            {
+                yield return current;
+                current = [];
+            }
+            current.Add(t);
+        }
+        if (current.Count > 0) yield return current;
+    }
+}
+
+// ==================================================================================================== balance gaps
+
+/// <summary>An operation that probably fills a balance gap: the same one as in a nearby month.</summary>
+public sealed record GapSuggestion(string Date, string Brand, string Label, string CategoryId, decimal Amount, string SeenOn);
+
+/// <summary>
+/// Two known balances of one account that the saved operations do not explain: money left (or arrived) and no imported
+/// file shows the operation. Days <see cref="From"/> to <see cref="To"/> are where it must be.
+/// </summary>
+public sealed record BalanceGap(
+    long AccountId, string Account, string Currency, string From, string To,
+    string KnownDate, decimal KnownBalance, string NextDate, decimal NextBalance, decimal Explained, decimal Missing,
+    List<GapSuggestion> Suggestions);
+
+/// <summary>
+/// Checks every account whose statements print balances: from one known balance to the next, the saved operations must
+/// add up exactly. Statements give two known balances each (opening, at the start of their first day; closing, at the
+/// end of their last day), so a month missing between two files, lines cut from an export or a misread line all show.
+/// </summary>
+public static class BalanceGaps
+{
+    private readonly record struct Anchor(DateOnly Day, bool EndOfDay, decimal Balance);
+
+    public static List<BalanceGap> Find(Database db)
+    {
+        var accounts = db.Accounts().ToDictionary(a => a.Id);
+        var byAccount = db.AllTransactions().GroupBy(t => t.AccountId).ToDictionary(g => g.Key, g => g.ToList());
+        var gaps = new List<BalanceGap>();
+        foreach (var group in db.Statements().Where(s => s.Verified).GroupBy(s => s.AccountId))
+        {
+            if (!accounts.TryGetValue(group.Key, out var account)) continue;
+            var anchors = new List<Anchor>();
+            foreach (var s in group)
+            {
+                if (s.PeriodStart is { } ps && s.OpeningBalance is { } o) anchors.Add(new Anchor(ps, false, o));
+                if (s.PeriodEnd is { } pe && s.ClosingBalance is { } c) anchors.Add(new Anchor(pe, true, c));
+            }
+            anchors = anchors.Distinct().OrderBy(a => a.Day).ThenBy(a => a.EndOfDay).ToList();
+            var txs = byAccount.GetValueOrDefault(group.Key) ?? [];
+            for (var i = 0; i + 1 < anchors.Count; i++)
+            {
+                var a = anchors[i];
+                var b = anchors[i + 1];
+                if (a.Day == b.Day && a.EndOfDay == b.EndOfDay) continue;
+                // Days whose operations sit between the two balances.
+                var lo = a.EndOfDay ? a.Day.AddDays(1) : a.Day;
+                var hi = b.EndOfDay ? b.Day : b.Day.AddDays(-1);
+                var explained = txs.Where(t => t.Date >= lo && t.Date <= hi).Sum(t => t.Amount);
+                var missing = b.Balance - a.Balance - explained;
+                if (Math.Abs(missing) < 0.005m) continue;
+                if (lo > hi) { lo = a.Day; hi = b.Day; }
+                gaps.Add(new BalanceGap(
+                    account.Id, account.Name, account.Currency, Iso(lo), Iso(hi),
+                    Iso(a.Day), a.Balance, Iso(b.Day), b.Balance, explained, missing,
+                    Suggest(txs, lo, hi, missing)));
+            }
+        }
+        return gaps;
+    }
+
+    /// <summary>
+    /// The operations of the same account in the two months around the gap that add up exactly to what is missing,
+    /// placed on the same day of the month inside the gap (rent paid on the 3rd last month is probably paid on the 3rd).
+    /// Fewest operations first; nothing is proposed unless the sum is exact to the cent.
+    /// </summary>
+    public static List<GapSuggestion> Suggest(List<Transaction> txs, DateOnly lo, DateOnly hi, decimal missing)
+    {
+        var sign = Math.Sign(missing);
+        var near = txs.Where(t => !t.Estimated && Math.Sign(t.Amount) == sign && (t.Date < lo || t.Date > hi)
+                                  && Math.Abs(t.Date.DayNumber - lo.DayNumber) <= 70 && Math.Abs(t.Date.DayNumber - hi.DayNumber) <= 70)
+            .ToList();
+        // One candidate per distinct operation (same label and amount), the closest in time first; spending and income
+        // before movements between accounts, operations whose day of the month falls in the gap first.
+        bool InWindow(Transaction t) => Place(t.Date, lo, hi) is not null;
+        var candidates = near
+            .GroupBy(t => (Classifier.Normalize(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand), t.Amount))
+            .Select(g => g.OrderBy(t => Math.Min(Math.Abs(t.Date.DayNumber - lo.DayNumber), Math.Abs(t.Date.DayNumber - hi.DayNumber))).First())
+            .OrderBy(t => InWindow(t) ? 0 : 1)
+            .ThenBy(t => Categories.IsTransfer(t.CategoryId) ? 1 : 0)
+            .ThenByDescending(t => Math.Abs(t.Amount))
+            .Take(24)
+            .ToList();
+        var target = missing;
+        List<Transaction>? best = null;
+        var bestScore = int.MaxValue;
+        void Try(List<Transaction> pick)
+        {
+            if (pick.Sum(t => t.Amount) != target) return;
+            var score = pick.Count * 100 + pick.Count(t => !InWindow(t)) * 10 + pick.Count(t => Categories.IsTransfer(t.CategoryId));
+            if (score < bestScore) { bestScore = score; best = [.. pick]; }
+        }
+        var n = candidates.Count;
+        for (var i = 0; i < n; i++)
+        {
+            Try([candidates[i]]);
+            for (var j = i + 1; j < n; j++)
+            {
+                Try([candidates[i], candidates[j]]);
+                for (var k = j + 1; k < n; k++)
+                {
+                    Try([candidates[i], candidates[j], candidates[k]]);
+                    for (var l = k + 1; l < n && n <= 24; l++) Try([candidates[i], candidates[j], candidates[k], candidates[l]]);
+                }
+            }
+        }
+        if (best is null) return [];
+        return best.OrderBy(t => t.Date.Day).Select(t => new GapSuggestion(
+            Iso(Place(t.Date, lo, hi) ?? lo), t.Brand, t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.CategoryId, t.Amount, Iso(t.Date))).ToList();
+    }
+
+    /// <summary>The same day of the month as <paramref name="seen"/>, inside the gap, or null.</summary>
+    private static DateOnly? Place(DateOnly seen, DateOnly lo, DateOnly hi)
+    {
+        for (var m = new DateOnly(lo.Year, lo.Month, 1); m <= hi; m = m.AddMonths(1))
+        {
+            var day = Math.Min(seen.Day, DateTime.DaysInMonth(m.Year, m.Month));
+            var d = new DateOnly(m.Year, m.Month, day);
+            if (d >= lo && d <= hi) return d;
+        }
+        return null;
+    }
+
+    private static string Iso(DateOnly d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+}
+
+// ==================================================================================================== movements
+
+/// <summary>One movement of money, seen once: from an account (or the outside) to another account (or the outside).</summary>
+public sealed record MovementView(
+    string Date, string CategoryId, string Label, decimal Amount, string From, string To, bool FromOutside, bool ToOutside,
+    long EditId, long? OtherId, bool Estimated);
+
+/// <summary>The total moved from one place to another over a period.</summary>
+public sealed record Flow(string From, string To, decimal Amount, bool FromOutside, bool ToOutside, int Count);
+
+public static class Movements
+{
+    public const string Outside = "Outside (not imported)";
+    public const string OutsideInvestments = "Investments (not imported)";
+    public const string OutsideBank = "Bank account (not imported)";
+    public const string OutsideCard = "Credit card (not imported)";
+
+    /// <summary>
+    /// Every transfer, card payment and investment of the period, each movement once. Its two halves (when both accounts
+    /// are imported) make one line; a half alone goes to or comes from the outside: an account that is not imported,
+    /// another person, an investment account.
+    /// </summary>
+    public static List<MovementView> Build(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts)
+    {
+        var list = new List<MovementView>();
+        var seen = new HashSet<long>();
+        var cards = accounts.Values.Where(a => a.Kind == AccountKind.CreditCard).ToList();
+        string Name(long id) => accounts.TryGetValue(id, out var a) ? a.Name : "Account";
+        foreach (var t in period.Where(t => Categories.IsTransfer(t.CategoryId)).OrderBy(t => t.Date).ThenBy(t => t.Id))
+        {
+            if (!seen.Add(t.Id)) continue;
+            var other = t.LinkedId is { } lid && linked.TryGetValue(lid, out var o) ? o : null;
+            if (other is not null)
+            {
+                seen.Add(other.Id);
+                var (out_, in_) = t.Amount < 0 ? (t, other) : (other, t);
+                list.Add(new MovementView(Iso(out_.Date), out_.CategoryId, out_.Brand, Math.Abs(t.Amount), Name(out_.AccountId), Name(in_.AccountId),
+                    false, false, out_.Id, in_.Id, out_.Estimated || in_.Estimated));
+                continue;
+            }
+            var kind = accounts.TryGetValue(t.AccountId, out var acc) ? acc.Kind : AccountKind.Bank;
+            string counterpart;
+            var counterpartOutside = true;
+            if (t.CategoryId == Categories.CardPayments && kind != AccountKind.CreditCard && t.Amount < 0)
+            {
+                // A card paid from this account: the card is the person's own even when its other half is not imported.
+                if (cards.Count == 1) { counterpart = cards[0].Name; counterpartOutside = false; }
+                else counterpart = OutsideCard;
+            }
+            else if (kind == AccountKind.CreditCard && t.Amount > 0) counterpart = OutsideBank;
+            else if (t.CategoryId == Categories.Investments) counterpart = OutsideInvestments;
+            else counterpart = Outside;
+            list.Add(t.Amount < 0
+                ? new MovementView(Iso(t.Date), t.CategoryId, t.Brand, -t.Amount, Name(t.AccountId), counterpart, false, counterpartOutside, t.Id, null, t.Estimated)
+                : new MovementView(Iso(t.Date), t.CategoryId, t.Brand, t.Amount, counterpart, Name(t.AccountId), counterpartOutside, false, t.Id, null, t.Estimated));
+        }
+        return list;
+    }
+
+    public static List<Flow> Flows(IEnumerable<MovementView> movements) => movements
+        .GroupBy(m => (m.From, m.To, m.FromOutside, m.ToOutside))
+        .Select(g => new Flow(g.Key.From, g.Key.To, g.Sum(m => m.Amount), g.Key.FromOutside, g.Key.ToOutside, g.Count()))
+        .OrderByDescending(f => f.Amount)
+        .ToList();
+
+    private static string Iso(DateOnly d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+}

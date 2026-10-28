@@ -108,6 +108,12 @@ public sealed class Classifier
             categorySource = bankSays == category ? ValueSource.Bank : ValueSource.Keyword;
         }
 
+        // A known subscription stays a subscription even when the bank files it under a broad heading
+        // ("Electroniques et logiciels" for a monthly AI or software plan).
+        if (category is null && amount < 0 && builtIn is not null && builtIn.Brand == brand && builtIn.CategoryId == "subscriptions"
+            && BankCategories.Map(bankCategory, amount) is null or "shopping" or "entertainment")
+        { category = builtIn.CategoryId; categorySource = ValueSource.BuiltIn; }
+
         // The bank's own category, when its export has one, is more reliable than any guess from the label.
         if (category is null && BankCategories.Map(bankCategory, amount) is { } fromBank) { category = fromBank; categorySource = ValueSource.Bank; }
 

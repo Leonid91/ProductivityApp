@@ -147,7 +147,7 @@ public static class BncGenerator
                     }
                 });
             });
-        })).GeneratePdf();
+        })).WithMetadata(new DocumentMetadata { CreationDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), ModifiedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) }).GeneratePdf();
     }
 
     /// <summary>The CSV export, newest operation first, with the bank's own quoting.</summary>

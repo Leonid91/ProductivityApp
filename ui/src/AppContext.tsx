@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Alert, Button, Snackbar } from '@mui/material'
+import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Snackbar, Typography } from '@mui/material'
 import { api, type Account, type Category, type InitInfo, type Settings } from './api'
 
 export type Page = 'periods' | 'calendar' | 'import' | 'brands' | 'settings'
@@ -26,6 +26,11 @@ interface AppState {
   fail: (error: unknown) => void
   page: Page
   go: (page: Page) => void
+  /**
+   * Asks whether a new category is for this operation only (false) or for every operation of the brand, past and
+   * future (true). Null when the person cancels.
+   */
+  askScope: (brand: string, categoryName: string) => Promise<boolean | null>
 }
 
 const Ctx = createContext<AppState | null>(null)
@@ -43,6 +48,12 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const [page, setPage] = useState<Page>('periods')
   const [toast, setToast] = useState<Toast | null>(null)
   const counter = useRef(0)
+  const [scope, setScope] = useState<{ brand: string; category: string; resolve: (v: boolean | null) => void } | null>(null)
+
+  const askScope = useCallback((brand: string, categoryName: string) => new Promise<boolean | null>((resolve) => {
+    setScope({ brand, category: categoryName, resolve })
+  }), [])
+  const answer = (v: boolean | null) => { scope?.resolve(v); setScope(null) }
 
   const byId = useMemo(() => new Map(info.categories.map((c) => [c.id, c])), [info.categories])
 
@@ -88,11 +99,27 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     fail,
     page,
     go: setPage,
+    askScope,
   }
 
   return (
     <Ctx.Provider value={value}>
       {children}
+      <Dialog open={scope !== null} onClose={() => answer(null)} maxWidth="xs" fullWidth data-scope-dialog>
+        <DialogTitle>Change the category to “{scope?.category}”</DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary">
+            For this operation only, or for every “{scope?.brand}” operation? Every operation also covers the ones already saved and the
+            ones you will import later.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5, flexWrap: 'wrap', gap: 1 }}>
+          <Button onClick={() => answer(null)}>Cancel</Button>
+          <Box sx={{ flex: 1 }} />
+          <Button variant="outlined" onClick={() => answer(false)}>Only this one</Button>
+          <Button variant="contained" onClick={() => answer(true)} sx={{ ml: '0 !important' }}>All “{scope?.brand}”</Button>
+        </DialogActions>
+      </Dialog>
       <Snackbar
         key={toast?.key}
         open={toast !== null}

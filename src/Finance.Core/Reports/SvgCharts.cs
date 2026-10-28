@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using ProductivityApp.Finance.Services;
+using Flow = ProductivityApp.Finance.Services.Flow;
 
 namespace ProductivityApp.Finance.Reports;
 
@@ -9,7 +10,7 @@ public static class SvgCharts
 {
     private static string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
 
-    public static string SliceColor(int index, string key) => key == "__other" ? Palette.Other : Palette.SeriesLight[index % Palette.SeriesLight.Length];
+    public static string SliceColor(int index, string key) => key == "__other" ? Palette.Other : Palette.Series(index);
 
     public static string Donut(IReadOnlyList<Slice> slices, double size)
     {
@@ -68,7 +69,8 @@ public static class SvgCharts
         {
             var band = plotW / bars.Count;
             var barW = Math.Max(1.5, Math.Min(band * 0.62, 26));
-            var labelEvery = bars.Count <= 14 ? 1 : bars.Count <= 31 ? 5 : (int)Math.Ceiling(bars.Count / 12.0);
+            // Every day of a month is labelled, 1 to the last; longer series keep about twelve labels.
+            var labelEvery = bars.Count <= 31 ? 1 : (int)Math.Ceiling(bars.Count / 12.0);
             for (var i = 0; i < bars.Count; i++)
             {
                 var x = left + band * i + (band - barW) / 2;
@@ -84,6 +86,39 @@ public static class SvgCharts
                 if (showLabel)
                     sb.Append($"<text x=\"{F(left + band * i + band / 2)}\" y=\"{F(height - 5)}\" font-size=\"7\" fill=\"{Palette.InkMuted}\" text-anchor=\"middle\">{Escape(bars[i].Label)}</text>");
             }
+        }
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Where the money moved: sources on the left (accounts, or the outside), destinations on the right, one band per
+    /// flow as wide as its amount. Blue between the person's own accounts, orange to or from the outside.
+    /// </summary>
+    public static string FlowDiagram(IReadOnlyList<Flow> flows, double width, double height, string currency)
+    {
+        var layout = FlowLayout.Compute(flows, width, height);
+        var sb = new StringBuilder();
+        sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(width)}\" height=\"{F(height)}\" viewBox=\"0 0 {F(width)} {F(height)}\" font-family=\"Inter\">");
+        foreach (var b in layout.Bands)
+        {
+            var color = b.Flow.FromOutside || b.Flow.ToOutside ? Palette.OutsideInk : Palette.Accent;
+            var xm = (layout.LeftX + layout.RightX) / 2;
+            sb.Append($"<path d=\"M{F(layout.LeftX)} {F(b.Y0)} C{F(xm)} {F(b.Y0)} {F(xm)} {F(b.Y1)} {F(layout.RightX)} {F(b.Y1)} L{F(layout.RightX)} {F(b.Y1 + b.Thickness)} C{F(xm)} {F(b.Y1 + b.Thickness)} {F(xm)} {F(b.Y0 + b.Thickness)} {F(layout.LeftX)} {F(b.Y0 + b.Thickness)} Z\" fill=\"{color}\" fill-opacity=\"0.32\"/>");
+            // The amount sits where the band leaves its source: bands never overlap there.
+            if (b.Thickness >= 9)
+                sb.Append($"<text x=\"{F(layout.LeftX + 6)}\" y=\"{F(b.Y0 + b.Thickness / 2 + 2.5)}\" font-size=\"7\" fill=\"{Palette.InkSecondary}\" text-anchor=\"start\">{Escape(Formatting.Money(b.Flow.Amount, currency))}</text>");
+        }
+        foreach (var n in layout.Nodes)
+        {
+            var color = n.Outside ? Palette.OutsideInk : Palette.Ink;
+            var x = n.Left ? layout.LeftX - FlowLayout.NodeWidth : layout.RightX;
+            sb.Append($"<rect x=\"{F(x)}\" y=\"{F(n.Y)}\" width=\"{F(FlowLayout.NodeWidth)}\" height=\"{F(Math.Max(1.5, n.Height))}\" rx=\"1.5\" fill=\"{color}\"/>");
+            var tx = n.Left ? x - 5 : x + FlowLayout.NodeWidth + 5;
+            var anchor = n.Left ? "end" : "start";
+            var cy = n.Y + Math.Max(1.5, n.Height) / 2;
+            sb.Append($"<text x=\"{F(tx)}\" y=\"{F(cy - 1)}\" font-size=\"7.5\" font-weight=\"600\" fill=\"{color}\" text-anchor=\"{anchor}\">{Escape(n.Name)}</text>");
+            sb.Append($"<text x=\"{F(tx)}\" y=\"{F(cy + 8)}\" font-size=\"7\" fill=\"{Palette.InkMuted}\" text-anchor=\"{anchor}\">{Escape(Formatting.Money(n.Total, currency))}</text>");
         }
         sb.Append("</svg>");
         return sb.ToString();

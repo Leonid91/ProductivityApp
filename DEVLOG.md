@@ -80,3 +80,46 @@
 - A card purchase could be paired with a transfer of the same amount and left out of spending.
 - Transfer pairs depended on the order files were imported in: everything is linked again after each import.
 - Brands keep the bank's own capitalisation ("Il ..." not "IL ...").
+
+## October 28th, 2026 - Missing operations, recurring payments, money moved, category scope - Commit 4
+
+### Added
+- Missing operations: every account whose statements print balances is checked from one known balance to the next;
+  when the saved operations do not add up (a month cut from an export, lines missing between two files), the month
+  shows how much went out or came in, between which days, and the operations it most likely is (the same ones as in
+  the nearby months, adding up exactly to the cent). One click adds them as "Estimated"; importing the statement
+  that holds the real ones replaces them. Shown in the PDF too.
+- Import: a plain "Balance check of this file" (starts with, ends with, what its lines add up to) and whether the
+  file follows on from what is already saved for the chosen account.
+- "Recurring payments & subscriptions" and "Regular income" tables after the operations, with their total for the
+  month or the year (and the monthly average for a year), found automatically over the whole history: rent,
+  insurance, phone, subscriptions, fees and salary; everyday purchases at the same price are never taken for them.
+  Moved out of the main table, never shown twice. A pie for each after the two main pies.
+- Transfers, card payments and investments table with From and To: each movement once, between two imported
+  accounts or to and from the outside (accounts not imported, other people, investments), in orange.
+- "Money moved" diagram in every month and year (screen and PDF): sources on the left, destinations on the right,
+  blue between own accounts, orange to or from the outside.
+- Changing a category asks: this operation only, or every operation of the brand (past and future). Also in the
+  edit window and during import.
+- Settings: pies show every category and brand (default) or the five largest and "Other"; the calendar hides every
+  transfer, card payment and investment (default).
+- Built-in subscriptions: OpenAI, Proton, GitHub, Patreon, Midjourney; a known subscription stays a
+  subscription when the bank files it under "Electronics & software".
+- Tests (112): missing rent found in every month it is cut from, over four generated years and any import order;
+  estimated lines replaced by the real ones; recurring payments and income; From / To of every movement; category
+  for one operation or the whole brand; pie colours; every day on the axis. The end-to-end check answers the new
+  category question.
+
+### Changed
+- Expenses per day: every day of the month on the axis, from the 1st to the last (screen and PDF).
+- Expenses box faintly red, earnings faintly green, balance more strongly in the colour of its sign (screen and PDF).
+- The PDF report has the same sections as the screen.
+- "Beneva" is shown as Beneva (was La Capitale).
+
+### Bug fixed
+- Exceptional categories, "Other exceptional" included, were not gold in the edit window.
+- Lines of zero (waived fees) no longer shorten the period a statement covers: their dates count for the balances.
+- An Amazon purchase filed by the bank under "Internet" was taken for a phone bill: a known shop must come back
+  before it counts as recurring.
+- Tests: the generated test statements carried the time they were made, so "the same file twice" failed whenever
+  the two copies were made in different seconds; they now carry a fixed date.

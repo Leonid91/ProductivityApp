@@ -633,6 +633,8 @@ public static class StatementParser
         }
 
         var zero = parsed.Count(r => r.Amount == 0);
+        // Zero lines are left out but their dates still belong to the period the balances cover.
+        var allDates = parsed.Select(r => r.Date).ToList();
         parsed = parsed.Where(r => r.Amount != 0).ToList();
 
         var result = new StatementParse
@@ -643,8 +645,8 @@ public static class StatementParser
             ZeroRowsSkipped = zero,
             OpeningBalance = opening,
             ClosingBalance = closing,
-            PeriodStart = period?.Start ?? (parsed.Count > 0 ? parsed.Min(r => r.Date) : null),
-            PeriodEnd = period?.End ?? (parsed.Count > 0 ? parsed.Max(r => r.Date) : null),
+            PeriodStart = period?.Start ?? (parsed.Count > 0 ? allDates.Min() : null),
+            PeriodEnd = period?.End ?? (parsed.Count > 0 ? allDates.Max() : null),
             Currency = ctx.Currency,
             Language = ctx.Language,
             Kind = ctx.Refine(kind),

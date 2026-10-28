@@ -9,9 +9,11 @@ public sealed record Slice(string Key, string Label, decimal Amount, double Shar
 /// <summary>One day, month or year. Moved is money moved between own accounts or to investments; CardPaid is credit card payments.</summary>
 public sealed record Bar(string Key, string Label, decimal Expenses, decimal Earnings, decimal Moved = 0, decimal CardPaid = 0);
 
+/// <param name="Recurring">How often it comes back ("monthly", "twice a month", "yearly"), or null when it is not recurring.</param>
 public sealed record TransactionView(
     long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, string CategorySource,
-    string BrandSource, string RawLabel, string Note, long AccountId, long? StatementId);
+    string BrandSource, string RawLabel, string Note, long AccountId, long? StatementId,
+    string? Recurring = null, bool Estimated = false, long? LinkedId = null);
 
 public sealed class PeriodSummary
 {
@@ -32,6 +34,17 @@ public sealed class PeriodSummary
     public required List<Slice> ByBrand { get; init; }
     public required List<Slice> BrandPie { get; init; }
     public required List<Bar> Series { get; init; }
+    /// <summary>Recurring payments of the period (rent, insurance, phone, subscriptions...) and their total.</summary>
+    public required decimal RecurringExpenses { get; init; }
+    /// <summary>Recurring income of the period (salary...) and its total.</summary>
+    public required decimal RecurringIncome { get; init; }
+    public required List<Slice> RecurringExpensePie { get; init; }
+    public required List<Slice> RecurringIncomePie { get; init; }
+    /// <summary>Transfers, card payments and investments, each movement once, from one account to another.</summary>
+    public required List<MovementView> Movements { get; init; }
+    public required List<Flow> Flows { get; init; }
+    /// <summary>Balances that the saved operations do not explain, on days of this period.</summary>
+    public required List<BalanceGap> Gaps { get; init; }
     /// <summary>"day", "month" or "year": what one bar of <see cref="Series"/> stands for.</summary>
     public required string SeriesUnit { get; init; }
 }
@@ -60,6 +73,18 @@ public sealed class SummaryService(Database db)
     {
         if (to < from) throw new ArgumentException("The period ends before it starts.");
         var txs = db.Transactions(from, to).Where(t => t.Currency == currency).ToList();
+        var everything = db.AllTransactions().Where(t => t.Currency == currency).ToList();
+        var recurring = RecurringDetector.Detect(everything);
+        var byId = everything.ToDictionary(t => t.Id);
+        var accounts = db.Accounts().ToDictionary(a => a.Id);
+        var movements = Movements.Build(txs, byId, accounts);
+        var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var toIso = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        // A gap shows in the period where its likely operations fall; without any, in every period its days touch.
+        bool In(string d) => string.CompareOrdinal(d, fromIso) >= 0 && string.CompareOrdinal(d, toIso) <= 0;
+        var gaps = BalanceGaps.Find(db).Where(g => g.Currency == currency && (g.Suggestions.Count > 0
+            ? g.Suggestions.Any(x => In(x.Date))
+            : string.CompareOrdinal(g.From, toIso) <= 0 && string.CompareOrdinal(g.To, fromIso) >= 0)).ToList();
 
         decimal expenses = 0, earnings = 0, transfersOut = 0, transfersIn = 0;
         var byCategory = new Dictionary<string, decimal>();
@@ -85,6 +110,12 @@ public sealed class SummaryService(Database db)
         }
 
         var categorySlices = Slices(byCategory.Select(kv => (kv.Key, Categories.Get(kv.Key).Name, kv.Value)), expenses);
+        var recurringOut = txs.Where(t => t.Amount < 0 && recurring.ContainsKey(t.Id)).ToList();
+        var recurringIn = txs.Where(t => t.Amount > 0 && recurring.ContainsKey(t.Id)).ToList();
+        var recurringOutTotal = -recurringOut.Sum(t => t.Amount);
+        var recurringInTotal = recurringIn.Sum(t => t.Amount);
+        var recurringOutSlices = Slices(recurringOut.GroupBy(t => t.Brand, StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, g.First().Brand, -g.Sum(t => t.Amount))), recurringOutTotal);
+        var recurringInSlices = Slices(recurringIn.GroupBy(t => t.Brand, StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, g.First().Brand, g.Sum(t => t.Amount))), recurringInTotal);
         var brandSlices = Slices(byBrand.Select(kv => (kv.Key, brandNames[kv.Key], kv.Value)), expenses);
 
         var (series, unit) = Series(txs, from, to, g);
@@ -101,19 +132,29 @@ public sealed class SummaryService(Database db)
             Balance = earnings - expenses,
             TransfersOut = transfersOut,
             TransfersIn = transfersIn,
-            Transactions = txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(View).ToList(),
+            Transactions = txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => View(t, recurring.GetValueOrDefault(t.Id))).ToList(),
             ByCategory = categorySlices,
             CategoryPie = FoldPie(categorySlices),
             ByBrand = brandSlices,
             BrandPie = FoldPie(brandSlices),
             Series = series,
             SeriesUnit = unit,
+            RecurringExpenses = recurringOutTotal,
+            RecurringIncome = recurringInTotal,
+            RecurringExpensePie = recurringOutSlices,
+            RecurringIncomePie = recurringInSlices,
+            Movements = movements,
+            Flows = Movements.Flows(movements),
+            Gaps = gaps,
         };
     }
 
-    public static TransactionView View(Transaction t) => new(
+    public static TransactionView View(Transaction t) => View(t, null);
+
+    public static TransactionView View(Transaction t, string? recurring) => new(
         t.Id, t.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), t.Amount, t.Currency, t.Brand, t.CategoryId,
-        t.CategorySource.ToString(), t.BrandSource.ToString(), t.RawLabel, t.Note, t.AccountId, t.StatementId);
+        t.CategorySource.ToString(), t.BrandSource.ToString(), t.RawLabel, t.Note, t.AccountId, t.StatementId,
+        recurring, t.Estimated, t.LinkedId);
 
     private static List<Slice> Slices(IEnumerable<(string Key, string Label, decimal Amount)> items, decimal total) =>
         items.OrderByDescending(x => x.Amount).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase)

@@ -57,8 +57,19 @@ export function SettingsPage() {
             <MenuItem value="inline">With the other operations</MenuItem>
           </TextField>
         </Row>
+        <Row label="Show every category and brand in the pies (off: the five largest and “Other”)">
+          <Switch slotProps={{ input: { 'aria-label': 'Show every category and brand in the pies' } }} checked={settings.pieShowAll !== 'false'} onChange={(e) => void setSetting('pieShowAll', e.target.checked ? 'true' : 'false')} />
+        </Row>
+        <Row label="Hide transfers, card payments and investments on the calendar">
+          <Switch slotProps={{ input: { 'aria-label': 'Hide transfers on the calendar' } }} checked={settings.calendarHideTransfers !== 'false'} onChange={(e) => void setSetting('calendarHideTransfers', e.target.checked ? 'true' : 'false')} />
+        </Row>
         <Row label="Hide credit card payments on the calendar">
-          <Switch checked={settings.calendarHideCardPayments !== 'false'} onChange={(e) => void setSetting('calendarHideCardPayments', e.target.checked ? 'true' : 'false')} />
+          <Switch
+            slotProps={{ input: { 'aria-label': 'Hide credit card payments on the calendar' } }}
+            disabled={settings.calendarHideTransfers !== 'false'}
+            checked={settings.calendarHideTransfers !== 'false' || settings.calendarHideCardPayments !== 'false'}
+            onChange={(e) => void setSetting('calendarHideCardPayments', e.target.checked ? 'true' : 'false')}
+          />
         </Row>
       </SectionCard>
 

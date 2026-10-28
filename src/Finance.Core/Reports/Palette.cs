@@ -13,4 +13,31 @@ public static class Palette
     public const string Positive = "#006300";
     public const string Negative = "#d03b3b";
     public const string Accent = "#2a78d6";
+    public const string Gold = "#9a6a00";
+    /// <summary>Money going to or coming from outside the imported accounts.</summary>
+    public const string OutsideInk = "#c4551f";
+    public const string NegativeSoft = "#fcf3f2";
+    public const string PositiveSoft = "#f1f8f1";
+    public const string NegativeStrong = "#f6d9d6";
+    public const string PositiveStrong = "#d5ead5";
+    public const string WarningSoft = "#fdf4e3";
+    public const string WarningInk = "#8a5a00";
+
+    /// <summary>Colour of slice <paramref name="index"/>: the eight series colours, then evenly spread hues (same as the interface).</summary>
+    public static string Series(int index)
+    {
+        if (index < SeriesLight.Length) return SeriesLight[index];
+        var hue = (index - SeriesLight.Length) * 137.508 % 360;
+        return Hsl(hue, 0.55, 0.52);
+    }
+
+    private static string Hsl(double h, double s, double l)
+    {
+        var c = (1 - Math.Abs(2 * l - 1)) * s;
+        var x = c * (1 - Math.Abs(h / 60 % 2 - 1));
+        var m = l - c / 2;
+        var (r, g, b) = h switch { < 60 => (c, x, 0d), < 120 => (x, c, 0d), < 180 => (0d, c, x), < 240 => (0d, x, c), < 300 => (x, 0d, c), _ => (c, 0d, x) };
+        int B(double v) => (int)Math.Round((v + m) * 255);
+        return $"#{B(r):x2}{B(g):x2}{B(b):x2}";
+    }
 }

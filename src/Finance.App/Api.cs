@@ -52,10 +52,15 @@ internal static class Api
             p.Opt<string>("currency") ?? s.Setting("currency")));
 
         // ------------------------------------------------------------ operations
-        b.Register("tx.setCategory", p => new { changed = s.Transactions.SetCategory(p.Get<long>("id"), p.Get<string>("categoryId")) });
+        b.Register("tx.setCategory", p => new { changed = s.Transactions.SetCategory(p.Get<long>("id"), p.Get<string>("categoryId"), p.Opt<bool?>("allOfBrand") ?? true) });
         b.Register("tx.setBrand", p => new { changed = s.Transactions.SetBrand(p.Get<long>("id"), p.Get<string>("brand")) });
         b.Register("tx.create", p => s.Transactions.Create(p.Get<TransactionInput>("input")));
-        b.Register("tx.update", p => s.Transactions.Update(p.Get<long>("id"), p.Get<TransactionInput>("input")));
+        b.Register("tx.update", p => s.Transactions.Update(p.Get<long>("id"), p.Get<TransactionInput>("input"), p.Opt<bool?>("allOfBrand") ?? true));
+        // Operations the balances prove happened but no imported file contains, added as estimated.
+        b.Register("gaps.fill", p => new
+        {
+            added = s.Transactions.AddEstimated(p.Get<long>("accountId"), p.Get<List<GapSuggestion>>("items"), p.Get<string>("from"), p.Get<string>("to")),
+        });
         b.Register("tx.delete", p => { s.Transactions.Delete(p.Get<long>("id")); return null; });
 
         // ------------------------------------------------------------ brands & dictionary
@@ -88,7 +93,7 @@ internal static class Api
             if (kindChanged) s.Transactions.ReapplyRules();
             return a;
         });
-        b.Register("accounts.delete", p => { s.Db.DeleteAccount(p.Get<long>("id")); return null; });
+        b.Register("accounts.delete", p => { s.Db.DeleteAccount(p.Get<long>("id")); s.Transactions.ReapplyRules(); return null; });
         b.Register("statements.list", _ =>
         {
             var accounts = s.Db.Accounts().ToDictionary(a => a.Id);
@@ -100,7 +105,7 @@ internal static class Api
                 currency = accounts.GetValueOrDefault(st.AccountId)?.Currency ?? "",
             });
         });
-        b.Register("statements.delete", p => { s.Db.DeleteStatement(p.Get<long>("id")); return null; });
+        b.Register("statements.delete", p => { s.Db.DeleteStatement(p.Get<long>("id")); s.Transactions.ReapplyRules(); return null; });
 
         // ------------------------------------------------------------ import
         b.RegisterBackground("import.parseFile", async p =>
@@ -207,7 +212,7 @@ internal static class Api
             if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new ArgumentException("The file name contains characters Windows does not allow.");
             if (!name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) name += ".pdf";
             var path = Path.Combine(folder, name);
-            var pdf = ReportBuilder.Build(summary, s.Setting("dateFormat"), DateTime.Now);
+            var pdf = ReportBuilder.Build(summary, s.Setting("dateFormat"), DateTime.Now, ReportOptions(s));
             File.WriteAllBytes(path, pdf);
             s.Db.SetSetting("reportsFolder", folder);
             return Task.FromResult<object?>(new { path });
@@ -223,6 +228,10 @@ internal static class Api
     private static PeriodSummary SummaryFrom(JsonElement p, AppServices s) => s.Summaries.Summarize(
         ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
         p.Opt<Granularity?>("granularity") ?? Granularity.Month, p.Opt<string>("currency") ?? s.Setting("currency"));
+
+    private static ReportBuilder.Options ReportOptions(AppServices s) => new(
+        PieShowAll: s.Setting("pieShowAll") != "false",
+        Transfers: s.Setting("periodTransfers"));
 
     private static string ReportsFolder(AppServices s)
     {
@@ -259,6 +268,7 @@ internal static class Api
             p.Language,
             p.DateOrder,
             rowChecks = p.RowBalanceChecks,
+            continuity = s.Imports.ContinuityOf(d),
             rowMismatches = p.RowBalanceMismatches,
             defaultAccountName = ImportService.DefaultAccountName(p),
             template = d.Template,

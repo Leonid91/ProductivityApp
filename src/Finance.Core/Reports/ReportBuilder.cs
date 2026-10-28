@@ -9,8 +9,10 @@ using QuestPDF.Infrastructure;
 namespace ProductivityApp.Finance.Reports;
 
 /// <summary>
-/// The period report, always in the same layout (US Letter, portrait): title, operations table,
-/// totals, expenses per category, expenses per brand, expenses per day (or month, or year).
+/// The period report, always in the same layout (US Letter, portrait), with the same sections as the screen:
+/// missing-operation warnings, operations, recurring payments, regular income, transfers (From / To), totals,
+/// pies (category, brand, recurring payments, regular income), expenses per day (or month, or year) and the
+/// diagram of the money moved.
 /// </summary>
 public static class ReportBuilder
 {
@@ -34,9 +36,21 @@ public static class ReportBuilder
         }
     }
 
-    public static byte[] Build(PeriodSummary s, string dateFormat, DateTime generatedAt)
+    /// <summary>
+    /// What the report shows, following the settings: every slice in the pies or the five largest; transfers in their
+    /// own table ("separate"), left out ("hidden") or among the operations ("inline").
+    /// </summary>
+    public sealed record Options(bool PieShowAll = true, string Transfers = "separate");
+
+    public static byte[] Build(PeriodSummary s, string dateFormat, DateTime generatedAt, Options? options = null)
     {
         Initialize();
+        var o = options ?? new Options();
+        bool IsMove(TransactionView t) => Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;
+        // Same split as the screen: recurring payments and income, then movements, are shown apart from the rest.
+        var main = s.Transactions.Where(t => t.Recurring is null && (o.Transfers == "inline" || !IsMove(t))).ToList();
+        var recurringOut = s.Transactions.Where(t => t.Recurring is not null && t.Amount < 0).ToList();
+        var recurringIn = s.Transactions.Where(t => t.Recurring is not null && t.Amount > 0).ToList();
         var doc = Document.Create(container => container.Page(page =>
         {
             page.Size(PageSizes.Letter);
@@ -59,11 +73,26 @@ public static class ReportBuilder
             page.Content().Column(col =>
             {
                 col.Spacing(16);
-                col.Item().Element(c => OperationsTable(c, s, dateFormat));
+                foreach (var g in s.Gaps) col.Item().ShowEntire().Element(c => GapBlock(c, g, dateFormat));
+                col.Item().Element(c => OperationsTable(c, main, s.Currency, dateFormat, "No other operations in this period."));
+                if (recurringOut.Count > 0)
+                    col.Item().Element(c => Section(c, "Recurring payments & subscriptions", s.RecurringExpenses, s,
+                        x => OperationsTable(x, recurringOut, s.Currency, dateFormat, "", frequency: true)));
+                if (recurringIn.Count > 0)
+                    col.Item().Element(c => Section(c, "Regular income", s.RecurringIncome, s,
+                        x => OperationsTable(x, recurringIn, s.Currency, dateFormat, "", frequency: true)));
+                if (o.Transfers == "separate" && s.Movements.Count > 0)
+                    col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s,
+                        x => MovementsTable(x, s.Movements, s.Currency, dateFormat)));
                 col.Item().ShowEntire().Element(c => Totals(c, s));
-                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per category", s.CategoryPie, s.Currency));
-                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", s.BrandPie, s.Currency));
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per category", o.PieShowAll ? s.ByCategory : s.CategoryPie, s.Currency));
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", o.PieShowAll ? s.ByBrand : s.BrandPie, s.Currency));
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Recurring payments & subscriptions",
+                    o.PieShowAll ? s.RecurringExpensePie : SummaryService.FoldPie(s.RecurringExpensePie), s.Currency, "No recurring payments in this period."));
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Regular income",
+                    o.PieShowAll ? s.RecurringIncomePie : SummaryService.FoldPie(s.RecurringIncomePie), s.Currency, "No regular income in this period."));
                 col.Item().ShowEntire().Element(c => SeriesBlock(c, s));
+                if (s.Flows.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
             });
 
             page.Footer().PaddingTop(10).Row(row =>
@@ -82,40 +111,115 @@ public static class ReportBuilder
         return doc.GeneratePdf();
     }
 
-    private static void OperationsTable(IContainer container, PeriodSummary s, string dateFormat)
+    private static string Day(string iso, string dateFormat) => Formatting.FormatDate(DateOnly.ParseExact(iso, "yyyy-MM-dd"), dateFormat);
+
+    private static void GapBlock(IContainer container, BalanceGap g, string dateFormat)
+    {
+        container.Background(Palette.WarningSoft).CornerRadius(8).Padding(12).Column(col =>
+        {
+            var what = g.Missing < 0 ? "left" : "arrived in";
+            col.Item().Text($"Missing operations in {g.Account}").SemiBold().FontSize(10).FontColor(Palette.WarningInk);
+            col.Item().PaddingTop(3).Text(
+                    $"{Formatting.Money(Math.Abs(g.Missing), g.Currency)} {what} the account between {Day(g.From, dateFormat)} and {Day(g.To, dateFormat)}, " +
+                    $"but no imported file shows it. Balance {Formatting.Money(g.KnownBalance, g.Currency)} on {Day(g.KnownDate, dateFormat)}, " +
+                    $"{Formatting.Money(g.NextBalance, g.Currency)} on {Day(g.NextDate, dateFormat)}; operations saved in between: {Formatting.Money(g.Explained, g.Currency, sign: true)}.")
+                .FontSize(8.5f).FontColor(Palette.InkSecondary);
+            if (g.Suggestions.Count > 0)
+                col.Item().PaddingTop(3).Text("Most likely: " + string.Join(" + ", g.Suggestions.Select(x => $"{x.Brand} {Formatting.Money(Math.Abs(x.Amount), g.Currency)}")) +
+                    " (as on " + string.Join(", ", g.Suggestions.Select(x => Day(x.SeenOn, dateFormat)).Distinct()) + ").").FontSize(8.5f).FontColor(Palette.InkSecondary);
+        });
+    }
+
+    /// <summary>A titled table with its total in the corner.</summary>
+    private static void Section(IContainer container, string title, decimal total, PeriodSummary s, Action<IContainer> body)
+    {
+        container.Column(col =>
+        {
+            col.Item().PaddingBottom(4).Row(r =>
+            {
+                r.RelativeItem().Text(title).SemiBold().FontSize(10.5f);
+                var per = s.Granularity == Granularity.Month ? "this month" : s.Granularity == Granularity.Year ? "this year" : "over the period";
+                r.AutoItem().Text($"Total {per}: {Formatting.Money(total, s.Currency)}").SemiBold().FontSize(9).EnableFontFeature("tnum");
+            });
+            col.Item().Element(body);
+        });
+    }
+
+    private static void OperationsTable(IContainer container, List<TransactionView> rows, string currency, string dateFormat, string empty, bool frequency = false)
     {
         container.Table(table =>
         {
             table.ColumnsDefinition(c =>
             {
-                c.ConstantColumn(118);
+                c.ConstantColumn(108);
                 c.RelativeColumn(1.1f);
                 c.RelativeColumn(1.4f);
-                c.ConstantColumn(96);
+                if (frequency) c.ConstantColumn(72);
+                c.ConstantColumn(92);
             });
+            var columns = frequency ? 5u : 4u;
             table.Header(h =>
             {
                 IContainer Head(IContainer c) => c.BorderBottom(0.8f).BorderColor("#c9c8c3").PaddingVertical(5).PaddingHorizontal(4);
                 h.Cell().Element(Head).Text("Date").SemiBold().FontSize(8);
                 h.Cell().Element(Head).Text("Category").SemiBold().FontSize(8);
                 h.Cell().Element(Head).Text("Brand Name").SemiBold().FontSize(8);
-                h.Cell().Element(Head).AlignRight().Text($"Amount ({s.Currency})").SemiBold().FontSize(8);
+                if (frequency) h.Cell().Element(Head).Text("Comes back").SemiBold().FontSize(8);
+                h.Cell().Element(Head).AlignRight().Text($"Amount ({currency})").SemiBold().FontSize(8);
             });
-            if (s.Transactions.Count == 0)
+            if (rows.Count == 0)
             {
-                table.Cell().ColumnSpan(4).PaddingVertical(10).PaddingHorizontal(4).Text("No operations in this period.").FontColor(Palette.InkMuted);
+                table.Cell().ColumnSpan(columns).PaddingVertical(10).PaddingHorizontal(4).Text(empty).FontColor(Palette.InkMuted);
                 return;
             }
-            foreach (var t in s.Transactions)
+            foreach (var t in rows)
             {
                 IContainer Cell(IContainer c) => c.BorderBottom(0.5f).BorderColor(Palette.Hairline).PaddingVertical(4).PaddingHorizontal(4);
-                var date = DateOnly.ParseExact(t.Date, "yyyy-MM-dd");
-                var transfer = Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;
-                table.Cell().Element(Cell).Text(Formatting.FormatDate(date, dateFormat)).EnableFontFeature("tnum");
-                table.Cell().Element(Cell).Text(Categories.Get(t.CategoryId).Name).FontColor(transfer ? Palette.InkMuted : Palette.Ink);
-                table.Cell().Element(Cell).Text(t.Brand).ClampLines(1);
-                table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(t.Amount, s.Currency, sign: true)).EnableFontFeature("tnum")
-                    .FontColor(t.Amount > 0 ? Palette.Positive : Palette.Ink);
+                var cat = Categories.Get(t.CategoryId);
+                var transfer = cat.Kind == CategoryKind.Transfer;
+                var gold = cat.Group == Categories.Exceptional;
+                table.Cell().Element(Cell).Text(Day(t.Date, dateFormat)).EnableFontFeature("tnum");
+                table.Cell().Element(Cell).Text(cat.Name).FontColor(gold ? Palette.Gold : transfer ? Palette.InkMuted : Palette.Ink);
+                table.Cell().Element(Cell).Text(t.Brand + (t.Estimated ? " (estimated)" : "")).ClampLines(1);
+                if (frequency) table.Cell().Element(Cell).Text(t.Recurring ?? "").FontColor(Palette.InkSecondary);
+                table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(t.Amount, currency, sign: true)).EnableFontFeature("tnum")
+                    .FontColor(transfer ? Palette.InkMuted : t.Amount > 0 ? Palette.Positive : Palette.Ink);
+            }
+        });
+    }
+
+    private static void MovementsTable(IContainer container, List<MovementView> rows, string currency, string dateFormat)
+    {
+        container.Table(table =>
+        {
+            table.ColumnsDefinition(c =>
+            {
+                c.ConstantColumn(80);
+                c.ConstantColumn(96);
+                c.RelativeColumn(0.9f);
+                c.RelativeColumn(0.8f);
+                c.RelativeColumn(1.45f);
+                c.ConstantColumn(66);
+            });
+            table.Header(h =>
+            {
+                IContainer Head(IContainer c) => c.BorderBottom(0.8f).BorderColor("#c9c8c3").PaddingVertical(5).PaddingHorizontal(4);
+                h.Cell().Element(Head).Text("Date").SemiBold().FontSize(8);
+                h.Cell().Element(Head).Text("Category").SemiBold().FontSize(8);
+                h.Cell().Element(Head).Text("Description").SemiBold().FontSize(8);
+                h.Cell().Element(Head).Text("From").SemiBold().FontSize(8);
+                h.Cell().Element(Head).Text("To").SemiBold().FontSize(8);
+                h.Cell().Element(Head).AlignRight().Text($"Amount ({currency})").SemiBold().FontSize(8);
+            });
+            foreach (var m in rows)
+            {
+                IContainer Cell(IContainer c) => c.BorderBottom(0.5f).BorderColor(Palette.Hairline).PaddingVertical(4).PaddingHorizontal(4);
+                table.Cell().Element(Cell).Text(Day(m.Date, dateFormat)).EnableFontFeature("tnum").FontSize(8f);
+                table.Cell().Element(Cell).Text(Categories.Get(m.CategoryId).Name).FontSize(8f).FontColor(Palette.InkSecondary).ClampLines(1);
+                table.Cell().Element(Cell).Text(m.Label + (m.Estimated ? " (estimated)" : "")).FontSize(8f).ClampLines(1);
+                table.Cell().Element(Cell).Text(m.From).FontSize(8f).SemiBold().FontColor(m.FromOutside ? Palette.OutsideInk : Palette.Ink).ClampLines(1);
+                table.Cell().Element(Cell).Text("→ " + m.To).FontSize(8f).SemiBold().FontColor(m.ToOutside ? Palette.OutsideInk : Palette.Ink).ClampLines(1);
+                table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(m.Amount, currency)).EnableFontFeature("tnum").FontSize(8f);
             }
         });
     }
@@ -123,49 +227,55 @@ public static class ReportBuilder
     private static void Totals(IContainer container, PeriodSummary s)
     {
         var balanceColor = s.Balance > 0 ? Palette.Positive : s.Balance < 0 ? Palette.Negative : Palette.Ink;
-        container.Background(Palette.Surface).CornerRadius(8).Padding(14).Row(row =>
+        var balanceBack = s.Balance > 0 ? Palette.PositiveStrong : s.Balance < 0 ? Palette.NegativeStrong : Palette.Surface;
+        container.Row(row =>
         {
-            void Stat(string label, string value, string color)
+            row.Spacing(8);
+            void Stat(string label, string value, string color, string back)
             {
-                row.RelativeItem().Column(c =>
+                row.RelativeItem().Background(back).CornerRadius(8).Padding(12).Column(c =>
                 {
                     c.Item().Text(label).FontSize(8).FontColor(Palette.InkSecondary);
                     c.Item().PaddingTop(3).Text(value).FontSize(15).SemiBold().FontColor(color).EnableFontFeature("tnum");
                 });
             }
-            Stat("Expenses", Formatting.Money(s.Expenses, s.Currency), Palette.Ink);
-            Stat("Earnings", Formatting.Money(s.Earnings, s.Currency), Palette.Ink);
-            Stat("Balance", Formatting.Money(s.Balance, s.Currency, sign: true), balanceColor);
+            // Expenses faintly red, earnings faintly green, the balance more strongly in the colour of its sign.
+            Stat("Expenses", Formatting.Money(s.Expenses, s.Currency), Palette.Ink, Palette.NegativeSoft);
+            Stat("Earnings", Formatting.Money(s.Earnings, s.Currency), Palette.Ink, Palette.PositiveSoft);
+            Stat("Balance", Formatting.Money(s.Balance, s.Currency, sign: true), balanceColor, balanceBack);
         });
     }
 
-    private static void PieBlock(IContainer container, string title, List<Slice> slices, string currency)
+    private static void PieBlock(IContainer container, string title, List<Slice> slices, string currency, string empty = "No expenses in this period.")
     {
         container.Border(0.6f).BorderColor(Palette.Hairline).CornerRadius(8).Padding(12).Column(col =>
         {
             col.Item().Text(title).SemiBold().FontSize(10);
             if (slices.Count == 0)
             {
-                col.Item().PaddingTop(10).Text("No expenses in this period.").FontColor(Palette.InkMuted);
+                col.Item().PaddingTop(10).Text(empty).FontColor(Palette.InkMuted);
                 return;
             }
+            var dense = slices.Count > 16;
             col.Item().PaddingTop(8).Row(row =>
             {
                 row.ConstantItem(96).Height(96).Svg(SvgCharts.Donut(slices, 96));
                 row.ConstantItem(28);
                 row.RelativeItem().AlignMiddle().Column(legend =>
                 {
-                    legend.Spacing(4);
+                    legend.Spacing(dense ? 2 : 4);
                     for (var i = 0; i < slices.Count; i++)
                     {
                         var sl = slices[i];
+                        var size = dense ? 7.5f : 8.5f;
+                        var color = SvgCharts.SliceColor(i, sl.Key);
                         legend.Item().Row(r =>
                         {
-                            r.ConstantItem(7).Height(7).OffsetY(2).CornerRadius(1.5f).Background(SvgCharts.SliceColor(i, sl.Key));
+                            r.ConstantItem(7).Height(7).OffsetY(2).CornerRadius(1.5f).Background(color);
                             r.ConstantItem(5);
-                            r.RelativeItem().Text(sl.Label).FontSize(8.5f).ClampLines(1);
-                            r.ConstantItem(90).AlignRight().Text(Formatting.Money(sl.Amount, currency)).FontSize(8.5f).EnableFontFeature("tnum");
-                            r.ConstantItem(44).AlignRight().Text($"{Math.Round(sl.Share * 100):0}%").FontSize(8.5f).FontColor(Palette.InkSecondary).EnableFontFeature("tnum");
+                            r.RelativeItem().Text(sl.Label).FontSize(size).ClampLines(1);
+                            r.ConstantItem(90).AlignRight().Text(Formatting.Money(sl.Amount, currency)).FontSize(size).EnableFontFeature("tnum");
+                            r.ConstantItem(44).AlignRight().Text($"{Math.Round(sl.Share * 100):0}%").FontSize(size).FontColor(Palette.InkSecondary).EnableFontFeature("tnum");
                         });
                     }
                 });
@@ -181,6 +291,25 @@ public static class ReportBuilder
         {
             col.Item().Text(title).SemiBold().FontSize(10);
             col.Item().PaddingTop(8).Height(150).Svg(size => SvgCharts.Bars(s.Series, size.Width, size.Height, s.Currency));
+        });
+    }
+
+    private static void FlowBlock(IContainer container, PeriodSummary s)
+    {
+        var rows = Math.Max(s.Flows.Select(f => f.From).Distinct().Count(), s.Flows.Select(f => f.To).Distinct().Count());
+        var height = Math.Max(150, rows * 52);
+        container.Border(0.6f).BorderColor(Palette.Hairline).CornerRadius(8).Padding(12).Column(col =>
+        {
+            col.Item().Text("Money moved: transfers, card payments & investments").SemiBold().FontSize(10);
+            col.Item().PaddingTop(3).Text(t =>
+            {
+                t.DefaultTextStyle(x => x.FontSize(7.5f).FontColor(Palette.InkSecondary));
+                t.Span("■ ").FontColor(Palette.Accent);
+                t.Span("between your accounts      ");
+                t.Span("■ ").FontColor(Palette.OutsideInk);
+                t.Span("to or from the outside (accounts not imported, other people, investments)");
+            });
+            col.Item().PaddingTop(8).Height(height).Svg(size => SvgCharts.FlowDiagram(s.Flows, size.Width, size.Height, s.Currency));
         });
     }
 

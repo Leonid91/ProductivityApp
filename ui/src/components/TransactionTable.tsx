@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Autocomplete, Box, Checkbox, IconButton, InputBase, ListItemIcon, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
+  Autocomplete, Box, Checkbox, Chip, IconButton, InputBase, ListItemIcon, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
   TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
@@ -78,25 +78,35 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: strin
     )
   }
   return (
-    <Tooltip title={tx.rawLabel || 'Entered by hand'} placement="top-start">
-      <Box
-        onClick={() => setEditing(true)}
-        sx={{ fontWeight: 520, cursor: 'text', borderRadius: 1.5, px: 1, mx: -1, py: 0.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', '&:hover': { bgcolor: 'action.hover' } }}
-      >
-        {tx.brand}
-      </Box>
-    </Tooltip>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+      <Tooltip title={tx.rawLabel || 'Entered by hand'} placement="top-start">
+        <Box
+          onClick={() => setEditing(true)}
+          sx={{ fontWeight: 520, cursor: 'text', borderRadius: 1.5, px: 1, mx: -1, py: 0.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', '&:hover': { bgcolor: 'action.hover' } }}
+        >
+          {tx.brand}
+        </Box>
+      </Tooltip>
+      {tx.estimated && (
+        <Tooltip title={tx.note || 'Added from a balance gap: no imported file contains it yet. Importing the statement that has it replaces it.'}>
+          <Chip size="small" label="Estimated" color="warning" variant="outlined" sx={{ height: 20, fontSize: 11, flex: '0 0 auto' }} />
+        </Tooltip>
+      )}
+    </Box>
   )
 }
 
-/** The operations of one period: Date, Category, Brand Name, Amount. */
-export function TransactionTable({ transactions, currency, paged, onEdit }: {
+/** The operations of one period: Date, Category, Brand Name, (how often it comes back), Amount. */
+export function TransactionTable({ transactions, currency, paged, onEdit, frequency = false, empty = 'No operations in this period' }: {
   transactions: TransactionView[]
   currency: string
   paged: boolean
   onEdit: (tx: TransactionView) => void
+  /** Adds the "Comes back" column (recurring payments and income). */
+  frequency?: boolean
+  empty?: string
 }) {
-  const { settings, setSetting, info, category, notify, fail, dataChanged } = useApp()
+  const { settings, setSetting, info, category, notify, fail, dataChanged, askScope } = useApp()
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
   const [catMenu, setCatMenu] = useState<HTMLElement | null>(null)
   const [newestFirst, setNewestFirst] = useState(true)
@@ -128,9 +138,13 @@ export function TransactionTable({ transactions, currency, paged, onEdit }: {
 
   const setCategory = async (tx: TransactionView, id: string) => {
     if (id === tx.categoryId) return
+    // This operation only, or every operation of the brand, past and future: the person decides.
+    const all = await askScope(tx.brand, category(id).name)
+    if (all === null) return
     try {
-      const r = await api.tx.setCategory(tx.id, id)
-      learned(r.changed, tx.brand)
+      const r = await api.tx.setCategory(tx.id, id, all)
+      if (all) learned(r.changed, `every “${tx.brand}”`)
+      else { notify('Category changed for this operation only'); dataChanged() }
     } catch (e) {
       fail(e)
     }
@@ -148,9 +162,10 @@ export function TransactionTable({ transactions, currency, paged, onEdit }: {
     <Box>
       <Table size="small" sx={{ tableLayout: 'fixed', '& td, & th': { px: 1.5 }, '& tr > *:first-of-type': { pl: 0.5 } }}>
         <colgroup>
-          <col style={{ width: '22%' }} />
-          <col style={{ width: '27%' }} />
+          <col style={{ width: frequency ? '19%' : '22%' }} />
+          <col style={{ width: frequency ? '24%' : '27%' }} />
           <col />
+          {frequency && <col style={{ width: '13%' }} />}
           <col style={{ width: '17%' }} />
           <col style={{ width: 44 }} />
         </colgroup>
@@ -159,6 +174,7 @@ export function TransactionTable({ transactions, currency, paged, onEdit }: {
             <TableCell><HeaderButton label="Date" onClick={(e) => setDateMenu(e.currentTarget)} /></TableCell>
             <TableCell><HeaderButton label="Category" active={filter.size > 0} onClick={(e) => setCatMenu(e.currentTarget)} /></TableCell>
             <TableCell>Brand Name</TableCell>
+            {frequency && <TableCell>Comes back</TableCell>}
             <TableCell align="right">Amount ({currency})</TableCell>
             <TableCell />
           </TableRow>
@@ -171,6 +187,7 @@ export function TransactionTable({ transactions, currency, paged, onEdit }: {
                 <TableCell className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(t.date, settings.dateFormat)}</TableCell>
                 <TableCell><CategoryPill id={t.categoryId} onChange={(id) => void setCategory(t, id)} /></TableCell>
                 <TableCell><BrandCell tx={t} brands={brands} onSaved={(n, b) => learned(n, b)} /></TableCell>
+                {frequency && <TableCell sx={{ color: 'text.secondary' }}>{t.recurring}</TableCell>}
                 <TableCell align="right"><Money value={t.amount} currency={currency} sign muted={transfer} /></TableCell>
                 <TableCell padding="none" align="right">
                   <IconButton className="row-action" size="small" aria-label="Edit" onClick={() => onEdit(t)} sx={{ opacity: 0, transition: 'opacity 120ms', '&:focus-visible': { opacity: 1 } }}>
@@ -182,8 +199,8 @@ export function TransactionTable({ transactions, currency, paged, onEdit }: {
           })}
           {visible.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>
-                {transactions.length === 0 ? 'No operations in this period' : 'No operations in these categories'}
+              <TableCell colSpan={frequency ? 6 : 5} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>
+                {transactions.length === 0 ? empty : 'No operations in these categories'}
               </TableCell>
             </TableRow>
           )}

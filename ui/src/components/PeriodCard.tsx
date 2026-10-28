@@ -1,27 +1,94 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Accordion, AccordionDetails, AccordionSummary, Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Accordion, AccordionDetails, AccordionSummary, Alert, AlertTitle, Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfOutlined'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
 import SwapHoriz from '@mui/icons-material/SwapHorizRounded'
-import { api, type Granularity, type PeriodSummary, type TransactionView } from '../api'
+import EventRepeat from '@mui/icons-material/EventRepeatRounded'
+import Payments from '@mui/icons-material/PaymentsRounded'
+import { api, type BalanceGap, type Granularity, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { money } from '../format'
+import { formatDate, money, plural } from '../format'
 import { ExpenseBars, ExpensePie } from './Charts'
 import { ExportDialog } from './ExportDialog'
+import { FlowChart } from './FlowChart'
+import { MovementsTable } from './MovementsTable'
 import { TransactionTable } from './TransactionTable'
 
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+function Stat({ label, value, color, bg }: { label: string; value: string; color?: string; bg: string }) {
   return (
-    <Box sx={{ flex: '1 1 180px', borderRadius: '18px', bgcolor: 'surface.sunken', px: 2.5, py: 2 }}>
+    <Box data-stat={label} sx={{ flex: '1 1 180px', borderRadius: '18px', bgcolor: bg, px: 2.5, py: 2 }}>
       <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 520 }}>{label}</Typography>
       <Typography className="tnum" sx={{ fontSize: 26, fontWeight: 650, letterSpacing: '-0.02em', mt: 0.25, color }}>{value}</Typography>
     </Box>
   )
 }
 
+/** A table under its own heading, with the total of the period on the right. */
+function Section({ icon, title, total, note, children, id }: { icon: ReactNode; title: string; total: string; note?: string; children: ReactNode; id: string }) {
+  return (
+    <Box data-section={id} sx={{ mt: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.25, mb: 1, flexWrap: 'wrap' }}>
+        <Box sx={{ alignSelf: 'center', display: 'flex', color: 'text.secondary' }}>{icon}</Box>
+        <Typography variant="h6" sx={{ flex: 1 }}>{title}</Typography>
+        <Typography className="tnum" sx={{ fontWeight: 650 }}>{total}</Typography>
+        {note && <Typography variant="body2" color="text.secondary" className="tnum">{note}</Typography>}
+      </Box>
+      {children}
+    </Box>
+  )
+}
+
+/** Money the balances prove moved, that no imported file shows; one click adds the likely operations as estimated. */
+function GapAlert({ gap }: { gap: BalanceGap }) {
+  const { settings, notify, fail, dataChanged } = useApp()
+  const [busy, setBusy] = useState(false)
+  const d = (x: string) => formatDate(x, settings.dateFormat)
+  const left = gap.missing < 0
+  const add = async (items: BalanceGap['suggestions']) => {
+    setBusy(true)
+    try {
+      const r = await api.gaps.fill(gap.accountId, items, gap.from, gap.to)
+      notify(`${plural(r.added, 'estimated operation')} added`)
+      dataChanged()
+    } catch (e) {
+      fail(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const whole = [{ date: gap.from, brand: 'Missing from statements', label: 'Missing from statements', categoryId: left ? 'other' : 'otherincome', amount: gap.missing, seenOn: gap.from }]
+  return (
+    <Alert severity="warning" data-gap sx={{ mb: 2, alignItems: 'flex-start' }}>
+      <AlertTitle>Operations missing in {gap.account}: {money(Math.abs(gap.missing), gap.currency)} {left ? 'went out' : 'came in'} between {d(gap.from)} and {d(gap.to)}</AlertTitle>
+      <Typography variant="body2" component="div">
+        The balance was {money(gap.knownBalance, gap.currency)} on {d(gap.knownDate)} and {money(gap.nextBalance, gap.currency)} on {d(gap.nextDate)}.
+        The operations saved in between add up to {money(gap.explained, gap.currency, { sign: true })}, so {money(Math.abs(gap.missing), gap.currency)} is
+        in none of the imported files. Import the statement that covers these days, or add the operations below now.
+      </Typography>
+      {gap.suggestions.length > 0 && (
+        <Typography variant="body2" component="div" sx={{ mt: 1 }}>
+          Most likely, the same as on {[...new Set(gap.suggestions.map((s) => d(s.seenOn)))].join(', ')}:{' '}
+          <b>{gap.suggestions.map((s) => `${s.brand} ${money(Math.abs(s.amount), gap.currency)} on ${d(s.date)}`).join(' + ')}</b>
+          {' '}= {money(Math.abs(gap.missing), gap.currency)} exactly.
+        </Typography>
+      )}
+      <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
+        {gap.suggestions.length > 0 && (
+          <Button size="small" variant="contained" color="warning" disabled={busy} onClick={() => void add(gap.suggestions)}>
+            Add {gap.suggestions.length === 1 ? 'it' : `these ${gap.suggestions.length}`} as estimated
+          </Button>
+        )}
+        <Button size="small" variant="outlined" color="warning" disabled={busy} onClick={() => void add(whole)}>
+          Add {money(Math.abs(gap.missing), gap.currency)} as one estimated line
+        </Button>
+      </Box>
+    </Alert>
+  )
+}
+
 /**
- * One period, as on the sketch: title, operations table, Expenses / Earnings / Balance, the two expense pies,
- * the expenses-per-day chart and the PDF export.
+ * One period: title, missing-operation warnings, operations, recurring payments, regular income, transfers (From / To),
+ * Expenses / Earnings / Balance, the pies, expenses per day, the money moved, and the PDF export.
  */
 export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }: {
   from: string
@@ -55,18 +122,34 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
   }, [visible, from, to, granularity, currency, dataVersion, fail, onLoaded])
 
   // Transfers, card payments and investments: in their own folded table, hidden, or with the rest (Settings).
+  // Recurring payments and income are shown in their own tables, never twice.
   const mode = settings.periodTransfers || 'separate'
-  const [main, moves] = useMemo(() => {
+  const showAll = settings.pieShowAll !== 'false'
+  const { main, recurringOut, recurringIn } = useMemo(() => {
     const all = summary?.transactions ?? []
-    if (mode === 'inline') return [all, []]
-    const isMove = (t: (typeof all)[number]) => category(t.categoryId).kind === 'transfer'
-    return [all.filter((t) => !isMove(t)), mode === 'hidden' ? [] : all.filter(isMove)]
+    const isMove = (t: TransactionView) => category(t.categoryId).kind === 'transfer'
+    return {
+      main: all.filter((t) => t.recurring === null && (mode === 'inline' || !isMove(t))),
+      recurringOut: all.filter((t) => t.recurring !== null && t.amount < 0),
+      recurringIn: all.filter((t) => t.recurring !== null && t.amount > 0),
+    }
   }, [summary, mode, category])
 
   const balanceColor = !summary ? undefined
     : summary.balance > 0 ? theme.palette.money.positive
     : summary.balance < 0 ? theme.palette.money.negative
     : theme.palette.money.zero
+  const balanceBg = !summary || summary.balance === 0 ? 'surface.sunken'
+    : summary.balance > 0 ? theme.palette.money.positiveStrong : theme.palette.money.negativeStrong
+  const per = granularity === 'month' ? 'this month' : granularity === 'year' ? 'this year' : 'over the period'
+  const months = summary ? Math.max(1, Math.round((Date.parse(summary.to) - Date.parse(summary.from)) / (30.44 * 86400000))) : 1
+  const monthly = (v: number) => (granularity === 'month' ? undefined : `about ${money(v / months, currency)} a month`)
+  const fold = (slices: PeriodSummary['byCategory']) => {
+    if (showAll || slices.length <= 6) return slices
+    const head = slices.slice(0, 5)
+    const rest = slices.slice(5)
+    return [...head, { key: '__other', label: 'Other', amount: rest.reduce((s, x) => s + x.amount, 0), share: rest.reduce((s, x) => s + x.share, 0) }]
+  }
 
   return (
     <Box
@@ -84,39 +167,60 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
       ) : (
         <>
           <Typography variant="h5" component="h2" sx={{ mb: 2.5 }}>{summary.title}</Typography>
-          <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
-          {moves.length > 0 && (
+          {summary.gaps.map((g) => <GapAlert key={`${g.accountId}:${g.from}`} gap={g} />)}
+          <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} empty="No other operations in this period" />
+
+          {recurringOut.length > 0 && (
+            <Section id="recurring-payments" icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
+              <TransactionTable transactions={recurringOut} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} frequency />
+            </Section>
+          )}
+          {recurringIn.length > 0 && (
+            <Section id="regular-income" icon={<Payments />} title="Regular income" total={`${money(summary.recurringIncome, currency)} ${per}`} note={monthly(summary.recurringIncome)}>
+              <TransactionTable transactions={recurringIn} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} frequency />
+            </Section>
+          )}
+
+          {mode === 'separate' && summary.movements.length > 0 && (
             <Accordion
+              data-section="movements"
               disableGutters
               elevation={0}
               slotProps={{ transition: { unmountOnExit: true } }}
-              sx={{ mt: 2, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '&::before': { display: 'none' } }}
+              sx={{ mt: 3, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '&::before': { display: 'none' } }}
             >
               <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2.5, minHeight: 52 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
                   <SwapHoriz sx={{ color: 'text.secondary', fontSize: 20 }} />
                   <Typography sx={{ fontWeight: 600 }}>Transfers, card payments & investments</Typography>
-                  <Typography color="text.secondary" className="tnum">{moves.length}</Typography>
+                  <Typography color="text.secondary" className="tnum">{summary.movements.length}</Typography>
                 </Box>
               </AccordionSummary>
               <AccordionDetails sx={{ px: 2.5, pt: 0, pb: 2 }}>
-                <TransactionTable transactions={moves} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
+                <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
               </AccordionDetails>
             </Accordion>
           )}
 
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 3.5 }}>
-            <Stat label="Expenses" value={money(summary.expenses, currency)} />
-            <Stat label="Earnings" value={money(summary.earnings, currency)} />
-            <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} />
+            <Stat label="Expenses" value={money(summary.expenses, currency)} bg={theme.palette.money.expenseSoft} />
+            <Stat label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
+            <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
           </Box>
 
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5, alignItems: 'flex-start' }}>
+            <ExpensePie title="Expenses per category" slices={fold(summary.byCategory)} currency={currency} />
+            <ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
+          </Box>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
-            <ExpensePie title="Expenses per category" slices={summary.categoryPie} currency={currency} />
-            <ExpensePie title="Expenses per brand" slices={summary.brandPie} currency={currency} />
+            <ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
+            <ExpensePie title="Regular income" slices={fold(summary.recurringIncomePie)} currency={currency} empty="No regular income" />
           </Box>
           <Box sx={{ mt: 1.5 }}>
             <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
+          </Box>
+          <Box sx={{ mt: 1.5 }}>
+            <FlowChart flows={summary.flows} currency={currency} />
           </Box>
 
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2.5 }}>
