@@ -62,8 +62,8 @@ export function ImportPage() {
   }, [queue, fail])
 
   const addFiles = (files: File[]) => {
-    const pdfs = files.filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-    if (pdfs.length < files.length) notify('Only PDF files can be imported', 'warning')
+    const pdfs = files.filter((f) => /\.(pdf|csv)$/i.test(f.name))
+    if (pdfs.length < files.length) notify('Only PDF statements and CSV exports can be imported', 'warning')
     setQueue((q) => [...q, ...pdfs.map((f) => ({ name: f.name, run: async () => api.imports.parseBytes(f.name, await toBase64(f)) }))])
   }
 
@@ -95,7 +95,7 @@ export function ImportPage() {
         <Box sx={{ width: 64, height: 64, mx: 'auto', borderRadius: '20px', display: 'grid', placeItems: 'center', bgcolor: alpha(theme.palette.primary.main, 0.1), color: 'primary.main', mb: 2 }}>
           <CloudUpload sx={{ fontSize: 32 }} />
         </Box>
-        <Typography variant="h6">Drop PDF statements here</Typography>
+        <Typography variant="h6">Drop PDF statements or CSV exports here</Typography>
         <Button variant="contained" sx={{ mt: 2 }} onClick={() => setBrowsing(true)}>Choose files</Button>
         {(current || queue.length > 0) && (
           <Box sx={{ maxWidth: 420, mx: 'auto', mt: 3 }}>

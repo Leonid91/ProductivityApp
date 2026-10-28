@@ -10,6 +10,7 @@ public static class Categories
     public const string OtherExpense = "other";
     public const string OtherIncome = "otherincome";
     public const string Transfers = "transfers";
+    public const string Investments = "investments";
 
     public static readonly IReadOnlyList<Category> All =
     [
@@ -37,6 +38,7 @@ public static class Categories
         new("refunds", "Refunds", CategoryKind.Income, "Replay"),
         new(OtherIncome, "Other income", CategoryKind.Income, "Savings"),
         new(Transfers, "Transfers", CategoryKind.Transfer, "SwapHoriz"),
+        new(Investments, "Savings & investments", CategoryKind.Transfer, "TrendingUp"),
     ];
 
     private static readonly Dictionary<string, Category> ById = All.ToDictionary(c => c.Id);

@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Finance.Core\Finance.Core.csproj" />
     <Compile Include="..\..\tests\Finance.Tests\Fixtures\StatementGenerator.cs" Link="StatementGenerator.cs" />
+    <Compile Include="..\..\tests\Finance.Tests\Fixtures\BncGenerator.cs" Link="BncGenerator.cs" />
   </ItemGroup>
 
 </Project>

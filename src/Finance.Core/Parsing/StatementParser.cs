@@ -87,6 +87,8 @@ public static class StatementParser
         public Zone? Date { get; init; }
         public Zone? ValueDate { get; init; }
         public Zone? Description { get; init; }
+        /// <summary>The bank's own category column.</summary>
+        public Zone? Category { get; init; }
         public required List<Zone> Amounts { get; init; }
         /// <summary>Template layouts place every word by the zone its centre falls in.</summary>
         public bool Strict { get; init; }
@@ -115,6 +117,7 @@ public static class StatementParser
                 Date = Z(ColumnRole.Date),
                 ValueDate = Z(ColumnRole.ValueDate),
                 Description = Z(ColumnRole.Description),
+                Category = Z(ColumnRole.Category),
                 Amounts = t.Columns.Where(c => c.Role is ColumnRole.Debit or ColumnRole.Credit or ColumnRole.Amount or ColumnRole.Balance)
                     .Select(c => new Zone(c.Role, c.Left * width, c.Right * width)).ToList(),
             };
@@ -148,7 +151,7 @@ public static class StatementParser
             {
                 byPage[page.Number] = new PageLayout
                 {
-                    TableTop = 0, DescLeft = last.DescLeft, ValueDate = last.ValueDate, Amounts = last.Amounts,
+                    TableTop = 0, DescLeft = last.DescLeft, ValueDate = last.ValueDate, Category = last.Category, Amounts = last.Amounts,
                 };
             }
         }
@@ -204,6 +207,7 @@ public static class StatementParser
     {
         if (f.Length > 40) return null;
         if (HasWord(f, "SOLDE", "BALANCE")) return ColumnRole.Balance;
+        if (HasWord(f, "CATEGORIE", "CATEGORIES", "CATEGORY", "CATEGORY")) return ColumnRole.Category;
         if (HasWord(f, "DATE", "JOUR", "DATES"))
             return HasWord(f, "VALEUR", "VALUE", "POST", "POSTED", "POSTING", "INSCRIPTION", "COMPTABILISATION", "COMPTABLE") ? ColumnRole.ValueDate : ColumnRole.Date;
         if (HasWord(f, "DEBIT", "DEBITS", "RETRAIT", "RETRAITS", "WITHDRAWAL", "WITHDRAWALS", "SORTIE", "SORTIES", "CHEQUES", "PAIEMENTS", "CHARGES", "DEPENSES")) return ColumnRole.Debit;
@@ -250,10 +254,20 @@ public static class StatementParser
             .GroupBy(c => c.Role).Select(g => g.First())
             .Select(c => new Zone(c.Role!.Value, c.Left, c.Right)).ToList();
         var descLeft = desc?.Left ?? (value is not null && value.Left > date.Right ? value.Left : date.Right + h * 4);
+        var category = cells.FirstOrDefault(c => c.Role == ColumnRole.Category);
+        Zone? categoryZone = null;
+        if (category is not null)
+        {
+            // From the category heading to the next column on its right (amounts are right-aligned under theirs).
+            var nextLeft = cells.Where(c => c.Left > category.Right).Select(c => c.Left).DefaultIfEmpty(double.MaxValue).Min();
+            var firstAmountLeft = amounts.Where(z => z.Left > category.Left).Select(z => z.Left).DefaultIfEmpty(double.MaxValue).Min();
+            categoryZone = new Zone(ColumnRole.Category, category.Left - h * 0.6, Math.Min(nextLeft, firstAmountLeft) - h * 3);
+        }
         return new PageLayout
         {
             TableTop = bottom + 0.5,
             DescLeft = descLeft,
+            Category = categoryZone,
             ValueDate = value is null ? null : new Zone(ColumnRole.ValueDate, value.Left - h * 1.5, value.Right + h * 1.5),
             Amounts = amounts,
         };
@@ -316,6 +330,8 @@ public static class StatementParser
         public PrintedDate? Date { get; set; }
         public List<Word> DateWords { get; } = [];
         public List<Word> DescWords { get; } = [];
+        public List<Word> CategoryWords { get; } = [];
+        public string Category => string.Join(' ', CategoryWords.OrderBy(w => w.Left).Select(w => w.Text));
         public Dictionary<ColumnRole, (PrintedAmount Amount, Word Word, double Distance)> Amounts { get; } = [];
         public string Description => string.Join(' ', DescWords.OrderBy(w => w.Left).Select(w => w.Text));
         public double DescLeft => DescWords.Count > 0 ? DescWords.Min(w => w.Left) : double.NaN;
@@ -349,6 +365,7 @@ public static class StatementParser
                     continue;
                 }
                 if (pl.Description?.Contains(w.CenterX) == true) cells.DescWords.Add(w);
+                else if (pl.Category?.Contains(w.CenterX) == true) cells.CategoryWords.Add(w);
             }
             return cells;
         }
@@ -383,6 +400,7 @@ public static class StatementParser
                 }
             }
             if (AmountParser.IsDetachedMarker(w.Text) && pl.Amounts.Count > 0 && w.Left > pl.Amounts.Min(z => z.Left) - 2 * w.Height) continue;
+            if (pl.Category is { } cz && w.Left >= cz.Left && w.Right <= cz.Right + w.Height * 3) { cells.CategoryWords.Add(w); continue; }
             cells.DescWords.Add(w);
         }
         return cells;
@@ -432,6 +450,7 @@ public static class StatementParser
         public PrintedAmount? Amount { get; set; }
         public PrintedAmount? Balance { get; set; }
         public Word? BalanceWord { get; set; }
+        public string Category { get; set; } = "";
         public required int Page { get; init; }
         public required double Top { get; init; }
         public bool HasMovement => Debit is not null || Credit is not null || Amount is not null;
@@ -442,6 +461,7 @@ public static class StatementParser
             if (c.Amounts.TryGetValue(ColumnRole.Credit, out var cr)) Credit = cr.Amount;
             if (c.Amounts.TryGetValue(ColumnRole.Amount, out var a)) Amount = a.Amount;
             if (c.Amounts.TryGetValue(ColumnRole.Balance, out var b)) { Balance = b.Amount; BalanceWord = b.Word; }
+            if (Category.Length == 0 && c.Category.Length > 0) Category = c.Category;
         }
     }
 
@@ -495,7 +515,7 @@ public static class StatementParser
             }
             else if (c.Date is not null && desc.Length > 0 && !c.Amounts.ContainsKey(ColumnRole.Balance))
             {
-                current = new RawRow { Date = c.Date.Value, Label = desc, LabelLeft = c.DescLeft, Page = c.Line.Page, Top = c.Line.Top };
+                current = new RawRow { Date = c.Date.Value, Label = desc, LabelLeft = c.DescLeft, Page = c.Line.Page, Top = c.Line.Top, Category = c.Category };
                 rows.Add(current);
                 continuation = 0;
             }
@@ -535,24 +555,45 @@ public static class StatementParser
         var order = layout.DateOrder != DateOrder.Unknown ? layout.DateOrder : ResolveOrder(ctx, raw.Select(r => r.Date).ToList());
         var period = ResolvePeriod(ctx, order);
 
+        // A sign written on only some amounts tells what the unmarked ones are: "+2 432,33" among "28,18"
+        // means unmarked amounts go out; "-28,18" among "2 432,33" means unmarked amounts come in.
+        var single = raw.Where(r => r.Amount is not null && r.Debit is null && r.Credit is null).Select(r => r.Amount!.Value).ToList();
+        var plusOnly = single.Any(a => a.Marker is SignMarker.Plus or SignMarker.Credit) && !single.Any(a => a.Marker is SignMarker.Minus or SignMarker.Debit);
+        var minusOnly = single.Any(a => a.Marker is SignMarker.Minus or SignMarker.Debit) && !single.Any(a => a.Marker is SignMarker.Plus or SignMarker.Credit);
+
         var rows = new List<(RawRow Raw, ParsedRow Row, bool SignKnown, decimal Guess)>();
         foreach (var r in raw)
         {
             var date = ToDate(r.Date, order, period, ctx);
             if (date is null) continue;
-            var (signed, known, guess) = SignOf(r, kind);
+            var (signed, known, guess) = SignOf(r, kind, plusOnly, minusOnly);
             rows.Add((r, new ParsedRow
             {
                 Date = date.Value,
                 Label = r.Label,
                 Amount = signed,
                 Balance = r.Balance is { } b ? BalanceValue(b, kind) : null,
+                BankCategory = r.Category,
                 Page = r.Page,
                 Top = r.Top,
             }, known, guess));
         }
 
+        // Online history exports list the newest operation first: put them in time order for the balance chain.
+        var later = 0;
+        var earlier = 0;
+        for (var i = 1; i < rows.Count; i++)
+        {
+            if (rows[i].Row.Date > rows[i - 1].Row.Date) later++;
+            else if (rows[i].Row.Date < rows[i - 1].Row.Date) earlier++;
+        }
+        var newestFirst = earlier > later;
+        if (newestFirst) rows.Reverse();
+
         var (opening, closing) = FindBalances(ctx, layout, kind, period, order);
+        // In a history export the balances printed above the table are today's, not the period's: the running
+        // balance of each line is what checks it.
+        if (newestFirst && rows.Count(r => r.Row.Balance is not null) >= Math.Max(1, rows.Count - 1)) (opening, closing) = (null, null);
         if (opening is null && firstBalanceOnly is { } fb) opening = BalanceValue(fb, kind);
         var polarity = kind == AccountKind.CreditCard ? -1m : 1m;
 
@@ -591,16 +632,22 @@ public static class StatementParser
             derived = true;
         }
 
+        var zero = parsed.Count(r => r.Amount == 0);
+        parsed = parsed.Where(r => r.Amount != 0).ToList();
+
         var result = new StatementParse
         {
             Rows = parsed,
+            Profile = ctx.Profile,
+            NewestFirst = newestFirst,
+            ZeroRowsSkipped = zero,
             OpeningBalance = opening,
             ClosingBalance = closing,
             PeriodStart = period?.Start ?? (parsed.Count > 0 ? parsed.Min(r => r.Date) : null),
             PeriodEnd = period?.End ?? (parsed.Count > 0 ? parsed.Max(r => r.Date) : null),
             Currency = ctx.Currency,
             Language = ctx.Language,
-            Kind = kind,
+            Kind = ctx.Refine(kind),
             Bank = ctx.Bank,
             Last4 = ctx.Last4,
             UsedOcr = ctx.UsedOcr,
@@ -633,7 +680,7 @@ public static class StatementParser
         : (a.Marker is SignMarker.Minus or SignMarker.Debit ? -a.Magnitude : a.Magnitude);
 
     /// <summary>Signed amount (negative = money out), whether the sign is certain, and a keyword-based guess when it is not.</summary>
-    private static (decimal Signed, bool Known, decimal Guess) SignOf(RawRow r, AccountKind kind)
+    private static (decimal Signed, bool Known, decimal Guess) SignOf(RawRow r, AccountKind kind, bool plusOnly, bool minusOnly)
     {
         if (r.Debit is not null || r.Credit is not null)
         {
@@ -643,7 +690,8 @@ public static class StatementParser
         var a = r.Amount!.Value;
         if (kind == AccountKind.CreditCard)
         {
-            var v = a.Marker is SignMarker.Minus or SignMarker.Credit ? a.Magnitude : -a.Magnitude;
+            // On a card, unmarked amounts are purchases; "-", "CR" and "+" mark payments and refunds.
+            var v = a.Marker is SignMarker.Minus or SignMarker.Credit or SignMarker.Plus ? a.Magnitude : -a.Magnitude;
             return (v, true, v);
         }
         switch (a.Marker)
@@ -651,6 +699,8 @@ public static class StatementParser
             case SignMarker.Minus or SignMarker.Debit: return (-a.Magnitude, true, -a.Magnitude);
             case SignMarker.Plus or SignMarker.Credit: return (a.Magnitude, true, a.Magnitude);
         }
+        if (plusOnly) return (-a.Magnitude, true, -a.Magnitude);
+        if (minusOnly) return (a.Magnitude, true, a.Magnitude);
         var income = Keywords.ContainsAny(" " + TextNorm.Fold(r.Label) + " ", Keywords.IncomeHints);
         var guess = income ? a.Magnitude : -a.Magnitude;
         return (guess, false, guess);

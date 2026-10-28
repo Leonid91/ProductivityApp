@@ -25,6 +25,7 @@ internal static class Api
             nonClientRegions,
             maximized = window.Maximized,
             dataFolder = s.DataDir,
+            bankProfiles = AppServices.BankProfiles.Select(p => new { p.Id, p.Name, p.Proven }),
         });
         b.Register("app.ready", _ => null);
         b.Register("window.minimize", _ => { window.WindowState = FormWindowState.Minimized; return null; });
@@ -38,6 +39,8 @@ internal static class Api
             var key = p.Get<string>("key");
             s.SetSetting(key, p.Get<string>("value"));
             if (key == "theme") window.ApplyTheme(s.Setting("theme") == "dark");
+            // How own-account movements are recognised depends on the banking system.
+            if (key == "bankingSystem") s.Transactions.ReapplyRules();
             return s.Settings();
         });
 
@@ -79,7 +82,10 @@ internal static class Api
             var name = p.Get<string>("name").Trim();
             if (name.Length is 0 or > 80) throw new ArgumentException("The account name must be 1 to 80 characters.");
             a.Name = name;
+            var kindChanged = false;
+            if (p.Opt<AccountKind?>("kind") is { } kind && kind != a.Kind) { a.Kind = kind; kindChanged = true; }
             s.Db.UpdateAccount(a);
+            if (kindChanged) s.Transactions.ReapplyRules();
             return a;
         });
         b.Register("accounts.delete", p => { s.Db.DeleteAccount(p.Get<long>("id")); return null; });
@@ -102,6 +108,7 @@ internal static class Api
             var path = p.Get<string>("path");
             if (!File.Exists(path)) throw new FileNotFoundException("This file no longer exists.");
             if (new FileInfo(path).Length > 60 * 1024 * 1024) throw new InvalidDataException("This file is larger than 60 MB.");
+            if (Path.GetExtension(path).ToLowerInvariant() is not (".pdf" or ".csv" or ".txt" or ".tsv")) throw new InvalidDataException("Only PDF statements and CSV exports can be imported.");
             var draft = await s.Imports.ParseAsync(Path.GetFileName(path), await File.ReadAllBytesAsync(path));
             return DraftView(draft, s);
         });
@@ -171,6 +178,9 @@ internal static class Api
         {
             var path = p.Get<string>("path");
             if (!File.Exists(path) || !path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) throw new FileNotFoundException("The report is no longer there.");
+            // Only reports this app wrote can be opened from the interface.
+            var reports = s.Setting("reportsFolder") is { Length: > 0 } rf ? rf : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (!Path.GetFullPath(path).StartsWith(Path.GetFullPath(reports), StringComparison.OrdinalIgnoreCase)) throw new UnauthorizedAccessException("Only reports can be opened.");
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             return null;
         });
@@ -242,6 +252,9 @@ internal static class Api
             p.Last4,
             p.Method,
             p.UsedOcr,
+            p.Profile,
+            p.NewestFirst,
+            p.ZeroRowsSkipped,
             p.Language,
             p.DateOrder,
             rowChecks = p.RowBalanceChecks,
@@ -327,7 +340,7 @@ internal static class Api
             .Select(d => new { name = d.Name, path = d.FullName, isFolder = true, size = 0L, modified = d.LastWriteTime.ToString("O") });
         var files = foldersOnly
             ? []
-            : dir.EnumerateFiles("*.pdf", options).OrderByDescending(f => f.LastWriteTime)
+            : dir.EnumerateFiles("*", options).Where(f => f.Extension.ToLowerInvariant() is ".pdf" or ".csv").OrderByDescending(f => f.LastWriteTime)
                 .Select(f => new { name = f.Name, path = f.FullName, isFolder = false, size = f.Length, modified = f.LastWriteTime.ToString("O") });
         return new { path = dir.FullName, parent = dir.Parent?.FullName, entries = folders.Concat(files).Take(2000).ToList() };
     }

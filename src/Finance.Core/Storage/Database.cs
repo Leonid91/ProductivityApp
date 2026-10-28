@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -63,6 +63,10 @@ public sealed class Database : IDisposable
                 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 PRAGMA user_version = 1;
                 """);
+        }
+        if (version < 2)
+        {
+            Exec("ALTER TABLE transactions ADD COLUMN bank_category TEXT NOT NULL DEFAULT ''; PRAGMA user_version = 2;");
         }
     }
 
@@ -192,20 +196,20 @@ public sealed class Database : IDisposable
 
     // ---------------------------------------------------------------- transactions
 
-    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note";
+    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category";
 
     private static Transaction ReadTx(SqliteDataReader r) => new()
     {
         Id = r.GetInt64(0), AccountId = r.GetInt64(1), StatementId = r.IsDBNull(2) ? null : r.GetInt64(2), Date = D(r.GetString(3)),
         Amount = AmountParser.FromStorage(r.GetString(4)), Currency = r.GetString(5), RawLabel = r.GetString(6), MerchantKey = r.GetString(7),
         Brand = r.GetString(8), BrandSource = (ValueSource)r.GetInt32(9), CategoryId = r.GetString(10), CategorySource = (ValueSource)r.GetInt32(11),
-        Note = r.GetString(12),
+        Note = r.GetString(12), BankCategory = r.GetString(13),
     };
 
     public long AddTransaction(Transaction t) => (long)Scalar($"""
-        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note)
-        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n) RETURNING id
-        """,
+        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category)
+        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n, $bc) RETURNING id
+        """, ("$bc", t.BankCategory),
         ("$a", t.AccountId), ("$s", t.StatementId), ("$d", D(t.Date)), ("$m", AmountParser.ToStorage(t.Amount)), ("$c", t.Currency),
         ("$r", t.RawLabel), ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId),
         ("$cs", (int)t.CategorySource), ("$n", t.Note))!;

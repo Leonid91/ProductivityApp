@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Storage;
 
@@ -20,7 +21,14 @@ internal sealed class AppServices : IDisposable
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
         ["reportsFolder"] = "",
+        ["bankingSystem"] = "northAmerica",
+        ["bankFocus"] = "auto",
     };
+
+    /// <summary>Banks whose statements and exports the reader has been proven on.</summary>
+    public static readonly (string Id, string Name, bool Proven)[] BankProfiles = [("auto", "Any bank", false), ("bnc", "Banque Nationale (BNC)", true)];
+
+    public BankingSystem System => Setting("bankingSystem") == "france" ? BankingSystem.France : BankingSystem.NorthAmerica;
 
     public AppServices(string dataDir)
     {
@@ -29,8 +37,8 @@ internal sealed class AppServices : IDisposable
         LogPath = Path.Combine(dataDir, "app.log");
         Db = new Database(Path.Combine(dataDir, "finances.db"));
         Summaries = new SummaryService(Db);
-        Transactions = new TransactionService(Db, () => Setting("currency"));
-        Imports = new ImportService(Db, () => Setting("currency"), Transactions);
+        Transactions = new TransactionService(Db, () => Setting("currency"), () => System);
+        Imports = new ImportService(Db, () => Setting("currency"), Transactions) { BankFocus = () => Setting("bankFocus") };
     }
 
     public string Setting(string key) => Db.GetSetting(key) ?? DefaultSettings.GetValueOrDefault(key) ?? "";
@@ -54,7 +62,11 @@ internal sealed class AppServices : IDisposable
                 throw new ArgumentException("Unknown theme.");
             case "reportsFolder" when value.Length > 0 && !Directory.Exists(value):
                 throw new DirectoryNotFoundException("This folder does not exist.");
-            case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window":
+            case "bankingSystem" when value is not ("northAmerica" or "france"):
+                throw new ArgumentException("Unknown banking system.");
+            case "bankFocus" when !BankProfiles.Any(p => p.Id == value):
+                throw new ArgumentException("Unknown bank.");
+            case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window" or "bankingSystem" or "bankFocus":
                 Db.SetSetting(key, value);
                 break;
             default:

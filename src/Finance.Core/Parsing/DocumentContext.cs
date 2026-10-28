@@ -12,6 +12,9 @@ internal sealed partial class DocumentContext
     public required List<TextLine> Lines { get; init; }
     public required string Language { get; init; }
     public required bool LooksLikeCard { get; init; }
+    public required bool LooksLikeSavings { get; init; }
+    /// <summary>Known bank layout recognised ("bnc"), or null.</summary>
+    public string? Profile { get; init; }
     public required string Currency { get; init; }
     public string? Bank { get; init; }
     public string? Last4 { get; init; }
@@ -31,20 +34,57 @@ internal sealed partial class DocumentContext
         // on the same baseline stay separate.
         var firstPage = string.Join('\n', lines.Where(l => l.Page == pages[0].Number).SelectMany(Blocks));
 
+        // What the statement says about itself is printed above its table; the table can name any shop or bank.
+        var pageOne = lines.Where(l => l.Page == pages[0].Number).OrderBy(l => l.Top).ToList();
+        var tableStart = pageOne.FindIndex(IsTableHeaderLine);
+        var top = tableStart >= 0 ? pageOne.Take(tableStart).ToList() : pageOne.Where(l => l.Top < pages[0].Height * 0.35).ToList();
+        var headerFolded = string.Join('\n', top.Select(l => TextNorm.Fold(l.Text)));
+        var headerBlocks = string.Join('\n', top.SelectMany(Blocks));
+        var profile = DetectProfile(folded, lines);
+
         return new DocumentContext
         {
             Pages = pages,
             Lines = lines,
             Language = DetectLanguage(folded),
-            LooksLikeCard = Keywords.ContainsAny(folded, Keywords.Card),
+            LooksLikeCard = Keywords.ContainsAny(headerFolded, Keywords.Card) || MaskedCard().IsMatch(headerFolded)
+                            || (Keywords.ContainsAny(headerFolded, ["MASTERCARD", "VISA", "AMERICAN EXPRESS"]) && !Keywords.ContainsAny(headerFolded, ["COMPTE", "ACCOUNT"])),
+            LooksLikeSavings = Keywords.ContainsAny(headerFolded.Replace("CAISSE D'EPARGNE", "").Replace("CAISSE D EPARGNE", ""), Keywords.Savings),
+            Profile = profile,
             Currency = DetectCurrency(folded, defaultCurrency),
-            Bank = DetectBank(TextNorm.Fold(firstPage)) ?? InstitutionHeading(firstPage),
-            Last4 = DetectLast4(folded),
+            Bank = profile == "bnc" ? "Banque Nationale" : DetectBank(headerFolded) ?? InstitutionHeading(headerBlocks),
+            Last4 = MaskedLast4(headerFolded) ?? DetectLast4(headerFolded) ?? DetectLast4(folded),
             DocumentYear = DetectYear(folded),
             FirstPageText = firstPage,
             Period = DetectPeriod(lines),
             UsedOcr = pages.Any(p => p.FromOcr),
         };
+    }
+
+    [GeneratedRegex(@"[*X•]{4,}[ \-]?(\d{4})(?!\d)")]
+    private static partial Regex MaskedCard();
+
+    private static string? MaskedLast4(string folded) => MaskedCard().Match(folded) is { Success: true } m ? m.Groups[1].Value : null;
+
+    /// <summary>A transaction table header: a "Date" word and at least two other column names on one line.</summary>
+    private static bool IsTableHeaderLine(TextLine l)
+    {
+        var words = l.Words.Select(w => TextNorm.Fold(w.Text).Trim('.', ':', '(', ')')).ToList();
+        if (!words.Contains("DATE")) return false;
+        string[] names = ["DESCRIPTION", "LIBELLE", "MONTANT", "AMOUNT", "SOLDE", "BALANCE", "DEBIT", "CREDIT", "RETRAITS", "DEPOTS", "WITHDRAWALS", "DEPOSITS", "OPERATION", "TRANSACTION", "CATEGORIE"];
+        return words.Count(w => names.Contains(w)) >= 2;
+    }
+
+    /// <summary>Layouts of banks the reader knows precisely.</summary>
+    private static string? DetectProfile(string folded, List<TextLine> lines)
+    {
+        // Banque Nationale (BNC): online "Historique de mes transactions" export of a chequing, savings or Mastercard account.
+        if (folded.Contains("HISTORIQUE DE MES TRANSACTIONS", StringComparison.Ordinal)
+            && lines.Any(l => IsTableHeaderLine(l) && TextNorm.Fold(l.Text).Contains("CATEGORIE", StringComparison.Ordinal)))
+            return "bnc";
+        if (folded.Contains("BANQUE NATIONALE", StringComparison.Ordinal) || folded.Contains("NATIONAL BANK", StringComparison.Ordinal))
+            return "bnc";
+        return null;
     }
 
     private static IEnumerable<string> Blocks(TextLine line)
@@ -90,7 +130,8 @@ internal sealed partial class DocumentContext
 
     private static string DetectCurrency(string folded, string fallback)
     {
-        int Count(params string[] keys) => keys.Sum(k => Regex.Matches(folded, Regex.Escape(k)).Count);
+        // Whole words only: "EUR" is also the end of VALEUR, DEBITEUR...
+        int Count(params string[] keys) => keys.Sum(k => Regex.Matches(folded, (char.IsLetter(k[0]) ? @"(?<![A-Z])" : "") + Regex.Escape(k) + (char.IsLetter(k[^1]) ? @"(?![A-Z])" : "")).Count);
         var scores = new Dictionary<string, int>
         {
             ["EUR"] = Count("EUR", "€"),
@@ -121,6 +162,8 @@ internal sealed partial class DocumentContext
             var t = block.Trim();
             if (t.Length is < 4 or > 40 || t.Any(char.IsDigit)) continue;
             var f = " " + TextNorm.Fold(t) + " ";
+            // "Compte épargne", "Credit card statement": account type lines, not the institution.
+            if (f.StartsWith(" COMPTE ", StringComparison.Ordinal) || f.StartsWith(" ACCOUNT ", StringComparison.Ordinal) || f.Contains(" CREDIT CARD ", StringComparison.Ordinal)) continue;
             if (InstitutionWords.Any(w => f.Contains(" " + w + " ", StringComparison.Ordinal) || f.Contains(" " + w + "S ", StringComparison.Ordinal))
                 && !f.Contains(" STATEMENT ", StringComparison.Ordinal) && !f.Contains(" RELEVE ", StringComparison.Ordinal))
                 return t;
@@ -219,4 +262,7 @@ internal sealed partial class DocumentContext
     }
 
     public AccountKind DefaultKind => LooksLikeCard ? AccountKind.CreditCard : AccountKind.Bank;
+
+    /// <summary>A bank-side reading becomes a savings account when the statement says so.</summary>
+    public AccountKind Refine(AccountKind kind) => kind == AccountKind.Bank && LooksLikeSavings ? AccountKind.Savings : kind;
 }

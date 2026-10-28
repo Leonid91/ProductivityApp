@@ -7,8 +7,12 @@ namespace ProductivityApp.Finance.Services;
 public sealed record TransactionInput(string Date, decimal Amount, string Brand, string CategoryId, long? AccountId, string? Note);
 
 /// <summary>Manual changes to operations. Every brand or category correction teaches the dictionary.</summary>
-public sealed class TransactionService(Database db, Func<string> defaultCurrency)
+public sealed class TransactionService(Database db, Func<string> defaultCurrency, Func<BankingSystem>? bankingSystem = null)
 {
+    public BankingSystem System => bankingSystem?.Invoke() ?? BankingSystem.NorthAmerica;
+
+    public Classifier NewClassifier() => new(db.BrandRules(), System);
+
     public const string ManualAccountName = "Cash & manual entries";
 
     /// <summary>Sets the category of one operation and teaches it for the merchant and the brand. Returns how many other operations followed.</summary>
@@ -44,7 +48,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         // The brand may carry a learned category.
         if (t.CategorySource != ValueSource.User)
         {
-            var c = new Classifier(db.BrandRules()).Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount);
+            var c = NewClassifier().Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount, t.BankCategory);
             if (c.CategoryId != t.CategoryId) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; db.UpdateTransaction(t); }
         }
         return ReapplyRules();
@@ -108,25 +112,27 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         return existing?.Id ?? db.AddAccount(new Account { Name = ManualAccountName, Currency = defaultCurrency(), Kind = AccountKind.Bank });
     }
 
-    /// <summary>Re-runs the dictionary over every operation the person has not corrected by hand. Returns how many changed.</summary>
+    /// <summary>
+    /// Re-runs the dictionary over every operation the person has not corrected by hand, then links the movements
+    /// between their own accounts again. Returns how many operations ended up different.
+    /// </summary>
     public int ReapplyRules()
     {
-        var classifier = new Classifier(db.BrandRules());
-        var changed = 0;
+        var before = db.AllTransactions().ToDictionary(t => t.Id, t => (t.Brand, t.CategoryId));
+        var classifier = NewClassifier();
         db.InTransaction(() =>
         {
             foreach (var t in db.AllTransactions())
             {
                 if (t.BrandSource == ValueSource.User && t.CategorySource == ValueSource.User) continue;
-                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount);
+                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount, t.BankCategory);
                 var dirty = false;
                 if (t.BrandSource != ValueSource.User && t.RawLabel.Length > 0 && c.Brand != t.Brand) { t.Brand = c.Brand; t.BrandSource = c.BrandSource; dirty = true; }
-                if (t.CategorySource != ValueSource.User && c.CategoryId != t.CategoryId) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; dirty = true; }
-                if (!dirty) continue;
-                db.UpdateTransaction(t);
-                changed++;
+                if (t.CategorySource != ValueSource.User && (c.CategoryId != t.CategoryId || t.CategorySource == ValueSource.Linked)) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; dirty = true; }
+                if (dirty) db.UpdateTransaction(t);
             }
         });
-        return changed;
+        TransferMatcher.Link(db, System);
+        return db.AllTransactions().Count(t => before.TryGetValue(t.Id, out var b) && (b.Brand != t.Brand || b.CategoryId != t.CategoryId));
     }
 }

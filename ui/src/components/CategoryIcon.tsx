@@ -21,13 +21,14 @@ import Spa from '@mui/icons-material/SpaRounded'
 import Subscriptions from '@mui/icons-material/SubscriptionsRounded'
 import SwapHoriz from '@mui/icons-material/SwapHorizRounded'
 import Theaters from '@mui/icons-material/TheatersRounded'
+import TrendingUp from '@mui/icons-material/TrendingUpRounded'
 import Wifi from '@mui/icons-material/WifiRounded'
 import Work from '@mui/icons-material/WorkRounded'
 
 const icons: Record<string, React.ComponentType<SvgIconProps>> = {
   AccountBalance, Bolt, CardGiftcard, DirectionsBus, Flight, Home, LocalAtm, LocalGasStation, LocalPharmacy, MoreHoriz,
   Percent, Replay, Restaurant, Savings, School, Shield, ShoppingBag, ShoppingBasket, Spa, Subscriptions, SwapHoriz,
-  Theaters, Wifi, Work,
+  Theaters, TrendingUp, Wifi, Work,
 }
 
 export function CategoryIcon({ name, ...props }: { name: string } & SvgIconProps) {

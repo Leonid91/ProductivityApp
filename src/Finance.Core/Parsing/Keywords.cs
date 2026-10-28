@@ -30,7 +30,13 @@ internal static class Keywords
     public static readonly string[] Card =
     [
         "CARTE DE CREDIT", "CREDIT CARD", "LIMITE DE CREDIT", "CREDIT LIMIT", "PAIEMENT MINIMUM", "MINIMUM PAYMENT",
-        "PAYMENT DUE", "DATE D'ECHEANCE DU PAIEMENT", "PAIEMENT MINIMAL", "CREDIT DISPONIBLE", "AVAILABLE CREDIT",
+        "PAYMENT DUE", "DATE D'ECHEANCE DU PAIEMENT", "PAIEMENT MINIMAL", "CREDIT DISPONIBLE", "AVAILABLE CREDIT", "CARTE A DEBIT DIFFERE",
+    ];
+
+    public static readonly string[] Savings =
+    [
+        "EPARGNE", "SAVINGS", "INTERET ELEVE", "HIGH INTEREST", "HIGH-INTEREST", "CELI", "TFSA", "REER", "RRSP", "LIVRET", "COMPTE A TERME",
+        "PLACEMENT", "INVESTMENT ACCOUNT",
     ];
 
     public static readonly string[] IncomeHints =
@@ -38,6 +44,7 @@ internal static class Keywords
         "DEPOT", "DEPOSIT", "VIREMENT RECU", "VIR RECU", "VIR INST RE", "VIR SEPA RECU", "VIREMENT DE ", "REMBOURSEMENT", "REFUND",
         "SALAIRE", "PAYROLL", "SALARY", "PAIE ", "INTERET CREDITE", "INTEREST PAID", "INTEREST EARNED", "REMISE", "RECEIVED", "RECU ",
         "ALLOCATION", "PENSION", "DIVIDEND", "CASHBACK", "PAYMENT - THANK YOU", "PAIEMENT - MERCI", "PAYMENT THANK YOU", "PAIEMENT MERCI",
+        "PAIEMENT RECU", "PAYMENT RECEIVED",
     ];
 
     public static readonly string[] KnownBanks =

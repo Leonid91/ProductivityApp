@@ -2,15 +2,24 @@ import { invoke } from './bridge'
 
 export type CategoryKind = 'expense' | 'income' | 'transfer'
 export type Granularity = 'month' | 'year' | 'range'
-export type ColumnRole = 'ignore' | 'date' | 'valueDate' | 'description' | 'debit' | 'credit' | 'amount' | 'balance'
+export type ColumnRole = 'ignore' | 'date' | 'valueDate' | 'description' | 'debit' | 'credit' | 'amount' | 'balance' | 'category'
 export type DateOrder = 'unknown' | 'dayMonth' | 'monthDay'
 export type KindHint = 'auto' | 'bank' | 'creditCard'
-export type AccountKind = 'bank' | 'creditCard'
+export type AccountKind = 'bank' | 'creditCard' | 'savings'
 export type Verification = 'verified' | 'mismatch' | 'noBalances' | 'noTransactions'
 
 export interface Category { id: string; name: string; kind: CategoryKind; icon: string }
 
-export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder', string> & Record<string, string>
+export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'bankingSystem' | 'bankFocus', string> & Record<string, string>
+
+export interface BankProfile { id: string; name: string; proven: boolean }
+
+/** Account types, named the way the chosen banking system names them. */
+export function accountKinds(system: string): { value: AccountKind; label: string }[] {
+  return system === 'france'
+    ? [{ value: 'bank', label: 'Current account' }, { value: 'savings', label: 'Savings (livret)' }, { value: 'creditCard', label: 'Deferred debit card' }]
+    : [{ value: 'bank', label: 'Chequing account' }, { value: 'savings', label: 'Savings account' }, { value: 'creditCard', label: 'Credit card' }]
+}
 
 export interface InitInfo {
   version: string
@@ -21,6 +30,7 @@ export interface InitInfo {
   nonClientRegions: boolean
   maximized: boolean
   dataFolder: string
+  bankProfiles: BankProfile[]
 }
 
 export interface Slice { key: string; label: string; amount: number; share: number }
@@ -101,6 +111,9 @@ export interface Draft {
   last4: string | null
   method: string
   usedOcr: boolean
+  profile: string | null
+  newestFirst: boolean
+  zeroRowsSkipped: number
   language: string
   dateOrder: DateOrder
   rowChecks: number
@@ -175,6 +188,7 @@ export const api = {
   accounts: {
     list: () => invoke<Account[]>('accounts.list'),
     rename: (id: number, name: string) => invoke<Account>('accounts.update', { id, name }),
+    update: (id: number, name: string, kind: AccountKind) => invoke<Account>('accounts.update', { id, name, kind }),
     remove: (id: number) => invoke<null>('accounts.delete', { id }),
   },
   statements: {

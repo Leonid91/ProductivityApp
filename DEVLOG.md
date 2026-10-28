@@ -31,3 +31,31 @@
 - Local SQLite database, money stored as exact decimals.
 - Tests: 86 unit and integration tests on generated fictitious statements (five layouts, multi-page, scanned), and an
   end-to-end check that drives the real app off-screen (`tools/test.ps1`).
+
+## October 27th, 2026 - Banking systems, Banque Nationale, CSV import - Commit 2
+
+### Added
+- Banking system setting: North America (default) or France. Account types follow it: chequing, savings and
+  credit card (North America); current account, savings (livret) and deferred debit card (France).
+- Movements between one's own accounts are recognised and never counted as spending or income: paying the credit
+  card from chequing, transfers to and from savings, investments. Both halves are linked across accounts even when
+  the wording says nothing; "Savings & investments" category for money put aside.
+- Bank setting with Banque Nationale (BNC) as a proven bank: its "Historique de mes transactions" PDF exports and
+  its CSV exports (Mastercard, chequing, high-interest savings) are read exactly, with the bank's own categories.
+- CSV import for any bank: separator, quoting, encoding, header or no header, debit/credit or signed amounts,
+  day/month order and decimal comma are detected; files with a balance column are checked to the cent.
+- The same month imported as PDF and as CSV is recognised: nothing is added twice.
+- Account type can be changed in the settings.
+- Tests: fictitious BNC-style month (three accounts, PDF and CSV) and CSV exports in other banks' styles (99 tests);
+  the end-to-end check imports them through the interface.
+
+### Changed
+- The bank's category column, when a statement has one, decides the category before any guess from the label.
+- Statements listing the newest operation first are put back in time order before their balances are checked.
+- Lines with a zero amount (waived fees) are left out.
+
+### Bug fixed
+- A "+" amount on a card statement was read as a purchase: it is a payment or a refund.
+- "EUR" was found inside French words (VALEUR, DEBITEUR) and turned Canadian statements into euros.
+- A shop named in the transactions could be taken for the bank: the bank is now read above the table only.
+- A chequing statement mentioning credit card payments was read as a credit card statement.

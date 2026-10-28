@@ -3,7 +3,7 @@ using ProductivityApp.Finance.Text;
 
 namespace ProductivityApp.Finance.Parsing;
 
-public enum ColumnRole { Ignore = 0, Date = 1, ValueDate = 2, Description = 3, Debit = 4, Credit = 5, Amount = 6, Balance = 7 }
+public enum ColumnRole { Ignore = 0, Date = 1, ValueDate = 2, Description = 3, Debit = 4, Credit = 5, Amount = 6, Balance = 7, Category = 8 }
 
 public enum StatementKindHint { Auto = 0, Bank = 1, CreditCard = 2 }
 
@@ -39,6 +39,8 @@ public sealed class ParsedRow
     /// <summary>Signed: negative is money out.</summary>
     public decimal Amount { get; set; }
     public decimal? Balance { get; set; }
+    /// <summary>Category printed or exported by the bank, if the statement has one.</summary>
+    public string BankCategory { get; set; } = "";
     public int Page { get; set; }
     public double Top { get; set; }
 }
@@ -68,6 +70,12 @@ public sealed class StatementParse
     /// <summary>Columns found on the first table page, as page-width fractions, to start the template editor from.</summary>
     public List<TemplateColumn> Columns { get; set; } = [];
     public string FirstPageText { get; set; } = "";
+    /// <summary>Known bank layout that was recognised ("bnc"), or null.</summary>
+    public string? Profile { get; set; }
+    /// <summary>The statement lists the newest operation first (online history exports).</summary>
+    public bool NewestFirst { get; set; }
+    /// <summary>Lines with a zero amount (waived fees...) that were left out.</summary>
+    public int ZeroRowsSkipped { get; set; }
 
     public bool Verified => Status == VerificationStatus.Verified;
 }

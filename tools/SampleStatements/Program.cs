@@ -21,6 +21,13 @@ if (args.Length == 2 && args[0] == "generate")
     Write(Path.Combine(dir, "Caisse Fictive 2025-10.pdf"), Render(Sample(Style.FrenchSignedAmount, 2025, 10, 26, seed++)));
     Write(Path.Combine(dir, "Mutuelle Imaginaire 2025-10.pdf"), Render(Sample(Style.Atypical, 2025, 10, 22, seed++)));
     Write(Path.Combine(dir, "Banque Exemple 2025-09 (scan).pdf"), AsScan(Render(Sample(Style.FrenchDebitCredit, 2025, 9, 20, seed++))));
+    // A Banque Nationale-style month (fictitious): Mastercard, chequing and savings, as PDF and as CSV.
+    var bnc = BncGenerator.Sample(2025, 8, seed++);
+    foreach (var a in new[] { BncGenerator.BncAccount.Card, BncGenerator.BncAccount.Chequing, BncGenerator.BncAccount.Savings })
+    {
+        Write(Path.Combine(dir, "BNC " + BncGenerator.FileName(a, "pdf")), BncGenerator.Pdf(bnc, a));
+        Write(Path.Combine(dir, "BNC " + BncGenerator.FileName(a, "csv")), BncGenerator.Csv(bnc, a));
+    }
     return 0;
 }
 if (args.Length == 2 && args[0] == "parse")

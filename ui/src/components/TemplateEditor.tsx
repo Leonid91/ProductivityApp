@@ -13,7 +13,7 @@ import { StatusChip } from './DraftCard'
 import { Money } from './common'
 
 const roleLabels: Record<ColumnRole, string> = {
-  date: 'Date', valueDate: 'Value date', description: 'Label', debit: 'Money out', credit: 'Money in', amount: 'Amount', balance: 'Balance', ignore: 'Ignore',
+  date: 'Date', valueDate: 'Value date', description: 'Label', category: 'Bank category', debit: 'Money out', credit: 'Money in', amount: 'Amount', balance: 'Balance', ignore: 'Ignore',
 }
 const roles = Object.keys(roleLabels) as ColumnRole[]
 
@@ -52,7 +52,7 @@ export function TemplateEditor({ draft, onClose }: { draft: Draft; onClose: (nex
   const colors: Record<ColumnRole, string> = {
     date: theme.palette.chart.series[0], valueDate: theme.palette.chart.other, description: theme.palette.chart.series[6],
     debit: theme.palette.chart.series[7], credit: theme.palette.chart.series[5], amount: theme.palette.chart.series[1],
-    balance: theme.palette.chart.series[2], ignore: theme.palette.chart.other,
+    balance: theme.palette.chart.series[2], ignore: theme.palette.chart.other, category: theme.palette.chart.series[3],
   }
 
   useEffect(() => {

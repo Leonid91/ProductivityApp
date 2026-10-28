@@ -35,14 +35,16 @@ try {
   await p.waitFor(`[...document.querySelectorAll('[role=dialog] li, [role=dialog] [role=button]')].some(e => e.innerText.includes('.pdf'))`, 15000, 'file list')
   await shot(p, '02-file-browser.png')
   await p.clickText('Select all', { selector: '[role=dialog] button' })
-  const files = readdirSync(samples).filter((f) => f.endsWith('.pdf'))
+  const files = readdirSync(samples).filter((f) => f.endsWith('.pdf') || f.endsWith('.csv'))
   await p.clickText(`Import ${files.length} files`, { selector: '[role=dialog] button' })
   await p.waitFor(`document.querySelectorAll('[data-draft]').length === ${files.length}`, 180000, 'all drafts')
   await sleep(500)
   const statuses = await p.eval(`[...document.querySelectorAll('[data-draft]')].map(d => [d.dataset.draft, d.innerText.includes('Balanced to the cent') ? 'verified' : d.innerText.includes('No operations found') ? 'none' : d.innerText.includes('Off by') ? 'mismatch' : 'other'])`)
   writeFileSync(join(out, 'drafts.json'), JSON.stringify(statuses, null, 1))
   const verified = statuses.filter((s) => s[1] === 'verified').length
-  check('statements read and balanced to the cent', verified === files.length - 1, `${verified}/${files.length} (the unusual layout needs columns)`)
+  // The unusual layout needs columns; a card history (PDF or CSV) prints no balance to check against.
+  check('statements read and balanced to the cent', verified === files.length - 3, `${verified}/${files.length}`)
+  check('BNC card exports read without balances', statuses.filter((s) => s[0].startsWith('BNC 2025-10-01-120000') && s[1] === 'other').length === 2)
   check('unusual layout asks for columns', statuses.some((s) => s[0].startsWith('Mutuelle') && s[1] === 'none'))
   await p.scrollMain(0)
   await shot(p, '03-import-drafts.png')
@@ -81,19 +83,28 @@ try {
   await sleep(500)
   check('draft re-read with the template', await p.eval(`document.querySelector('[data-draft^="Mutuelle"]').innerText.includes('Balanced to the cent')`))
 
-  // ---- save every draft
-  for (let guard = 0; guard < 40; guard++) {
+  // ---- save every draft (PDFs first; the CSVs of the same BNC accounts must then bring nothing new)
+  let csvNothingNew = 0
+  for (let guard = 0; guard < 60; guard++) {
     const left = await p.eval(`document.querySelectorAll('[data-draft]').length`)
     if (left === 0) break
-    await p.clickText('Import', { selector: '[data-draft] button', partial: true, index: 0 }).catch(async () => {
-      // the button text is "Import N operations"; fall back to the last button of the first card
-      await p.eval(`[...document.querySelectorAll('[data-draft]')[0].querySelectorAll('button')].pop().click()`)
-    })
+    const pick = await p.eval(`(() => {
+      const cards = [...document.querySelectorAll('[data-draft]')]
+      const card = cards.find(c => !c.dataset.draft.endsWith('.csv')) ?? cards[0]
+      const buttons = [...card.querySelectorAll('button')]
+      const imp = buttons.find(b => b.innerText.startsWith('Import') && !b.disabled)
+      if (imp) { imp.click(); return 'import' }
+      buttons.find(b => b.innerText === 'Discard' || b.innerText === 'Close').click()
+      return card.dataset.draft.endsWith('.csv') && card.innerText.includes('already imported') ? 'nothing-new' : 'discard'
+    })()`)
+    if (pick === 'nothing-new') csvNothingNew++
     await p.waitFor(`document.querySelectorAll('[data-draft]').length < ${left}`, 20000, 'draft saved')
   }
+  check('BNC CSVs after their PDFs bring nothing new', csvNothingNew === 3, `${csvNothingNew}/3`)
   await sleep(600)
   const accounts = await p.engine('accounts.list')
-  check('accounts created once per account', accounts.length === 5, accounts.map((a) => a.name).join(', '))
+  check('accounts created once per account', accounts.length === 8, accounts.map((a) => a.name).join(', '))
+  check('BNC savings account recognised', accounts.some((a) => a.kind === 'savings' && a.name.startsWith('Banque Nationale')))
   await p.scrollMain(0)
   await shot(p, '06-import-history.png')
 
@@ -174,6 +185,12 @@ try {
   await shot(p, '18-brands.png')
   await p.clickText('Settings', { selector: 'nav button' })
   await sleep(800)
+  await p.mouseClick('[role=combobox]', 3)
+  await sleep(300)
+  await shot(p, '19-settings-bank-menu.png')
+  await p.clickText('Banque Nationale (BNC)', { selector: '[role=option]', partial: true })
+  await sleep(500)
+  check('bank focus saved', (await p.engine('app.init')).settings.bankFocus === 'bnc')
   await shot(p, '19-settings.png')
 
   // dark theme

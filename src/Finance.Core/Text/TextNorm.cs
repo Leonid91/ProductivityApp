@@ -46,6 +46,11 @@ public static class TextNorm
         var sb = new StringBuilder();
         foreach (var w in words)
         {
+            if (sb.Length > 0 && IsParticle(w) || sb.Length > 0 && w.ToUpperInvariant() is "DES" or "LES" or "AUX" or "AND" or "THE" or "FOR")
+            {
+                sb.Append(' ').Append(w.ToLowerInvariant());
+                continue;
+            }
             if (sb.Length > 0) sb.Append(' ');
             if (w.Length <= 2 && w.All(char.IsLetter) && !IsParticle(w)) { sb.Append(w.ToUpperInvariant()); continue; }
             sb.Append(char.ToUpperInvariant(w[0]));

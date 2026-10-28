@@ -11,6 +11,7 @@ import Folder from '@mui/icons-material/FolderRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfRounded'
 import Search from '@mui/icons-material/SearchRounded'
+import TableChart from '@mui/icons-material/TableChartRounded'
 import Storage from '@mui/icons-material/StorageRounded'
 import Usb from '@mui/icons-material/UsbRounded'
 import { api, type FolderListing, type Place } from '../api'
@@ -134,7 +135,7 @@ export function FileBrowser({ open, mode, title, initialPath, onClose, onPick }:
           <Box sx={{ flex: 1, overflow: 'auto', px: 1.5 }}>
             {error && <Typography color="error" sx={{ p: 2 }}>{error}</Typography>}
             {!error && listing && entries.length === 0 && (
-              <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>{mode === 'pdfs' ? 'No folders or PDF files here' : 'No folders here'}</Typography>
+              <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>{mode === 'pdfs' ? 'No folders or statements here' : 'No folders here'}</Typography>
             )}
             <List dense>
               {entries.map((e) => (
@@ -149,7 +150,7 @@ export function FileBrowser({ open, mode, title, initialPath, onClose, onPick }:
                     <Checkbox size="small" disableRipple checked={selected.has(e.path)} sx={{ p: 0.5, mr: 1, visibility: e.isFolder ? 'hidden' : 'visible' }} />
                   )}
                   <ListItemIcon sx={{ minWidth: 34 }}>
-                    {e.isFolder ? <Folder sx={{ color: '#d9a531' }} /> : <PictureAsPdf sx={{ color: '#d0483b' }} />}
+                    {e.isFolder ? <Folder sx={{ color: '#d9a531' }} /> : e.name.toLowerCase().endsWith('.csv') ? <TableChart sx={{ color: '#1f8a5b' }} /> : <PictureAsPdf sx={{ color: '#d0483b' }} />}
                   </ListItemIcon>
                   <ListItemText primary={e.name} slotProps={{ primary: { noWrap: true, sx: { fontSize: 13.5 } } }} />
                   {!e.isFolder && (

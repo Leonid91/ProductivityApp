@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Box, Button, IconButton, InputBase, MenuItem, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
+import { Box, Button, Chip, IconButton, InputBase, MenuItem, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
+import Verified from '@mui/icons-material/VerifiedRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
-import { api } from '../api'
+import { accountKinds, api, type AccountKind } from '../api'
 import { useApp } from '../AppContext'
 import { formatExample } from '../format'
 import { FileBrowser } from '../components/FileBrowser'
@@ -48,6 +49,44 @@ export function SettingsPage() {
         </Row>
       </SectionCard>
 
+      <SectionCard title="Banking">
+        <Row label="Banking system">
+          <TextField select size="small" value={settings.bankingSystem} onChange={(e) => void setSetting('bankingSystem', e.target.value).then(dataChanged)} sx={{ width: 220 }}>
+            <MenuItem value="northAmerica">North America</MenuItem>
+            <MenuItem value="france">France</MenuItem>
+          </TextField>
+        </Row>
+        <Row label="Bank">
+          <TextField
+            select
+            size="small"
+            value={settings.bankFocus}
+            onChange={(e) => void setSetting('bankFocus', e.target.value)}
+            sx={{ width: 300 }}
+            slotProps={{
+              select: {
+                renderValue: (v) => {
+                  const p = info.bankProfiles.find((x) => x.id === v)
+                  return (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <span>{p?.name ?? String(v)}</span>
+                      {p?.proven && <Verified sx={{ fontSize: 17, color: 'success.main' }} />}
+                    </Box>
+                  )
+                },
+              },
+            }}
+          >
+            {info.bankProfiles.map((p) => (
+              <MenuItem key={p.id} value={p.id} sx={{ gap: 1 }}>
+                <Box sx={{ flex: 1 }}>{p.name}</Box>
+                {p.proven && <Chip size="small" color="success" variant="outlined" icon={<Verified />} label="Proven" sx={{ height: 22 }} />}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Row>
+      </SectionCard>
+
       <SectionCard title="Reports">
         <Row label="Save reports in">
           <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 360 }}>{settings.reportsFolder || 'Documents'}</Typography>
@@ -67,7 +106,16 @@ export function SettingsPage() {
               }}
               sx={{ flex: 1, fontWeight: 520, px: 1, mx: -1, borderRadius: 2, '&:hover, &.Mui-focused': { bgcolor: 'action.hover' } }}
             />
-            <Typography variant="body2" color="text.secondary">{a.kind === 'creditCard' ? 'Credit card' : 'Bank account'} · {a.currency}</Typography>
+            <TextField
+              select
+              size="small"
+              value={a.kind}
+              onChange={(e) => api.accounts.update(a.id, a.name, e.target.value as AccountKind).then(() => { notify('Account type changed'); dataChanged() }, fail)}
+              sx={{ width: 200 }}
+            >
+              {accountKinds(settings.bankingSystem).map((k) => <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>)}
+            </TextField>
+            <Typography variant="body2" color="text.secondary" sx={{ width: 40 }}>{a.currency}</Typography>
             <Tooltip title="Delete">
               <IconButton size="small" onClick={() => setConfirm({
                 title: `Delete ${a.name}?`,

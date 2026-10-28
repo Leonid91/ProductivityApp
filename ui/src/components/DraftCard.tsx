@@ -7,7 +7,7 @@ import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
 import HelpOutline from '@mui/icons-material/HelpOutlineRounded'
 import ViewColumn from '@mui/icons-material/ViewColumnRounded'
 import DocumentScanner from '@mui/icons-material/DocumentScannerRounded'
-import { api, type AccountKind, type Draft, type DraftEdit } from '../api'
+import { accountKinds, api, type AccountKind, type Draft, type DraftEdit } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural, shortDate } from '../format'
 import { CategoryPill, Money } from './common'
@@ -45,8 +45,12 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
 
   // A statement read before its account was created by another import: use that account.
   useEffect(() => {
-    if (accountId !== 'new' || !draft.last4) return
-    const same = accounts.find((a) => a.last4 === draft.last4 && a.kind === draft.kind && a.currency === draft.currency)
+    if (accountId !== 'new') return
+    const sameKind = accounts.filter((a) => a.kind === draft.kind && a.currency === draft.currency)
+    const byNumber = draft.last4 ? sameKind.find((a) => a.last4 === draft.last4 && (!a.bank || !draft.bank || a.bank === draft.bank)) : undefined
+    // Without an account number, the only account of that bank and type is the one.
+    const byBank = !draft.last4 && draft.bank ? sameKind.filter((a) => a.bank === draft.bank) : []
+    const same = byNumber ?? (byBank.length === 1 ? byBank[0] : undefined)
     if (same) void pickAccount(same.id)
   }, [accounts])
 
@@ -111,6 +115,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         </Box>
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
           {draft.usedOcr && <Chip size="small" icon={<DocumentScanner />} label="Scanned" variant="outlined" />}
+          {draft.method === 'CSV' && <Chip size="small" label="CSV" variant="outlined" />}
           {draft.template && <Chip size="small" icon={<ViewColumn />} label={draft.template.name} variant="outlined" />}
           <StatusChip draft={draft} />
         </Box>
@@ -121,7 +126,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
           {money(draft.opening, draft.currency)} → {money(draft.closing, draft.currency)}
         </Typography>
       )}
-      {needsColumns && (
+      {needsColumns && draft.pageCount > 0 && (
         <Alert
           severity={draft.status === 'mismatch' ? 'warning' : 'error'}
           sx={{ mb: 2 }}
@@ -143,9 +148,8 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
             {accountId === 'new' && (
               <>
                 <TextField size="small" label="Name" value={name} onChange={(e) => setName(e.target.value)} sx={{ minWidth: 260, flex: '1 1 260px' }} />
-                <TextField select size="small" label="Type" value={kind} onChange={(e) => setKind(e.target.value as AccountKind)} sx={{ width: 160 }}>
-                  <MenuItem value="bank">Bank account</MenuItem>
-                  <MenuItem value="creditCard">Credit card</MenuItem>
+                <TextField select size="small" label="Type" value={kind} onChange={(e) => setKind(e.target.value as AccountKind)} sx={{ width: 190 }}>
+                  {accountKinds(settings.bankingSystem).map((k) => <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>)}
                 </TextField>
                 <TextField select size="small" label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)} sx={{ width: 110 }}>
                   {[...new Set([currency, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
@@ -200,7 +204,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
       )}
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2.5, flexWrap: 'wrap' }}>
-        {!draft.alreadyImported && (
+        {!draft.alreadyImported && draft.pageCount > 0 && (
           <Button startIcon={<ViewColumn />} onClick={() => setEditingColumns(true)}>Columns</Button>
         )}
         <Box sx={{ flex: 1 }} />

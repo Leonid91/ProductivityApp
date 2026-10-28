@@ -1,9 +1,24 @@
 namespace ProductivityApp.Finance.Model;
 
 /// <summary>Where a brand or category value came from. User wins over everything.</summary>
-public enum ValueSource { Default = 0, Keyword = 1, BuiltIn = 2, Learned = 3, User = 4 }
+public enum ValueSource
+{
+    Default = 0, Keyword = 1, BuiltIn = 2, Learned = 3, User = 4,
+    /// <summary>The category the bank itself printed or exported.</summary>
+    Bank = 5,
+    /// <summary>Recognised as the other half of a movement between two of the person's own accounts.</summary>
+    Linked = 6,
+}
 
-public enum AccountKind { Bank = 0, CreditCard = 1 }
+/// <summary>Bank is a chequing / current account (with a debit card).</summary>
+public enum AccountKind { Bank = 0, CreditCard = 1, Savings = 2 }
+
+/// <summary>
+/// North America: chequing, savings and credit card accounts are separate, and paying the card from chequing is a
+/// movement between own accounts. France: purchases with the bank card come out of the current account directly;
+/// a deferred-debit card is settled by one monthly debit.
+/// </summary>
+public enum BankingSystem { NorthAmerica = 0, France = 1 }
 
 public sealed class Account
 {
@@ -33,6 +48,8 @@ public sealed class Transaction
     public string CategoryId { get; set; } = Categories.OtherExpense;
     public ValueSource CategorySource { get; set; }
     public string Note { get; set; } = "";
+    /// <summary>Category given by the bank in its export, if any ("Epicerie", "Paiement carte de credit"...).</summary>
+    public string BankCategory { get; set; } = "";
 }
 
 public sealed class StatementRecord

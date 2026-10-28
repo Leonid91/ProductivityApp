@@ -29,7 +29,11 @@ public sealed class Classifier
             .ToList();
     }
 
-    public Classification Classify(string rawLabel, decimal amount)
+    private readonly BankingSystem _system;
+
+    public Classifier(IEnumerable<BrandRule> learned, BankingSystem system) : this(learned) => _system = system;
+
+    public Classification Classify(string rawLabel, decimal amount, string bankCategory = "")
     {
         var norm = Normalize(rawLabel);
         var key = MerchantKey(norm);
@@ -70,7 +74,10 @@ public sealed class Classifier
             categorySource = ValueSource.Learned;
         }
 
-        var keyword = KeywordCategory(padded, amount);
+        // The bank's own category, when its export has one, is more reliable than any guess from the label.
+        if (category is null && BankCategories.Map(bankCategory, amount) is { } fromBank) { category = fromBank; categorySource = ValueSource.Bank; }
+
+        var keyword = KeywordCategory(padded, amount, _system);
         // Bank movements have no shop behind them: give them a plain name rather than leftover label words.
         if (brandSource == ValueSource.Default && rule is null && builtIn is null && keyword is "cash" or "fees")
             brand = keyword == "cash" ? "Cash withdrawal" : "Bank fees";
@@ -79,7 +86,7 @@ public sealed class Classifier
         if (category is null && builtIn is not null && builtIn.Brand == brand) { category = builtIn.CategoryId; categorySource = ValueSource.BuiltIn; }
         if (category is null && keyword is not null) { category = keyword; categorySource = ValueSource.Keyword; }
 
-        if (category is not null && categorySource != ValueSource.Learned && amount > 0 && Categories.Get(category).Kind == CategoryKind.Expense && category != "fees")
+        if (category is not null && categorySource is not (ValueSource.Learned or ValueSource.Bank) && amount > 0 && Categories.Get(category).Kind == CategoryKind.Expense && category != "fees")
         {
             // Money back from a shop is a refund, not negative spending.
             category = "refunds";
@@ -175,9 +182,26 @@ public sealed class Classifier
         ("subscriptions", ["ABONNEMENT", "SUBSCRIPTION", "MEMBERSHIP"], -1),
     ];
 
-    private static string? KeywordCategory(string padded, decimal amount)
+    /// <summary>Wording of movements between one's own accounts, which depends on how the banking system works.</summary>
+    private static readonly (string Category, string[] Words, int Sign)[] NorthAmericaRules =
+    [
+        ("transfers", ["PAIEMENT MASTERCARD", "PAIEMENT VISA", "PAIEMENT AMEX", "PAIEMENT RECU", "PAIEMENT RECU MERCI", "PAYMENT RECEIVED",
+            "TRANSFERT ENTRE COMPTES", "VIREMENT ENTRE COMPTES", "TRANSFER BETWEEN ACCOUNTS", "ONLINE TRANSFER", "TRANSFERT EN LIGNE",
+            "PAYMENT THANK YOU", "PAIEMENT MERCI", "CREDIT CARD PAYMENT", "PAIEMENT CARTE DE CREDIT", "MASTERCARD PAYMENT", "VISA PAYMENT"], 0),
+        ("investments", ["COTISATION REER", "COTISATION CELI", "TFSA CONTRIBUTION", "RRSP CONTRIBUTION", "PLACEMENT", "WEALTHSIMPLE", "QUESTRADE",
+            "DISNAT", "COURTAGE", "INVESTISSEMENT"], -1),
+    ];
+
+    private static readonly (string Category, string[] Words, int Sign)[] FranceRules =
+    [
+        ("transfers", ["FACTURE CARTE", "RELEVE CB", "RELEVE CARTE", "DEBIT DIFFERE", "CARTE DIFFERE", "PRLV CARTE", "VIR INTERNE", "VIREMENT INTERNE",
+            "VERSEMENT LIVRET", "VIR LIVRET", "VIREMENT LIVRET", "VIR COMPTE EPARGNE", "VIR PERMANENT"], 0),
+        ("investments", ["LIVRET A", "LDDS", "PEL", "PEA", "ASSURANCE VIE", "VERSEMENT PEA"], -1),
+    ];
+
+    private static string? KeywordCategory(string padded, decimal amount, BankingSystem system)
     {
-        foreach (var (category, words, sign) in KeywordRules)
+        foreach (var (category, words, sign) in (system == BankingSystem.France ? FranceRules : NorthAmericaRules).Concat(KeywordRules))
         {
             if (sign > 0 && amount <= 0) continue;
             if (sign < 0 && amount > 0) continue;

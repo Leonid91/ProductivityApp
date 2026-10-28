@@ -17,6 +17,7 @@ public sealed class DraftRow
     public decimal Amount { get; set; }
     public decimal? Balance { get; set; }
     public string MerchantKey { get; set; } = "";
+    public string BankCategory { get; set; } = "";
     public string Brand { get; set; } = "";
     public ValueSource BrandSource { get; set; }
     public string CategoryId { get; set; } = "";
@@ -59,9 +60,21 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
 
     public async Task<ImportDraft> ParseAsync(string fileName, byte[] bytes, CancellationToken ct = default)
     {
-        if (bytes.Length < 5 || bytes[0] != '%' || bytes[1] != 'P' || bytes[2] != 'D' || bytes[3] != 'F')
-            throw new InvalidDataException("This file is not a PDF.");
+        var isPdf = bytes.Length >= 5 && bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F';
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
+        if (!isPdf)
+        {
+            if (!CsvStatementReader.LooksLikeCsv(bytes, fileName)) throw new InvalidDataException("This file is neither a PDF statement nor a CSV export.");
+            var csv = new ImportDraft
+            {
+                FileName = fileName, FileHash = hash, Bytes = bytes, Pages = [],
+                Parse = Focus(CsvStatementReader.Parse(bytes, fileName, defaultCurrency())),
+                AlreadyImported = db.HasStatementHash(hash),
+            };
+            Fill(csv);
+            _drafts[csv.Id] = csv;
+            return csv;
+        }
         var pages = await PdfReader.ReadAsync(bytes, ct).ConfigureAwait(false);
 
         var firstPage = TextNorm.Fold(string.Join(' ', pages[0].Words.Select(w => w.Text)));
@@ -76,6 +89,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             var auto = StatementParser.Parse(pages, null, defaultCurrency());
             if (auto.Verified) { parse = auto; template = null; }
         }
+        parse = Focus(parse);
 
         var draft = new ImportDraft
         {
@@ -96,21 +110,32 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
     public ImportDraft Reparse(Guid id, BankTemplate? template)
     {
         var draft = _drafts.GetValueOrDefault(id) ?? throw new KeyNotFoundException("This import is no longer open.");
-        draft.Parse = StatementParser.Parse(draft.Pages, template, defaultCurrency());
+        if (draft.Pages.Count == 0) throw new InvalidOperationException("Columns can only be set on PDF statements.");
+        draft.Parse = Focus(StatementParser.Parse(draft.Pages, template, defaultCurrency()));
         draft.Template = template;
         Fill(draft);
         return draft;
     }
 
+    /// <summary>Bank chosen in the settings: "bnc" (Banque Nationale) or "auto".</summary>
+    public Func<string> BankFocus { get; init; } = () => "auto";
+
+    /// <summary>With a bank in focus, statements that name no bank are taken to be from that bank.</summary>
+    private StatementParse Focus(StatementParse p)
+    {
+        if (BankFocus() == "bnc" && p.Bank is null) p.Bank = "Banque Nationale";
+        return p;
+    }
+
     private void Fill(ImportDraft draft)
     {
-        var classifier = new Classifier(db.BrandRules());
+        var classifier = transactions.NewClassifier();
         draft.Rows = draft.Parse.Rows.Select((r, i) =>
         {
-            var c = classifier.Classify(r.Label, r.Amount);
+            var c = classifier.Classify(r.Label, r.Amount, r.BankCategory);
             return new DraftRow
             {
-                Index = i, Date = r.Date, Label = r.Label, Amount = r.Amount, Balance = r.Balance, MerchantKey = c.MerchantKey,
+                Index = i, Date = r.Date, Label = r.Label, Amount = r.Amount, Balance = r.Balance, MerchantKey = c.MerchantKey, BankCategory = r.BankCategory,
                 Brand = c.Brand, BrandSource = c.BrandSource, CategoryId = c.CategoryId, CategorySource = c.CategorySource,
                 Page = r.Page, Top = r.Top,
             };
@@ -127,8 +152,9 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
     }
 
     /// <summary>
-    /// Marks rows already stored for this account (overlapping statements). Identical rows inside one statement
-    /// are legitimate (two coffees the same day), so rows are matched one for one, not by mere presence.
+    /// Marks rows already stored for this account (overlapping statements, or the PDF and the CSV of the same month,
+    /// whose labels are written differently). Rows are matched one for one on date and amount: two identical
+    /// coffees the same day are two operations.
     /// </summary>
     private void MarkDuplicates(ImportDraft draft, long? accountId)
     {
@@ -137,11 +163,11 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         var from = draft.Rows.Min(r => r.Date);
         var to = draft.Rows.Max(r => r.Date);
         var existing = db.TransactionsForAccount(accountId.Value, from, to)
-            .GroupBy(t => (t.Date, t.Amount, Label: TextNorm.Fold(t.RawLabel)))
+            .GroupBy(t => (t.Date, t.Amount))
             .ToDictionary(g => g.Key, g => g.Count());
         foreach (var r in draft.Rows)
         {
-            var key = (r.Date, r.Amount, Label: TextNorm.Fold(r.Label));
+            var key = (r.Date, r.Amount);
             if (existing.TryGetValue(key, out var n) && n > 0)
             {
                 r.Duplicate = true;
@@ -199,7 +225,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
                 var t = new Transaction
                 {
                     AccountId = accountId, StatementId = statementId, Date = r.Date, Amount = r.Amount, Currency = request.Currency,
-                    RawLabel = r.Label, MerchantKey = r.MerchantKey, Brand = r.Brand, BrandSource = r.BrandSource,
+                    RawLabel = r.Label, MerchantKey = r.MerchantKey, Brand = r.Brand, BrandSource = r.BrandSource, BankCategory = r.BankCategory,
                     CategoryId = r.CategoryId, CategorySource = r.CategorySource,
                 };
                 if (edits.TryGetValue(r.Index, out var e))
@@ -219,6 +245,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             }
         });
         if (learned.Count > 0) transactions.ReapplyRules();
+        else TransferMatcher.Link(db, transactions.System);
         _drafts.TryRemove(draft.Id, out _);
         var kept = draft.Rows.Where(r => !r.Duplicate).ToList();
         return new CommitResult(statementId, accountId, added, skipped,
@@ -228,7 +255,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
 
     public static string DefaultAccountName(StatementParse p)
     {
-        var kind = p.Kind == AccountKind.CreditCard ? "Card" : "Account";
+        var kind = p.Kind switch { AccountKind.CreditCard => "Card", AccountKind.Savings => "Savings", _ => "Account" };
         var name = p.Bank is null ? kind : $"{p.Bank} {kind.ToLowerInvariant()}";
         return p.Last4 is null ? name : $"{name} •••• {p.Last4}";
     }
