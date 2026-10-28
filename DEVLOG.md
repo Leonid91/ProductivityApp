@@ -135,3 +135,7 @@
 
 ### Kept
 - The balance check of each file on its own (its opening balance, its closing balance and what its lines add up to).
+
+### Changed (Commit 5)
+- A transfer whose other side is not imported is named after who sent or received it when the bank says it
+  ("A. Sample (not imported)"), instead of "Outside (not imported)"; From and To wrap instead of being cut.

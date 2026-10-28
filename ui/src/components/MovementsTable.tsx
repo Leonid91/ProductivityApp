@@ -28,7 +28,7 @@ export function MovementsTable({ movements, transactions, currency, paged, onEdi
   const visible = paged ? rows.slice((Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize) : rows
 
   const place = (name: string, outside: boolean) => (
-    <Typography variant="body2" noWrap title={name} sx={{ fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : 'text.primary' }}>{name}</Typography>
+    <Typography variant="body2" title={name} sx={{ overflowWrap: "anywhere", fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : 'text.primary' }}>{name}</Typography>
   )
 
   return (

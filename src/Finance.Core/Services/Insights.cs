@@ -105,6 +105,12 @@ public static class Movements
     public const string OutsideBank = "Bank account (not imported)";
     public const string OutsideCard = "Credit card (not imported)";
 
+    /// <summary>Names the classifier gives to bank movements that do not say who is on the other side.</summary>
+    private static readonly HashSet<string> GenericBrands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Interac e-Transfer", "Transfer between accounts", "Credit card payment", "Bill payment", "Unknown", "Bank fees",
+    };
+
     /// <summary>
     /// Every transfer, card payment and investment of the period, each movement once. Its two halves (when both accounts
     /// are imported) make one line; a half alone goes to or comes from the outside: an account that is not imported,
@@ -139,6 +145,8 @@ public static class Movements
             }
             else if (kind == AccountKind.CreditCard && t.Amount > 0) counterpart = OutsideBank;
             else if (t.CategoryId == Categories.Investments) counterpart = OutsideInvestments;
+            // A transfer that names someone (Interac from or to a person, another bank) says who is on the other side.
+            else if (!GenericBrands.Contains(t.Brand)) counterpart = $"{t.Brand} (not imported)";
             else counterpart = Outside;
             list.Add(t.Amount < 0
                 ? new MovementView(Iso(t.Date), t.CategoryId, t.Brand, -t.Amount, Name(t.AccountId), counterpart, false, counterpartOutside, t.Id, null)
