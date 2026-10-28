@@ -139,3 +139,5 @@
 ### Changed (Commit 5)
 - A transfer whose other side is not imported is named after who sent or received it when the bank says it
   ("A. Sample (not imported)"), instead of "Outside (not imported)"; From and To wrap instead of being cut.
+- The category of a transfer can be changed from the transfers table, with the same question (this operation only or
+  every one of that name): a friend paying you back set to "Refunds" then counts in earnings.

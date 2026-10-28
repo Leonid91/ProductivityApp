@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Box, IconButton, Pagination, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography, useTheme } from '@mui/material'
 import EditOutlined from '@mui/icons-material/EditOutlined'
 import East from '@mui/icons-material/EastRounded'
-import type { MovementView, TransactionView } from '../api'
+import { api, type MovementView, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural } from '../format'
 import { CategoryPill } from './common'
@@ -18,7 +18,22 @@ export function MovementsTable({ movements, transactions, currency, paged, onEdi
   paged: boolean
   onEdit: (tx: TransactionView) => void
 }) {
-  const { settings } = useApp()
+  const { settings, askScope, category, notify, fail, dataChanged } = useApp()
+
+  // A movement can be put in another category (a friend paying you back is a refund, not a transfer):
+  // for this operation only, or for every operation of the same name.
+  const setCategory = async (m: MovementView, id: string) => {
+    if (id === m.categoryId) return
+    const all = await askScope(m.label, category(id).name)
+    if (all === null) return
+    try {
+      const r = await api.tx.setCategory(m.editId, id, all)
+      notify(all ? `Saved for every “${m.label}”` + (r.changed ? ` · ${plural(r.changed, 'other operation')} updated` : '') : 'Category changed for this operation only')
+      dataChanged()
+    } catch (e) {
+      fail(e)
+    }
+  }
   const theme = useTheme()
   const [page, setPage] = useState(1)
   const pageSize = 25
@@ -62,7 +77,7 @@ export function MovementsTable({ movements, transactions, currency, paged, onEdi
             return (
               <TableRow key={m.editId} hover sx={{ '&:hover .row-action': { opacity: 1 }, '& td': { py: 0.9 } }}>
                 <TableCell className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(m.date, settings.dateFormat)}</TableCell>
-                <TableCell><CategoryPill id={m.categoryId} /></TableCell>
+                <TableCell><CategoryPill id={m.categoryId} onChange={(id) => void setCategory(m, id)} /></TableCell>
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                     <Typography variant="body2" noWrap title={tx?.rawLabel ?? m.label}>{m.label}</Typography>
