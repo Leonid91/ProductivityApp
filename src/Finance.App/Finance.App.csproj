@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>ProductivityApp</AssemblyName>
+    <RootNamespace>ProductivityApp.Host</RootNamespace>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Product>Productivity</Product>
+    <Version>0.1.0</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!-- Single self-contained file: nothing to install besides the WebView2 runtime that ships with Windows 10/11. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Finance.Core\Finance.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\app.ico" LogicalName="app.ico" />
+    <EmbeddedResource Include="..\..\ui\dist\**\*" LogicalName="ui/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <Target Name="CheckUi" BeforeTargets="BeforeBuild" Condition="!Exists('..\..\ui\dist\index.html')">
+    <Error Text="The interface is not built. Run 'npm ci' then 'npm run build' in the ui folder, or use tools\build.ps1." />
+  </Target>
+
+</Project>

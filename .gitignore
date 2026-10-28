@@ -1,0 +1,26 @@
+# Build output
+bin/
+obj/
+publish/
+TestResults/
+ui/node_modules/
+ui/dist/
+ui/node_modules/.tmp/
+*.tsbuildinfo
+
+# Personal data never goes into the repository: databases, statements, reports, logs.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.pdf
+*.log
+data/
+
+# Editors and local tool folders
+.vs/
+.vscode/
+.idea/
+/.*/
+*.user
+*.suo

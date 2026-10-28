@@ -1,0 +1,205 @@
+// End-to-end check of the real app: starts the executable off-screen (no window is ever shown), drives the
+// interface through the WebView2 debugging port, imports the sample statements through the in-app file
+// browser, exercises the main features and saves screenshots.
+//
+//   node tools/e2e/run.mjs <ProductivityApp.exe> <samples folder> <output folder>
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { launch, sleep } from './cdp.mjs'
+
+const [exe, samples, out] = process.argv.slice(2)
+if (!exe || !samples || !out) { console.error('usage: run.mjs <exe> <samples> <out>'); process.exit(2) }
+const data = join(out, 'data')
+const reports = join(out, 'reports')
+rmSync(out, { recursive: true, force: true })
+mkdirSync(reports, { recursive: true })
+
+const checks = []
+const check = (name, ok, detail = '') => { checks.push({ name, ok: !!ok, detail }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`) }
+const shot = (p, name) => p.shot(join(out, name))
+const text = (p) => p.eval('document.body.innerText')
+
+const p = await launch(exe, ['--offscreen', '--data-dir', data, '--size', '1440x920'], 9333)
+let failed = false
+try {
+  await p.waitFor(`document.querySelector('nav') !== null`)
+  await p.engine('settings.set', { key: 'reportsFolder', value: reports })
+  await sleep(600)
+  await shot(p, '01-empty.png')
+  check('empty state shown', (await text(p)).includes('No operations yet'))
+
+  // ---- import through the in-app file browser
+  await p.clickText('Import', { selector: 'nav button' })
+  await p.eval(`localStorage.setItem('fileBrowser.lastFolder', ${JSON.stringify(samples)})`)
+  await p.clickText('Choose files')
+  await p.waitFor(`[...document.querySelectorAll('[role=dialog] li, [role=dialog] [role=button]')].some(e => e.innerText.includes('.pdf'))`, 15000, 'file list')
+  await shot(p, '02-file-browser.png')
+  await p.clickText('Select all', { selector: '[role=dialog] button' })
+  const files = readdirSync(samples).filter((f) => f.endsWith('.pdf'))
+  await p.clickText(`Import ${files.length} files`, { selector: '[role=dialog] button' })
+  await p.waitFor(`document.querySelectorAll('[data-draft]').length === ${files.length}`, 180000, 'all drafts')
+  await sleep(500)
+  const statuses = await p.eval(`[...document.querySelectorAll('[data-draft]')].map(d => [d.dataset.draft, d.innerText.includes('Balanced to the cent') ? 'verified' : d.innerText.includes('No operations found') ? 'none' : d.innerText.includes('Off by') ? 'mismatch' : 'other'])`)
+  writeFileSync(join(out, 'drafts.json'), JSON.stringify(statuses, null, 1))
+  const verified = statuses.filter((s) => s[1] === 'verified').length
+  check('statements read and balanced to the cent', verified === files.length - 1, `${verified}/${files.length} (the unusual layout needs columns)`)
+  check('unusual layout asks for columns', statuses.some((s) => s[0].startsWith('Mutuelle') && s[1] === 'none'))
+  await p.scrollMain(0)
+  await shot(p, '03-import-drafts.png')
+
+  // ---- column template for the unusual bank: drag the borders on the real page picture
+  await p.eval(`document.querySelector('[data-draft^="Mutuelle"]').scrollIntoView({ block: 'center' })`)
+  await p.clickText('Set columns', { selector: '[data-draft^="Mutuelle"] button' })
+  await p.waitFor(`document.querySelector('[role=dialog] img') !== null`, 20000, 'page picture')
+  await sleep(600)
+  await shot(p, '04-template-editor-before.png')
+  const geo = await p.eval(`(() => { const box = document.querySelector('[role=dialog] img').getBoundingClientRect(); return { left: box.left, width: box.width, top: box.top } })()`)
+  const handles = await p.eval(`[...document.querySelectorAll('[role=dialog] [style], [role=dialog] div')].filter(e => getComputedStyle(e).cursor === 'col-resize').map(e => { const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 120 } })`)
+  const targets = [0.05, 0.10, 0.55, 0.73, 0.86, 0.965]
+  for (let i = 0; i < handles.length && i < targets.length; i++) {
+    const h = handles[i]
+    const x = geo.left + geo.width * targets[i]
+    await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: h.x, y: h.y })
+    await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: h.x, y: h.y, button: 'left', clickCount: 1 })
+    for (let s = 1; s <= 6; s++) await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: h.x + ((x - h.x) * s) / 6, y: h.y, button: 'left', buttons: 1 })
+    await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y: h.y, button: 'left', clickCount: 1 })
+    await sleep(120)
+  }
+  // roles: Ignore | Label | Money out | Money in | Date
+  const setRole = async (index, label) => {
+    await p.mouseClick('[role=dialog] [role=combobox]', index)
+    await p.clickText(label, { selector: '[role=option]' })
+    await sleep(200)
+  }
+  await setRole(0, 'Ignore')
+  await setRole(4, 'Date')
+  await p.waitFor(`document.querySelector('[role=dialog]').innerText.includes('Balanced to the cent')`, 15000, 'template balances')
+  await shot(p, '05-template-editor-after.png')
+  check('hand-set columns balance the unusual statement', true)
+  await p.clickText('Save', { selector: '[role=dialog] button' })
+  await p.waitFor(`!document.querySelector('[role=dialog] img')`, 10000, 'editor closed')
+  await sleep(500)
+  check('draft re-read with the template', await p.eval(`document.querySelector('[data-draft^="Mutuelle"]').innerText.includes('Balanced to the cent')`))
+
+  // ---- save every draft
+  for (let guard = 0; guard < 40; guard++) {
+    const left = await p.eval(`document.querySelectorAll('[data-draft]').length`)
+    if (left === 0) break
+    await p.clickText('Import', { selector: '[data-draft] button', partial: true, index: 0 }).catch(async () => {
+      // the button text is "Import N operations"; fall back to the last button of the first card
+      await p.eval(`[...document.querySelectorAll('[data-draft]')[0].querySelectorAll('button')].pop().click()`)
+    })
+    await p.waitFor(`document.querySelectorAll('[data-draft]').length < ${left}`, 20000, 'draft saved')
+  }
+  await sleep(600)
+  const accounts = await p.engine('accounts.list')
+  check('accounts created once per account', accounts.length === 5, accounts.map((a) => a.name).join(', '))
+  await p.scrollMain(0)
+  await shot(p, '06-import-history.png')
+
+  // ---- periods (the sketch)
+  await p.clickText('Periods', { selector: 'nav button' })
+  await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'period title')
+  await sleep(1200)
+  await shot(p, '07-periods-top.png')
+  const title = await p.eval(`document.querySelector('section h2').innerText`)
+  check('month title as on the sketch', /^[A-Z][a-z]+, from [A-Z][a-z]+ \d+ to [A-Z][a-z]+ \d+, \d{4}$/.test(title), title)
+  await p.eval(`(() => { const s = document.querySelector('section'); const t = [...s.querySelectorAll('p, span')].find(e => e.innerText === 'Expenses'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
+  await sleep(800)
+  await shot(p, '08-periods-totals-charts.png')
+  await p.eval(`document.querySelector('main').scrollBy({ top: 420 })`)
+  await sleep(600)
+  await shot(p, '09-periods-daily-chart.png')
+
+  // date format menu
+  await p.scrollMain(0)
+  await p.clickText('Date', { selector: 'section th button' })
+  await shot(p, '10-date-menu.png')
+  await p.clickText('YYYY-MM-DD', { selector: '[role=menuitem]', partial: true })
+  await sleep(500)
+  const firstDate = await p.eval(`document.querySelector('section tbody td').innerText`)
+  check('date format switch', /^\d{4}-\d{2}-\d{2}$/.test(firstDate), firstDate)
+  await p.clickText('Date', { selector: 'section th button' })
+  await p.clickText('DD month YYYY', { selector: '[role=menuitem]', partial: true })
+  await sleep(400)
+
+  // category filter
+  await p.clickText('Category', { selector: 'section th button' })
+  await shot(p, '11-category-menu.png')
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(300)
+
+  // correcting a category teaches the dictionary
+  const before = await p.eval(`document.querySelector('section tbody tr td:nth-child(3)').innerText`)
+  await p.click('section tbody tr td:nth-child(2) button', 0)
+  await p.clickText('Entertainment', { selector: '[role=menuitem]' })
+  await p.waitFor(`document.body.innerText.includes('Saved for')`, 10000, 'learned toast')
+  await shot(p, '12-learned.png')
+  const rules = (await p.engine('brands.list')).rules
+  check('correction learned', rules.some((r) => r.categoryId === 'entertainment'), `${before} -> Entertainment`)
+
+  // year and several years
+  await p.clickText('Year', { selector: 'button' })
+  await p.waitFor(`document.querySelector('section h2')?.innerText.startsWith('2025, from')`, 20000, 'year title')
+  await sleep(1200)
+  await shot(p, '13-year.png')
+  await p.clickText('Several years', { selector: 'button' })
+  await sleep(1500)
+  await shot(p, '14-several-years.png')
+  await p.clickText('Month', { selector: 'button' })
+  await sleep(800)
+
+  // export the first month to PDF
+  await p.clickText('Export to PDF', { selector: 'section button', index: 0 })
+  await p.waitFor(`document.querySelector('[role=dialog]')?.innerText.includes('File name')`, 10000, 'export dialog')
+  await sleep(300)
+  await shot(p, '15-export-dialog.png')
+  await p.clickText('Export', { selector: '[role=dialog] button' })
+  await p.waitFor(`document.body.innerText.includes('Report saved')`, 30000, 'report saved')
+  const pdfs = readdirSync(reports).filter((f) => f.endsWith('.pdf'))
+  check('PDF report written', pdfs.length === 1, pdfs.join(', '))
+
+  // add operation dialog
+  await p.clickText('Add operation')
+  await sleep(500)
+  await shot(p, '16-add-operation.png')
+  await p.clickText('Cancel', { selector: '[role=dialog] button' })
+
+  // calendar, brands, settings
+  await p.clickText('Calendar', { selector: 'nav button' })
+  await sleep(1500)
+  await shot(p, '17-calendar.png')
+  await p.clickText('Brands', { selector: 'nav button' })
+  await sleep(1200)
+  await shot(p, '18-brands.png')
+  await p.clickText('Settings', { selector: 'nav button' })
+  await sleep(800)
+  await shot(p, '19-settings.png')
+
+  // dark theme
+  await p.clickText('Dark', { selector: 'button' })
+  await sleep(600)
+  await p.clickText('Periods', { selector: 'nav button' })
+  await sleep(1500)
+  await shot(p, '20-dark-periods.png')
+  await p.eval(`(() => { const s = document.querySelector('section'); const t = [...s.querySelectorAll('p, span')].find(e => e.innerText === 'Expenses'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
+  await sleep(800)
+  await shot(p, '21-dark-charts.png')
+  await p.clickText('Calendar', { selector: 'nav button' })
+  await sleep(1200)
+  await shot(p, '22-dark-calendar.png')
+  await p.engine('settings.set', { key: 'theme', value: 'light' })
+
+  check('no script errors in the interface', p.consoleErrors.length === 0, p.consoleErrors.slice(0, 3).join(' | '))
+} catch (e) {
+  failed = true
+  console.error('ERROR', e.message)
+  try { await shot(p, '99-error.png') } catch { /* window gone */ }
+} finally {
+  await p.close()
+}
+writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, consoleErrors: p.consoleErrors }, null, 1))
+const bad = checks.filter((c) => !c.ok).length
+console.log(`\n${checks.length - bad}/${checks.length} checks passed${failed ? ' (stopped early)' : ''}`)
+if (existsSync(join(out, 'data'))) { /* left for inspection; throw-away data */ }
+process.exit(bad || failed ? 1 : 0)

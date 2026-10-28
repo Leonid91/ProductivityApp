@@ -1,0 +1,36 @@
+import type { SvgIconProps } from '@mui/material'
+import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
+import Bolt from '@mui/icons-material/BoltRounded'
+import CardGiftcard from '@mui/icons-material/CardGiftcardRounded'
+import DirectionsBus from '@mui/icons-material/DirectionsBusRounded'
+import Flight from '@mui/icons-material/FlightRounded'
+import Home from '@mui/icons-material/HomeRounded'
+import LocalAtm from '@mui/icons-material/LocalAtmRounded'
+import LocalGasStation from '@mui/icons-material/LocalGasStationRounded'
+import LocalPharmacy from '@mui/icons-material/LocalPharmacyRounded'
+import MoreHoriz from '@mui/icons-material/MoreHorizRounded'
+import Percent from '@mui/icons-material/PercentRounded'
+import Replay from '@mui/icons-material/ReplayRounded'
+import Restaurant from '@mui/icons-material/RestaurantRounded'
+import Savings from '@mui/icons-material/SavingsRounded'
+import School from '@mui/icons-material/SchoolRounded'
+import Shield from '@mui/icons-material/ShieldRounded'
+import ShoppingBag from '@mui/icons-material/ShoppingBagRounded'
+import ShoppingBasket from '@mui/icons-material/ShoppingBasketRounded'
+import Spa from '@mui/icons-material/SpaRounded'
+import Subscriptions from '@mui/icons-material/SubscriptionsRounded'
+import SwapHoriz from '@mui/icons-material/SwapHorizRounded'
+import Theaters from '@mui/icons-material/TheatersRounded'
+import Wifi from '@mui/icons-material/WifiRounded'
+import Work from '@mui/icons-material/WorkRounded'
+
+const icons: Record<string, React.ComponentType<SvgIconProps>> = {
+  AccountBalance, Bolt, CardGiftcard, DirectionsBus, Flight, Home, LocalAtm, LocalGasStation, LocalPharmacy, MoreHoriz,
+  Percent, Replay, Restaurant, Savings, School, Shield, ShoppingBag, ShoppingBasket, Spa, Subscriptions, SwapHoriz,
+  Theaters, Wifi, Work,
+}
+
+export function CategoryIcon({ name, ...props }: { name: string } & SvgIconProps) {
+  const Icon = icons[name] ?? MoreHoriz
+  return <Icon {...props} />
+}
