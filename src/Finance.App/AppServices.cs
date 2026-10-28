@@ -34,7 +34,7 @@ internal sealed class AppServices : IDisposable
     };
 
     /// <summary>Raised whenever classification rules change, so existing operations are classified again at start.</summary>
-    private const string RulesVersion = "4";
+    private const string RulesVersion = "5";
 
     /// <summary>Banks whose statements and exports the reader has been proven on.</summary>
     public static readonly (string Id, string Name, bool Proven)[] BankProfiles = [("auto", "Any bank", false), ("bnc", "Banque Nationale (BNC)", true)];

@@ -58,7 +58,9 @@ public static class BankCategories
         var f = TextNorm.Fold(bankCategory).Trim();
         if (!ByName.TryGetValue(f, out var hit)) return null;
         if (hit.Sign > 0 && amount < 0) return null;
-        if (hit.Sign < 0 && amount > 0) return hit.Category == "fees" ? null : "refunds";
+        // Money coming back under a purchase heading is a refund; under "withdrawal" or "fees" it is not (a closed
+        // placement filed under "Retrait" is the person's own money coming back, not a refund).
+        if (hit.Sign < 0 && amount > 0) return hit.Category is "fees" or "cash" ? null : "refunds";
         return hit.Category;
     }
 }

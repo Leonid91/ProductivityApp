@@ -13,7 +13,7 @@ public sealed record Bar(string Key, string Label, decimal Expenses, decimal Ear
 public sealed record TransactionView(
     long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, string CategorySource,
     string BrandSource, string RawLabel, string Note, long AccountId, long? StatementId,
-    string? Recurring = null, long? LinkedId = null);
+    string? Recurring = null, long? LinkedId = null, decimal? Earned = null);
 
 public sealed class PeriodSummary
 {
@@ -36,10 +36,9 @@ public sealed class PeriodSummary
     public required List<Bar> Series { get; init; }
     /// <summary>Recurring payments of the period (rent, insurance, phone, subscriptions...) and their total.</summary>
     public required decimal RecurringExpenses { get; init; }
-    /// <summary>Recurring income of the period (salary...) and its total.</summary>
-    public required decimal RecurringIncome { get; init; }
     public required List<Slice> RecurringExpensePie { get; init; }
-    public required List<Slice> RecurringIncomePie { get; init; }
+    /// <summary>Every income of the period by source (salary, refunds, interest, the earned part of investments...).</summary>
+    public required List<Slice> IncomePie { get; init; }
     /// <summary>Transfers, card payments and investments, each movement once, from one account to another.</summary>
     public required List<MovementView> Movements { get; init; }
     public required List<Flow> Flows { get; init; }
@@ -91,12 +90,20 @@ public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSyst
         var byCategory = new Dictionary<string, decimal>();
         var byBrand = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
         var brandNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var incomeBy = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
         foreach (var t in txs)
         {
             var transfer = Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;
             if (transfer)
             {
                 if (t.Amount < 0) transfersOut -= t.Amount; else transfersIn += t.Amount;
+                // The part of an investment coming back that the person says was gain is income.
+                if (t.Amount > 0 && t.Earned is > 0 and var gain)
+                {
+                    earnings += gain;
+                    incomeBy[t.Brand] = incomeBy.GetValueOrDefault(t.Brand) + gain;
+                    brandNames.TryAdd(t.Brand, t.Brand);
+                }
                 continue;
             }
             if (t.Amount < 0)
@@ -107,17 +114,20 @@ public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSyst
                 byBrand[t.Brand] = byBrand.GetValueOrDefault(t.Brand) + spent;
                 brandNames.TryAdd(t.Brand, t.Brand);
             }
-            else earnings += t.Amount;
+            else
+            {
+                earnings += t.Amount;
+                incomeBy[t.Brand] = incomeBy.GetValueOrDefault(t.Brand) + t.Amount;
+                brandNames.TryAdd(t.Brand, t.Brand);
+            }
         }
 
         var categorySlices = Slices(byCategory.Select(kv => (kv.Key, Categories.Get(kv.Key).Name, kv.Value)), expenses);
         var recurringOut = txs.Where(t => t.Amount < 0 && recurring.ContainsKey(t.Id)).ToList();
-        var recurringIn = txs.Where(t => t.Amount > 0 && recurring.ContainsKey(t.Id)).ToList();
         var recurringOutTotal = -recurringOut.Sum(t => t.Amount);
         var burden = -recurringOut.Where(t => t.CategoryId != "housing").Sum(t => t.Amount);
-        var recurringInTotal = recurringIn.Sum(t => t.Amount);
         var recurringOutSlices = Slices(recurringOut.GroupBy(t => t.Brand, StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, g.First().Brand, -g.Sum(t => t.Amount))), recurringOutTotal);
-        var recurringInSlices = Slices(recurringIn.GroupBy(t => t.Brand, StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, g.First().Brand, g.Sum(t => t.Amount))), recurringInTotal);
+        var incomeSlices = Slices(incomeBy.Select(kv => (kv.Key, brandNames[kv.Key], kv.Value)), earnings);
         var brandSlices = Slices(byBrand.Select(kv => (kv.Key, brandNames[kv.Key], kv.Value)), expenses);
 
         var (series, unit) = Series(txs, from, to, g);
@@ -142,9 +152,8 @@ public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSyst
             Series = series,
             SeriesUnit = unit,
             RecurringExpenses = recurringOutTotal,
-            RecurringIncome = recurringInTotal,
             RecurringExpensePie = recurringOutSlices,
-            RecurringIncomePie = recurringInSlices,
+            IncomePie = incomeSlices,
             Movements = movements,
             Flows = Movements.Flows(movements),
             Diagram = FlowDiagram.Build(movements),
@@ -159,7 +168,7 @@ public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSyst
     public static TransactionView View(Transaction t, string? recurring) => new(
         t.Id, t.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), t.Amount, t.Currency, t.Brand, t.CategoryId,
         t.CategorySource.ToString(), t.BrandSource.ToString(), t.RawLabel, t.Note, t.AccountId, t.StatementId,
-        recurring, t.LinkedId);
+        recurring, t.LinkedId, t.Earned);
 
     private static List<Slice> Slices(IEnumerable<(string Key, string Label, decimal Amount)> items, decimal total) =>
         items.OrderByDescending(x => x.Amount).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase)

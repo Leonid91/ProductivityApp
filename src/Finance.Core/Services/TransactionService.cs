@@ -4,7 +4,8 @@ using ProductivityApp.Finance.Storage;
 
 namespace ProductivityApp.Finance.Services;
 
-public sealed record TransactionInput(string Date, decimal Amount, string Brand, string CategoryId, long? AccountId, string? Note);
+/// <param name="Earned">For money back from an investment: the part that was gain, counted as income (null: none given).</param>
+public sealed record TransactionInput(string Date, decimal Amount, string Brand, string CategoryId, long? AccountId, string? Note, decimal? Earned = null);
 
 /// <summary>Manual changes to operations. Every brand or category correction teaches the dictionary.</summary>
 public sealed class TransactionService(Database db, Func<string> defaultCurrency, Func<BankingSystem>? bankingSystem = null)
@@ -137,6 +138,14 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         t.Brand = brand;
         t.CategoryId = input.CategoryId;
         t.Note = input.Note?.Trim() ?? "";
+        // Only money coming back from a movement (an investment closed, a transfer in) has an earned part.
+        if (input.Earned is { } earned && earned != 0)
+        {
+            if (t.Amount < 0 || !Categories.IsTransfer(t.CategoryId)) throw new ArgumentException("Only money coming back from an investment or a transfer can have an earned part.");
+            if (earned < 0 || earned > t.Amount) throw new ArgumentException("The earned part must be between 0 and the amount received.");
+            t.Earned = decimal.Round(earned, 2, MidpointRounding.AwayFromZero);
+        }
+        else t.Earned = null;
         if (!keepSources)
         {
             t.BrandSource = ValueSource.User;

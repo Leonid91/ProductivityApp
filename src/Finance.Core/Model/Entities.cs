@@ -66,6 +66,11 @@ public sealed class Transaction
     public string BankCategory { get; set; } = "";
     /// <summary>The other half of a movement between two of the person's own accounts, when it was found.</summary>
     public long? LinkedId { get; set; }
+    /// <summary>
+    /// For money coming back from an investment (a movement): the part the person says was earned (gain, interest),
+    /// counted as income. The rest is their own money coming back. Null when not given: never guessed.
+    /// </summary>
+    public decimal? Earned { get; set; }
 }
 
 public sealed class StatementRecord

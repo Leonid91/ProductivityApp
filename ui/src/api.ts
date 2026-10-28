@@ -52,6 +52,8 @@ export interface TransactionView {
   /** How often it comes back ("monthly", "twice a month", "yearly"); null when it is not recurring. */
   recurring: string | null
   linkedId: number | null
+  /** For money back from an investment: the part entered as earned (gain), counted as income. */
+  earned: number | null
 }
 
 /** One movement of money, once, from an account (or the outside) to another (or the outside). */
@@ -99,9 +101,9 @@ export interface PeriodSummary {
   series: Bar[]
   seriesUnit: 'day' | 'month' | 'year'
   recurringExpenses: number
-  recurringIncome: number
   recurringExpensePie: Slice[]
-  recurringIncomePie: Slice[]
+  /** Every income by source. */
+  incomePie: Slice[]
   movements: MovementView[]
   flows: Flow[]
   diagram: FlowDiagram
@@ -198,7 +200,7 @@ export interface FolderListing { path: string; parent: string | null; entries: F
 export interface BrandInfo { brand: string; count: number; spent: number; received: number; categoryId: string; learned: boolean; currency: string; lastDate: string }
 export interface BrandRule { id: number; merchantKey: string; brand: string; categoryId: string | null; updatedAt: string }
 
-export interface TransactionInput { date: string; amount: number; brand: string; categoryId: string; accountId: number | null; note: string | null }
+export interface TransactionInput { date: string; amount: number; brand: string; categoryId: string; accountId: number | null; note: string | null; earned?: number | null }
 
 export const api = {
   init: () => invoke<InitInfo>('app.init'),

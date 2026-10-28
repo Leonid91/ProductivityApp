@@ -81,15 +81,22 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
   // Recurring payments and income are shown in their own tables, never twice.
   const mode = settings.periodTransfers || 'separate'
   const showAll = settings.pieShowAll !== 'false'
-  const { main, recurringOut, recurringIn } = useMemo(() => {
+  const { main, recurringOut, income } = useMemo(() => {
     const all = summary?.transactions ?? []
     const isMove = (t: TransactionView) => category(t.categoryId).kind === 'transfer'
+    const isIncome = (t: TransactionView) => t.amount > 0 && !isMove(t)
     return {
-      main: all.filter((t) => t.recurring === null && (mode === 'inline' || !isMove(t))),
+      main: all.filter((t) => t.recurring === null && !isIncome(t) && (mode === 'inline' || !isMove(t))),
       recurringOut: all.filter((t) => t.recurring !== null && t.amount < 0),
-      recurringIn: all.filter((t) => t.recurring !== null && t.amount > 0),
+      // Every income, whatever its source; for money back from an investment, only the part entered as earned.
+      income: [
+        ...all.filter(isIncome),
+        ...all.filter((t) => isMove(t) && (t.earned ?? 0) > 0).map((t) => ({ ...t, amount: t.earned ?? 0, brand: `${t.brand} (earned part)` })),
+      ].sort((a, b) => a.date.localeCompare(b.date)),
     }
   }, [summary, mode, category])
+  // Editing a row of the income table opens the operation itself (full amount), not the earned part shown.
+  const editOriginal = (t: TransactionView) => onEdit(summary?.transactions.find((x) => x.id === t.id) ?? t)
 
   const balanceColor = !summary ? undefined
     : summary.balance > 0 ? theme.palette.money.positive
@@ -123,16 +130,16 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
       ) : (
         <>
           <Typography variant="h5" component="h2" sx={{ mb: 2.5 }}>{summary.title}</Typography>
-          <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} empty="No other operations in this period" />
+          <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} empty="No other spending in this period" />
 
           {recurringOut.length > 0 && (
             <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
               <TransactionTable transactions={recurringOut} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} frequency />
             </Section>
           )}
-          {recurringIn.length > 0 && (
-            <Section id="regular-income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Regular income" total={`${money(summary.recurringIncome, currency)} ${per}`} note={monthly(summary.recurringIncome)}>
-              <TransactionTable transactions={recurringIn} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} frequency />
+          {income.length > 0 && (
+            <Section id="income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Income" total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
+              <TransactionTable transactions={income} currency={currency} paged={granularity !== 'month'} onEdit={editOriginal} frequency />
             </Section>
           )}
 
@@ -183,7 +190,7 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
           </Box>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
             <ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
-            <ExpensePie title="Regular income" slices={fold(summary.recurringIncomePie)} currency={currency} empty="No regular income" />
+            <ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
           </Box>
           <Box sx={{ mt: 1.5 }}>
             <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />

@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 4;
+    private const int SchemaVersion = 5;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -79,6 +79,11 @@ public sealed class Database : IDisposable
             var hasEstimated = Query("PRAGMA table_info(transactions)", r => r.GetString(1)).Contains("estimated");
             if (hasEstimated) Exec("DELETE FROM transactions WHERE estimated = 1; ALTER TABLE transactions DROP COLUMN estimated;");
             Exec("PRAGMA user_version = 4;");
+        }
+        if (version < 5)
+        {
+            // earned: the part of money back from an investment that the person says was gain (exact decimal text).
+            Exec("ALTER TABLE transactions ADD COLUMN earned TEXT; PRAGMA user_version = 5;");
         }
     }
 
@@ -208,7 +213,7 @@ public sealed class Database : IDisposable
 
     // ---------------------------------------------------------------- transactions
 
-    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, linked_id";
+    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, linked_id, earned";
 
     private static Transaction ReadTx(SqliteDataReader r) => new()
     {
@@ -216,24 +221,24 @@ public sealed class Database : IDisposable
         Amount = AmountParser.FromStorage(r.GetString(4)), Currency = r.GetString(5), RawLabel = r.GetString(6), MerchantKey = r.GetString(7),
         Brand = r.GetString(8), BrandSource = (ValueSource)r.GetInt32(9), CategoryId = r.GetString(10), CategorySource = (ValueSource)r.GetInt32(11),
         Note = r.GetString(12), BankCategory = r.GetString(13),
-        LinkedId = r.IsDBNull(14) ? null : r.GetInt64(14),
+        LinkedId = r.IsDBNull(14) ? null : r.GetInt64(14), Earned = M(r.GetValue(15)),
     };
 
     public long AddTransaction(Transaction t) => (long)Scalar($"""
-        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category)
-        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n, $bc) RETURNING id
-        """, ("$bc", t.BankCategory),
+        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, earned)
+        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n, $bc, $e) RETURNING id
+        """, ("$bc", t.BankCategory), ("$e", M(t.Earned)),
         ("$a", t.AccountId), ("$s", t.StatementId), ("$d", D(t.Date)), ("$m", AmountParser.ToStorage(t.Amount)), ("$c", t.Currency),
         ("$r", t.RawLabel), ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId),
         ("$cs", (int)t.CategorySource), ("$n", t.Note))!;
 
     public void UpdateTransaction(Transaction t) => Exec("""
         UPDATE transactions SET account_id = $a, date = $d, amount = $m, currency = $c, raw_label = $r, merchant_key = $k, brand = $b, brand_source = $bs,
-            category_id = $cat, category_source = $cs, note = $n WHERE id = $id
+            category_id = $cat, category_source = $cs, note = $n, earned = $e WHERE id = $id
         """,
         ("$a", t.AccountId), ("$d", D(t.Date)), ("$m", AmountParser.ToStorage(t.Amount)), ("$c", t.Currency), ("$r", t.RawLabel),
         ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId), ("$cs", (int)t.CategorySource),
-        ("$n", t.Note), ("$id", t.Id));
+        ("$n", t.Note), ("$e", M(t.Earned)), ("$id", t.Id));
 
     public void DeleteTransaction(long id) => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id = $id; DELETE FROM transactions WHERE id = $id", ("$id", id));
 

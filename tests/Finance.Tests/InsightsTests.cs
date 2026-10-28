@@ -83,9 +83,10 @@ public class InsightsTests
             Assert.DoesNotContain(recurring, b => b.Contains("Olimpico", StringComparison.OrdinalIgnoreCase));
             Assert.DoesNotContain(sum.Transactions, t => t.Recurring is not null && Categories.IsTransfer(t.CategoryId));
             Assert.Equal(-sum.Transactions.Where(t => t.Recurring is not null && t.Amount < 0).Sum(t => t.Amount), sum.RecurringExpenses);
-            Assert.Equal(sum.Transactions.Where(t => t.Recurring is not null && t.Amount > 0).Sum(t => t.Amount), sum.RecurringIncome);
             Assert.Equal(sum.RecurringExpenses, sum.RecurringExpensePie.Sum(x => x.Amount));
-            Assert.Equal(4201.10m, sum.RecurringIncome);
+            // Income: every income line, the pie adds up to the earnings.
+            Assert.Equal(4201.10m, sum.Earnings);
+            Assert.Equal(sum.Earnings, sum.IncomePie.Sum(x => x.Amount));
             // Subscription burden: the recurring payments without the rent, and its share of earnings.
             var rent = -sum.Transactions.Where(t => t.Recurring is not null && t.CategoryId == "housing").Sum(t => t.Amount);
             Assert.True(rent > 0);
@@ -94,7 +95,7 @@ public class InsightsTests
             Assert.Equal((double)(sum.Expenses / sum.Earnings), sum.ExpensesShare!.Value, 9);
         }
         var year = s.Summaries.Summarize(new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31), Granularity.Year, "CAD");
-        Assert.Equal(4 * 4201.10m, year.RecurringIncome);
+        Assert.Equal(4 * 4201.10m, year.Earnings);
     }
 
     [Fact]
@@ -168,6 +169,45 @@ public class InsightsTests
         var later = new List<Line> { new(new DateOnly(2026, 7, 3), "Boutique Zeta", "Magasinage", -5m) };
         await ImportCsv(s, ChequingCsv(later, 2000), "b.csv", null);
         Assert.All(s.Db.AllTransactions(), t => Assert.Equal("entertainment", t.CategoryId));
+    }
+
+    /// <summary>
+    /// A term investment closed at the bank ("Placement", filed by the bank under "Retrait") is the person's own money
+    /// coming back, never a refund and never income; only the part they enter as earned counts as income.
+    /// </summary>
+    [Fact]
+    public async Task Closed_placement_is_own_money_back_and_only_the_entered_gain_is_income()
+    {
+        using var s = new TempStore();
+        var lines = new List<Line>
+        {
+            new(new DateOnly(2026, 4, 16), "Employeur Inc", "Revenus", 2000m),
+            new(new DateOnly(2026, 4, 21), "Placement", "Retrait", 7587.51m),
+            new(new DateOnly(2026, 4, 21), "Placement", "Retrait", 13469.91m),
+            new(new DateOnly(2026, 4, 25), "Achat Boutique", "Magasinage", -40m),
+        };
+        await ImportCsv(s, ChequingCsv(lines, 1000), "april.csv", null, AccountKind.Savings);
+        var placements = s.Db.AllTransactions().Where(t => t.RawLabel == "Placement").ToList();
+        Assert.All(placements, t => Assert.Equal(Categories.Investments, t.CategoryId));
+        var sum = s.Summaries.Summarize(new DateOnly(2026, 4, 1), new DateOnly(2026, 4, 30), Granularity.Month, "CAD");
+        Assert.Equal(2000m, sum.Earnings);
+        Assert.Contains(sum.Movements, m => m.From == Movements.OutsideInvestments && m.Amount == 13469.91m);
+
+        // The person knows 469.91 of the larger one was gain: only that part becomes income.
+        var big = placements.Single(t => t.Amount == 13469.91m);
+        s.Transactions.Update(big.Id, new TransactionInput("2026-04-21", big.Amount, big.Brand, big.CategoryId, big.AccountId, null, 469.91m));
+        sum = s.Summaries.Summarize(new DateOnly(2026, 4, 1), new DateOnly(2026, 4, 30), Granularity.Month, "CAD");
+        Assert.Equal(2469.91m, sum.Earnings);
+        Assert.Equal(sum.Earnings, sum.IncomePie.Sum(x => x.Amount));
+        Assert.Equal(469.91m, sum.Transactions.Single(t => t.Id == big.Id).Earned);
+        // Still a movement for its full amount: the money did come back from the investment.
+        Assert.Contains(sum.Movements, m => m.Amount == 13469.91m);
+        // An earned part larger than the amount, or on spending, is refused.
+        Assert.Throws<ArgumentException>(() => s.Transactions.Update(big.Id, new TransactionInput("2026-04-21", big.Amount, big.Brand, big.CategoryId, big.AccountId, null, 20000m)));
+        var shop = s.Db.AllTransactions().Single(t => t.Amount == -40m);
+        Assert.Throws<ArgumentException>(() => s.Transactions.Update(shop.Id, new TransactionInput("2026-04-25", shop.Amount, shop.Brand, shop.CategoryId, shop.AccountId, null, 5m)));
+        var pdf = ReportBuilder.Build(sum, "DD month YYYY", new DateTime(2026, 5, 1));
+        Assert.True(pdf.Length > 1000);
     }
 
     [Fact]

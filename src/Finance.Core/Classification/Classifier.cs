@@ -181,8 +181,10 @@ public sealed class Classifier
     ];
     private static readonly string[] BillPaymentWords = ["PAIEMENT DE FACTURE", "PAIEMENT FACTURE", "BILL PAYMENT", "PAIEMENT DE FACTURES"];
     private static readonly string[] InvestmentWordsNorthAmerica =
-        ["COTISATION REER", "COTISATION CELI", "TFSA CONTRIBUTION", "RRSP CONTRIBUTION", "WEALTHSIMPLE", "QUESTRADE", "DISNAT", "COURTAGE"];
-    private static readonly string[] InvestmentWordsFrance = ["LIVRET A", "LDDS", "VERSEMENT PEA", "ASSURANCE VIE", "VERSEMENT PEL"];
+        ["COTISATION REER", "COTISATION CELI", "TFSA CONTRIBUTION", "RRSP CONTRIBUTION", "WEALTHSIMPLE", "QUESTRADE", "DISNAT", "COURTAGE",
+         // A term investment at the bank (placement, GIC / CPG, term deposit) and brokers.
+         "PLACEMENT", "PLACEMENTS", "CPG", "GIC", "DEPOT A TERME", "TERM DEPOSIT", "INTERACTIVE BRO", "INTERACTIVE BROKERS", "IBKR"];
+    private static readonly string[] InvestmentWordsFrance = ["LIVRET A", "LDDS", "VERSEMENT PEA", "ASSURANCE VIE", "VERSEMENT PEL", "PLACEMENT", "PLACEMENTS"];
 
     public static Movement MovementOf(string padded, string bankCategory, BankingSystem system)
     {

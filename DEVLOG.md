@@ -156,3 +156,20 @@
 - "Recurring payments, rent excluded" (the subscription burden) for the month, year or range, and its share of
   earnings.
 - "Expenses / earnings": the share of what came in that was spent.
+
+## October 28th, 2026 - All income listed, closed investments, earned part - Commit 7
+
+### Changed
+- "Regular income" becomes "Income": every income of the period whatever its source (salary, refunds, tax
+  refunds, interest...), with how often it comes back when it does; its total is the period's earnings, and its pie
+  shows every source. Income lines leave the main table, which keeps the other spending.
+
+### Added
+- "Of which earned (gain, interest)" on money coming back from an investment or a transfer: only that part counts as
+  income (listed as "… (earned part)"); the rest is the person's own money coming back. Never guessed: empty unless
+  the person enters it. Screen and PDF.
+
+### Bug fixed
+- A term investment closed at the bank ("Placement", filed by the bank under "Retrait") was counted as a refund,
+  so as income: it is now money coming back from investments. Money coming back under "withdrawal" or "fees" is
+  never a refund. "Placement", GIC / CPG, term deposits and Interactive Brokers are recognised as investments.

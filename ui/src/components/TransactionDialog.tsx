@@ -33,6 +33,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   const [categoryId, setCategoryId] = useState('other')
   const [accountId, setAccountId] = useState<number | 'manual'>('manual')
   const [note, setNote] = useState('')
+  const [earned, setEarned] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
       setCategoryId(tx.categoryId)
       setAccountId(tx.accountId)
       setNote(tx.note)
+      setEarned(tx.earned ? tx.earned.toFixed(2) : '')
     } else {
       setDate(dayjs(defaultDate ?? today()))
       setDirection('out')
@@ -54,6 +56,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
       setCategoryId('other')
       setAccountId('manual')
       setNote('')
+      setEarned('')
     }
   }, [open, tx, defaultDate, refreshAccounts])
 
@@ -67,7 +70,13 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
     ['Between my accounts', categories.filter((c) => c.kind === 'transfer')],
   ] as const, [categories])
 
+  // Money coming back from an investment (or a transfer in): the person may say how much of it was gain.
+  const canEarn = direction === 'in' && category(categoryId).kind === 'transfer'
+  const earnedValue = earned.trim() === '' ? null : Number(earned.replace(',', '.'))
+  const earnedValid = !canEarn || earnedValue === null || (Number.isFinite(earnedValue) && earnedValue >= 0 && earnedValue <= value)
+
   const save = async () => {
+    if (!earnedValid) return
     if (!valid || !date) return
     const input = {
       date: date.format('YYYY-MM-DD'),
@@ -76,6 +85,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
       categoryId,
       accountId: accountId === 'manual' ? null : accountId,
       note: note.trim() || null,
+      earned: canEarn && earnedValue ? Math.round(earnedValue * 100) / 100 : null,
     }
     // A new category: for this operation only, or for the whole brand (the person decides).
     let allOfBrand = true
@@ -158,12 +168,25 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
           {!tx && !accounts.some((a) => a.name === 'Cash & manual entries') && <MenuItem value="manual">Cash & manual entries</MenuItem>}
           {accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name}</MenuItem>)}
         </TextField>
+        {canEarn && (
+          <TextField
+            data-earned
+            label="Of which earned (gain, interest)"
+            value={earned}
+            onChange={(e) => setEarned(e.target.value.replace(/[^\d.,]/g, ''))}
+            error={!earnedValid}
+            helperText={earnedValid
+              ? 'Only this part counts as income; the rest is your own money coming back. Leave empty if you do not know: nothing is guessed.'
+              : 'Between 0 and the amount received.'}
+            slotProps={{ input: { className: 'tnum' }, htmlInput: { inputMode: 'decimal' } }}
+          />
+        )}
         <TextField label="Note" value={note} onChange={(e) => setNote(e.target.value)} multiline minRows={1} maxRows={4} />
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         {tx && <Button color="error" onClick={() => setConfirmDelete(true)} sx={{ mr: 'auto' }}>Delete</Button>}
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={!valid} onClick={() => void save()}>{tx ? 'Save' : 'Add'}</Button>
+        <Button variant="contained" disabled={!valid || !earnedValid} onClick={() => void save()}>{tx ? 'Save' : 'Add'}</Button>
       </DialogActions>
       <ConfirmDialog open={confirmDelete} title="Delete this operation?" confirm="Delete" danger onClose={() => setConfirmDelete(false)} onConfirm={() => void remove()} />
     </Dialog>

@@ -48,9 +48,13 @@ public static class ReportBuilder
         var o = options ?? new Options();
         bool IsMove(TransactionView t) => Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;
         // Same split as the screen: recurring payments and income, then movements, are shown apart from the rest.
-        var main = s.Transactions.Where(t => t.Recurring is null && (o.Transfers == "inline" || !IsMove(t))).ToList();
+        // Same split as the screen: every income in its own table (the earned part of an investment coming back
+        // included), recurring payments apart, then movements; the main table keeps the other spending.
+        var income = s.Transactions.Where(t => t.Amount > 0 && !IsMove(t))
+            .Concat(s.Transactions.Where(t => IsMove(t) && t.Earned is > 0).Select(t => t with { Amount = t.Earned!.Value, Brand = t.Brand + " (earned part)" }))
+            .OrderBy(t => t.Date).ToList();
+        var main = s.Transactions.Where(t => t.Recurring is null && !(t.Amount > 0 && !IsMove(t)) && (o.Transfers == "inline" || !IsMove(t))).ToList();
         var recurringOut = s.Transactions.Where(t => t.Recurring is not null && t.Amount < 0).ToList();
-        var recurringIn = s.Transactions.Where(t => t.Recurring is not null && t.Amount > 0).ToList();
         var doc = Document.Create(container => container.Page(page =>
         {
             page.Size(PageSizes.Letter);
@@ -77,9 +81,9 @@ public static class ReportBuilder
                 if (recurringOut.Count > 0)
                     col.Item().Element(c => Section(c, "Recurring payments & subscriptions", s.RecurringExpenses, s, Palette.NegativeSoft,
                         x => OperationsTable(x, recurringOut, s.Currency, dateFormat, "", frequency: true)));
-                if (recurringIn.Count > 0)
-                    col.Item().Element(c => Section(c, "Regular income", s.RecurringIncome, s, Palette.PositiveSoft,
-                        x => OperationsTable(x, recurringIn, s.Currency, dateFormat, "", frequency: true)));
+                if (income.Count > 0)
+                    col.Item().Element(c => Section(c, "Income", s.Earnings, s, Palette.PositiveSoft,
+                        x => OperationsTable(x, income, s.Currency, dateFormat, "", frequency: true)));
                 if (o.Transfers == "separate" && s.Movements.Count > 0)
                     col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s, Palette.Surface,
                         x => MovementsTable(x, s.Movements, s.Currency, dateFormat)));
@@ -93,8 +97,7 @@ public static class ReportBuilder
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", o.PieShowAll ? s.ByBrand : s.BrandPie, s.Currency));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Recurring payments & subscriptions",
                     o.PieShowAll ? s.RecurringExpensePie : SummaryService.FoldPie(s.RecurringExpensePie), s.Currency, "No recurring payments in this period."));
-                col.Item().ShowEntire().Element(c => PieBlock(c, "Regular income",
-                    o.PieShowAll ? s.RecurringIncomePie : SummaryService.FoldPie(s.RecurringIncomePie), s.Currency, "No regular income in this period."));
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Income", o.PieShowAll ? s.IncomePie : SummaryService.FoldPie(s.IncomePie), s.Currency, "No income in this period."));
                 col.Item().ShowEntire().Element(c => SeriesBlock(c, s));
                 if (s.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
             });
