@@ -52,11 +52,6 @@ public sealed class Transaction
     public string BankCategory { get; set; } = "";
     /// <summary>The other half of a movement between two of the person's own accounts, when it was found.</summary>
     public long? LinkedId { get; set; }
-    /// <summary>
-    /// Added from a balance gap: the balances prove money left or arrived but no imported file shows the operation.
-    /// Replaced by the real operation when the statement that contains it is imported.
-    /// </summary>
-    public bool Estimated { get; set; }
 }
 
 public sealed class StatementRecord

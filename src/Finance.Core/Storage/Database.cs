@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 4;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -70,9 +70,15 @@ public sealed class Database : IDisposable
         }
         if (version < 3)
         {
-            // linked_id: the other half of a movement between own accounts. estimated: added by the person from a balance
-            // gap (an operation no imported file contains), replaced by the real one when its statement is imported.
-            Exec("ALTER TABLE transactions ADD COLUMN linked_id INTEGER; ALTER TABLE transactions ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0; PRAGMA user_version = 3;");
+            // linked_id: the other half of a movement between own accounts.
+            Exec("ALTER TABLE transactions ADD COLUMN linked_id INTEGER; PRAGMA user_version = 3;");
+        }
+        if (version < 4)
+        {
+            // An earlier version could add invented "estimated" lines: they are removed, with their column.
+            var hasEstimated = Query("PRAGMA table_info(transactions)", r => r.GetString(1)).Contains("estimated");
+            if (hasEstimated) Exec("DELETE FROM transactions WHERE estimated = 1; ALTER TABLE transactions DROP COLUMN estimated;");
+            Exec("PRAGMA user_version = 4;");
         }
     }
 
@@ -202,7 +208,7 @@ public sealed class Database : IDisposable
 
     // ---------------------------------------------------------------- transactions
 
-    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, linked_id, estimated";
+    private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, linked_id";
 
     private static Transaction ReadTx(SqliteDataReader r) => new()
     {
@@ -210,13 +216,13 @@ public sealed class Database : IDisposable
         Amount = AmountParser.FromStorage(r.GetString(4)), Currency = r.GetString(5), RawLabel = r.GetString(6), MerchantKey = r.GetString(7),
         Brand = r.GetString(8), BrandSource = (ValueSource)r.GetInt32(9), CategoryId = r.GetString(10), CategorySource = (ValueSource)r.GetInt32(11),
         Note = r.GetString(12), BankCategory = r.GetString(13),
-        LinkedId = r.IsDBNull(14) ? null : r.GetInt64(14), Estimated = r.GetInt32(15) == 1,
+        LinkedId = r.IsDBNull(14) ? null : r.GetInt64(14),
     };
 
     public long AddTransaction(Transaction t) => (long)Scalar($"""
-        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, estimated)
-        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n, $bc, $e) RETURNING id
-        """, ("$bc", t.BankCategory), ("$e", t.Estimated ? 1 : 0),
+        INSERT INTO transactions(account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category)
+        VALUES($a, $s, $d, $m, $c, $r, $k, $b, $bs, $cat, $cs, $n, $bc) RETURNING id
+        """, ("$bc", t.BankCategory),
         ("$a", t.AccountId), ("$s", t.StatementId), ("$d", D(t.Date)), ("$m", AmountParser.ToStorage(t.Amount)), ("$c", t.Currency),
         ("$r", t.RawLabel), ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId),
         ("$cs", (int)t.CategorySource), ("$n", t.Note))!;

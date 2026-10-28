@@ -7,7 +7,7 @@ using ProductivityApp.Finance.Services;
 namespace ProductivityApp.Finance.Tests;
 
 /// <summary>
-/// Balance gaps, recurring payments, movements From / To and category scope, checked over many generated months
+/// Recurring payments, movements From / To and category scope, checked over many generated months
 /// (fictitious data in the Banque Nationale CSV layout), never on one hand-picked example.
 /// </summary>
 public class InsightsTests
@@ -63,86 +63,6 @@ public class InsightsTests
         var draft = await s.Imports.ParseAsync(name, csv);
         s.Imports.Choose(draft.Id, account, account is null ? kind : null);
         return s.Imports.Commit(new CommitRequest(draft.Id, account, null, "CAD", account is null ? kind : null, []));
-    }
-
-    /// <summary>
-    /// Every month is exported as its own file, but in the months listed the export starts after the rent (as when a
-    /// date range is cut): each of those months, and only those, shows a gap; the proposed operations are exactly the
-    /// rent and the insurance of that month; adding them closes the gap; importing the full month replaces them.
-    /// </summary>
-    [Theory]
-    [InlineData(1, new[] { 3, 7 })]
-    [InlineData(2, new[] { 2, 3, 4 })]
-    [InlineData(3, new[] { 12 })]
-    [InlineData(4, new[] { 5, 6, 9, 11 })]
-    public async Task Missing_rent_is_found_in_every_month_it_is_cut_from(int seed, int[] cutMonths)
-    {
-        using var s = new TempStore();
-        var all = Year(seed);
-        decimal balance = 3000;
-        long? account = null;
-        var expectedMissing = new Dictionary<int, decimal>();
-        for (var m = 1; m <= 12; m++)
-        {
-            var month = all.Where(l => l.Date.Month == m).ToList();
-            var cut = cutMonths.Contains(m);
-            var rentDay = month.First(l => l.Label.StartsWith("Rent", StringComparison.Ordinal)).Date;
-            var kept = cut ? month.Where(l => l.Date > rentDay).ToList() : month;
-            var opening = balance + (cut ? month.Where(l => l.Date <= rentDay).Sum(l => l.Amount) : 0);
-            if (cut) expectedMissing[m] = month.Where(l => l.Date <= rentDay).Sum(l => l.Amount);
-            var r = await ImportCsv(s, ChequingCsv(kept, opening), $"2026-{m:D2}.csv", account);
-            account ??= r.AccountId;
-            balance += month.Sum(l => l.Amount);
-        }
-
-        var gaps = BalanceGaps.Find(s.Db);
-        Assert.Equal(cutMonths.OrderBy(x => x), gaps.Select(g => DateOnly.ParseExact(g.To, "yyyy-MM-dd").Month).OrderBy(x => x));
-        foreach (var g in gaps)
-        {
-            var m = DateOnly.ParseExact(g.To, "yyyy-MM-dd").Month;
-            Assert.Equal(expectedMissing[m], g.Missing);
-            Assert.Equal(expectedMissing[m], g.Suggestions.Sum(x => x.Amount));
-            Assert.Contains(g.Suggestions, x => x.Label.StartsWith("Rent", StringComparison.Ordinal));
-            Assert.All(g.Suggestions, x => Assert.InRange(x.Date, g.From, g.To));
-            // The month's summary carries the warning.
-            var sum = s.Summaries.Summarize(new DateOnly(2026, m, 1), Formatting.MonthEnd(2026, m), Granularity.Month, "CAD");
-            Assert.Single(sum.Gaps);
-        }
-
-        // Adding the proposed operations closes every gap, and the rent then shows in every month.
-        foreach (var g in gaps) s.Transactions.AddEstimated(g.AccountId, g.Suggestions, g.From, g.To);
-        Assert.Empty(BalanceGaps.Find(s.Db));
-        for (var m = 1; m <= 12; m++)
-        {
-            var sum = s.Summaries.Summarize(new DateOnly(2026, m, 1), Formatting.MonthEnd(2026, m), Granularity.Month, "CAD");
-            Assert.Single(sum.Transactions, t => t.CategoryId == "housing");
-            Assert.Equal(-all.Where(l => l.Date.Month == m && l.Amount < 0 && l.Category != "Transfert").Sum(l => l.Amount), sum.Expenses);
-        }
-
-        // Importing the complete statement of a cut month replaces the estimated lines: nothing is counted twice.
-        var first = cutMonths.Min();
-        var full = all.Where(l => l.Date.Month == first).ToList();
-        var openingFull = 3000 + all.Where(l => l.Date.Month < first).Sum(l => l.Amount);
-        await ImportCsv(s, ChequingCsv(full, openingFull), $"2026-{first:D2}-full.csv", account);
-        var after = s.Summaries.Summarize(new DateOnly(2026, first, 1), Formatting.MonthEnd(2026, first), Granularity.Month, "CAD");
-        Assert.DoesNotContain(after.Transactions, t => t.Estimated);
-        Assert.Single(after.Transactions, t => t.CategoryId == "housing");
-        Assert.Empty(BalanceGaps.Find(s.Db));
-    }
-
-    [Fact]
-    public async Task Complete_statements_show_no_gap_whatever_the_order_they_are_imported_in()
-    {
-        using var s = new TempStore();
-        var all = Year(5);
-        long? account = null;
-        foreach (var m in new[] { 7, 2, 11, 1, 5, 3, 12, 4, 6, 10, 8, 9 })
-        {
-            var opening = 3000 + all.Where(l => l.Date.Month < m).Sum(l => l.Amount);
-            var r = await ImportCsv(s, ChequingCsv(all.Where(l => l.Date.Month == m), opening), $"{m}.csv", account);
-            account ??= r.AccountId;
-        }
-        Assert.Empty(BalanceGaps.Find(s.Db));
     }
 
     [Fact]

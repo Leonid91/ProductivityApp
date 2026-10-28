@@ -123,3 +123,15 @@
   before it counts as recurring.
 - Tests: the generated test statements carried the time they were made, so "the same file twice" failed whenever
   the two copies were made in different seconds; they now carry a fixed date.
+
+## October 28th, 2026 - Estimated operations and balance-gap warnings removed - Commit 5
+
+### Removed
+- "Estimated" operations: the app never adds an operation that is not in an imported file. Lines added that way by
+  the previous version are deleted when the app opens, with their column.
+- The "operations missing" warnings in the month view, the import screen and the PDF, and their suggestions: days
+  without any operation in a statement are normal, and money moved to accounts that are not imported cannot be
+  explained by the imported files.
+
+### Kept
+- The balance check of each file on its own (its opening balance, its closing balance and what its lines add up to).

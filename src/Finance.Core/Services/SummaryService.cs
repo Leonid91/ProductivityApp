@@ -13,7 +13,7 @@ public sealed record Bar(string Key, string Label, decimal Expenses, decimal Ear
 public sealed record TransactionView(
     long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, string CategorySource,
     string BrandSource, string RawLabel, string Note, long AccountId, long? StatementId,
-    string? Recurring = null, bool Estimated = false, long? LinkedId = null);
+    string? Recurring = null, long? LinkedId = null);
 
 public sealed class PeriodSummary
 {
@@ -43,8 +43,6 @@ public sealed class PeriodSummary
     /// <summary>Transfers, card payments and investments, each movement once, from one account to another.</summary>
     public required List<MovementView> Movements { get; init; }
     public required List<Flow> Flows { get; init; }
-    /// <summary>Balances that the saved operations do not explain, on days of this period.</summary>
-    public required List<BalanceGap> Gaps { get; init; }
     /// <summary>"day", "month" or "year": what one bar of <see cref="Series"/> stands for.</summary>
     public required string SeriesUnit { get; init; }
 }
@@ -80,11 +78,6 @@ public sealed class SummaryService(Database db)
         var movements = Movements.Build(txs, byId, accounts);
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var toIso = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        // A gap shows in the period where its likely operations fall; without any, in every period its days touch.
-        bool In(string d) => string.CompareOrdinal(d, fromIso) >= 0 && string.CompareOrdinal(d, toIso) <= 0;
-        var gaps = BalanceGaps.Find(db).Where(g => g.Currency == currency && (g.Suggestions.Count > 0
-            ? g.Suggestions.Any(x => In(x.Date))
-            : string.CompareOrdinal(g.From, toIso) <= 0 && string.CompareOrdinal(g.To, fromIso) >= 0)).ToList();
 
         decimal expenses = 0, earnings = 0, transfersOut = 0, transfersIn = 0;
         var byCategory = new Dictionary<string, decimal>();
@@ -145,7 +138,6 @@ public sealed class SummaryService(Database db)
             RecurringIncomePie = recurringInSlices,
             Movements = movements,
             Flows = Movements.Flows(movements),
-            Gaps = gaps,
         };
     }
 
@@ -154,7 +146,7 @@ public sealed class SummaryService(Database db)
     public static TransactionView View(Transaction t, string? recurring) => new(
         t.Id, t.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), t.Amount, t.Currency, t.Brand, t.CategoryId,
         t.CategorySource.ToString(), t.BrandSource.ToString(), t.RawLabel, t.Note, t.AccountId, t.StatementId,
-        recurring, t.Estimated, t.LinkedId);
+        recurring, t.LinkedId);
 
     private static List<Slice> Slices(IEnumerable<(string Key, string Label, decimal Amount)> items, decimal total) =>
         items.OrderByDescending(x => x.Amount).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase)

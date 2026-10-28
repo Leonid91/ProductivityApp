@@ -108,37 +108,6 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         return SummaryService.View(db.GetTransaction(id)!);
     }
 
-    /// <summary>
-    /// Adds operations the balances prove happened but no imported file contains (from a balance gap), marked as
-    /// estimated. Importing the statement that holds the real ones replaces them.
-    /// </summary>
-    public int AddEstimated(long accountId, IReadOnlyList<GapSuggestion> items, string from, string to)
-    {
-        var account = db.Accounts().FirstOrDefault(a => a.Id == accountId) ?? throw new KeyNotFoundException("This account no longer exists.");
-        if (items.Count == 0) throw new ArgumentException("Nothing to add.");
-        var classifier = NewClassifier();
-        db.InTransaction(() =>
-        {
-            foreach (var i in items)
-            {
-                if (!DateOnly.TryParseExact(i.Date, "yyyy-MM-dd", out var date)) throw new ArgumentException("The date is not valid.");
-                if (i.Amount == 0) throw new ArgumentException("The amount cannot be zero.");
-                var label = string.IsNullOrWhiteSpace(i.Label) ? i.Brand : i.Label;
-                var c = classifier.Classify(label, i.Amount, "", account.Kind);
-                var category = Categories.Exists(i.CategoryId) ? i.CategoryId : c.CategoryId;
-                db.AddTransaction(new Transaction
-                {
-                    AccountId = accountId, Date = date, Amount = decimal.Round(i.Amount, 2), Currency = account.Currency, RawLabel = label,
-                    MerchantKey = c.MerchantKey, Brand = string.IsNullOrWhiteSpace(i.Brand) ? c.Brand : i.Brand.Trim(), BrandSource = ValueSource.User,
-                    CategoryId = category, CategorySource = ValueSource.User, Estimated = true,
-                    Note = $"Estimated: the balances show it between {from} and {to}, but no imported file contains it.",
-                });
-            }
-        });
-        ReapplyRules();
-        return items.Count;
-    }
-
     public void Delete(long id) => db.DeleteTransaction(id);
 
     /// <summary>

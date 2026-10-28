@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Box, Chip, IconButton, Pagination, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography, useTheme } from '@mui/material'
+import { Box, IconButton, Pagination, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography, useTheme } from '@mui/material'
 import EditOutlined from '@mui/icons-material/EditOutlined'
 import East from '@mui/icons-material/EastRounded'
 import type { MovementView, TransactionView } from '../api'
@@ -66,7 +66,6 @@ export function MovementsTable({ movements, transactions, currency, paged, onEdi
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                     <Typography variant="body2" noWrap title={tx?.rawLabel ?? m.label}>{m.label}</Typography>
-                    {m.estimated && <Chip size="small" label="Estimated" color="warning" variant="outlined" sx={{ height: 20, fontSize: 11 }} />}
                   </Box>
                 </TableCell>
                 <TableCell>{place(m.from, m.fromOutside)}</TableCell>

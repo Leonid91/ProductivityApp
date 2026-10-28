@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Accordion, AccordionDetails, AccordionSummary, Alert, AlertTitle, Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
+import { Accordion, AccordionDetails, AccordionSummary, Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfOutlined'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
 import SwapHoriz from '@mui/icons-material/SwapHorizRounded'
 import EventRepeat from '@mui/icons-material/EventRepeatRounded'
 import Payments from '@mui/icons-material/PaymentsRounded'
-import { api, type BalanceGap, type Granularity, type PeriodSummary, type TransactionView } from '../api'
+import { api, type Granularity, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { formatDate, money, plural } from '../format'
+import { money } from '../format'
 import { ExpenseBars, ExpensePie } from './Charts'
 import { ExportDialog } from './ExportDialog'
 import { FlowChart } from './FlowChart'
@@ -38,56 +38,8 @@ function Section({ icon, title, total, note, children, id }: { icon: ReactNode; 
   )
 }
 
-/** Money the balances prove moved, that no imported file shows; one click adds the likely operations as estimated. */
-function GapAlert({ gap }: { gap: BalanceGap }) {
-  const { settings, notify, fail, dataChanged } = useApp()
-  const [busy, setBusy] = useState(false)
-  const d = (x: string) => formatDate(x, settings.dateFormat)
-  const left = gap.missing < 0
-  const add = async (items: BalanceGap['suggestions']) => {
-    setBusy(true)
-    try {
-      const r = await api.gaps.fill(gap.accountId, items, gap.from, gap.to)
-      notify(`${plural(r.added, 'estimated operation')} added`)
-      dataChanged()
-    } catch (e) {
-      fail(e)
-    } finally {
-      setBusy(false)
-    }
-  }
-  const whole = [{ date: gap.from, brand: 'Missing from statements', label: 'Missing from statements', categoryId: left ? 'other' : 'otherincome', amount: gap.missing, seenOn: gap.from }]
-  return (
-    <Alert severity="warning" data-gap sx={{ mb: 2, alignItems: 'flex-start' }}>
-      <AlertTitle>Operations missing in {gap.account}: {money(Math.abs(gap.missing), gap.currency)} {left ? 'went out' : 'came in'} between {d(gap.from)} and {d(gap.to)}</AlertTitle>
-      <Typography variant="body2" component="div">
-        The balance was {money(gap.knownBalance, gap.currency)} on {d(gap.knownDate)} and {money(gap.nextBalance, gap.currency)} on {d(gap.nextDate)}.
-        The operations saved in between add up to {money(gap.explained, gap.currency, { sign: true })}, so {money(Math.abs(gap.missing), gap.currency)} is
-        in none of the imported files. Import the statement that covers these days, or add the operations below now.
-      </Typography>
-      {gap.suggestions.length > 0 && (
-        <Typography variant="body2" component="div" sx={{ mt: 1 }}>
-          Most likely, the same as on {[...new Set(gap.suggestions.map((s) => d(s.seenOn)))].join(', ')}:{' '}
-          <b>{gap.suggestions.map((s) => `${s.brand} ${money(Math.abs(s.amount), gap.currency)} on ${d(s.date)}`).join(' + ')}</b>
-          {' '}= {money(Math.abs(gap.missing), gap.currency)} exactly.
-        </Typography>
-      )}
-      <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
-        {gap.suggestions.length > 0 && (
-          <Button size="small" variant="contained" color="warning" disabled={busy} onClick={() => void add(gap.suggestions)}>
-            Add {gap.suggestions.length === 1 ? 'it' : `these ${gap.suggestions.length}`} as estimated
-          </Button>
-        )}
-        <Button size="small" variant="outlined" color="warning" disabled={busy} onClick={() => void add(whole)}>
-          Add {money(Math.abs(gap.missing), gap.currency)} as one estimated line
-        </Button>
-      </Box>
-    </Alert>
-  )
-}
-
 /**
- * One period: title, missing-operation warnings, operations, recurring payments, regular income, transfers (From / To),
+ * One period: title, operations, recurring payments, regular income, transfers (From / To),
  * Expenses / Earnings / Balance, the pies, expenses per day, the money moved, and the PDF export.
  */
 export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }: {
@@ -167,7 +119,6 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
       ) : (
         <>
           <Typography variant="h5" component="h2" sx={{ mb: 2.5 }}>{summary.title}</Typography>
-          {summary.gaps.map((g) => <GapAlert key={`${g.accountId}:${g.from}`} gap={g} />)}
           <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} empty="No other operations in this period" />
 
           {recurringOut.length > 0 && (

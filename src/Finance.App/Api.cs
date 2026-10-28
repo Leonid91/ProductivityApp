@@ -56,11 +56,6 @@ internal static class Api
         b.Register("tx.setBrand", p => new { changed = s.Transactions.SetBrand(p.Get<long>("id"), p.Get<string>("brand")) });
         b.Register("tx.create", p => s.Transactions.Create(p.Get<TransactionInput>("input")));
         b.Register("tx.update", p => s.Transactions.Update(p.Get<long>("id"), p.Get<TransactionInput>("input"), p.Opt<bool?>("allOfBrand") ?? true));
-        // Operations the balances prove happened but no imported file contains, added as estimated.
-        b.Register("gaps.fill", p => new
-        {
-            added = s.Transactions.AddEstimated(p.Get<long>("accountId"), p.Get<List<GapSuggestion>>("items"), p.Get<string>("from"), p.Get<string>("to")),
-        });
         b.Register("tx.delete", p => { s.Transactions.Delete(p.Get<long>("id")); return null; });
 
         // ------------------------------------------------------------ brands & dictionary
@@ -268,7 +263,6 @@ internal static class Api
             p.Language,
             p.DateOrder,
             rowChecks = p.RowBalanceChecks,
-            continuity = s.Imports.ContinuityOf(d),
             rowMismatches = p.RowBalanceMismatches,
             defaultAccountName = ImportService.DefaultAccountName(p),
             template = d.Template,

@@ -33,17 +33,13 @@ export function StatusChip({ draft }: { draft: Draft }) {
   }
 }
 
-/**
- * The balance check in plain words: what the file says it starts and ends with, what its lines add up to, and whether
- * it follows on from what is already saved for the chosen account.
- */
-function BalanceCheck({ draft, accountName }: { draft: Draft; accountName: string | null }) {
+/** The balance check in plain words: what the file says it starts and ends with, and what its lines add up to. */
+function BalanceCheck({ draft }: { draft: Draft }) {
   const { settings } = useApp()
   const d = (x: string | null) => (x ? formatDate(x, settings.dateFormat) : '')
   const m = (v: number, sign = false) => money(v, draft.currency, { sign })
   const lines = draft.rows.length
   const sum = draft.rows.reduce((s, r) => s + r.amount, 0)
-  const c = draft.continuity
   let body: React.ReactNode
   let severity: 'success' | 'warning' | 'info' = 'info'
   if (draft.status === 'verified' && draft.opening !== null && draft.closing !== null) {
@@ -52,7 +48,7 @@ function BalanceCheck({ draft, accountName }: { draft: Draft; accountName: strin
       <>
         The file starts with a balance of <b>{m(draft.opening)}</b> ({d(draft.periodStart)}) and ends with <b>{m(draft.closing)}</b> ({d(draft.periodEnd)}).
         The {plural(lines, 'operation')} read from it add up to <b>{m(sum, true)}</b>, exactly the difference between the two balances.
-        So no line of this file was missed or read twice.
+        So every line of this file was read, none twice.
       </>
     )
   } else if (draft.status === 'mismatch') {
@@ -78,26 +74,6 @@ function BalanceCheck({ draft, accountName }: { draft: Draft; accountName: strin
         <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Balance check of this file</Typography>
         <Typography variant="body2" component="div">{body}</Typography>
       </Alert>
-      {c && accountName && (Math.abs(c.missing) < 0.005 ? (
-        <Alert severity="success" icon={false} data-continuity="ok">
-          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Follows on from what is saved</Typography>
-          <Typography variant="body2">
-            {accountName} had <b>{m(c.knownBalance)}</b> on {d(c.knownDate)}; with the operations saved since ({m(c.savedSince, true)}) that makes {m(c.expected)},
-            exactly where this file starts ({d(c.fileStart)}). Nothing is missing in between.
-          </Typography>
-        </Alert>
-      ) : (
-        <Alert severity="warning" data-continuity="gap">
-          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Operations are missing before this file</Typography>
-          <Typography variant="body2">
-            {accountName} had <b>{m(c.knownBalance)}</b> on {d(c.knownDate)}. With the operations saved since ({m(c.savedSince, true)}) it should start this file
-            with {m(c.expected)}, but the file starts with <b>{m(c.fileOpening)}</b> on {d(c.fileStart)}.
-            So <b>{m(Math.abs(c.missing))}</b> {c.missing < 0 ? 'went out' : 'came in'} between {d(c.gapFrom)} and {d(c.gapTo)} and is in none of your files.
-            Import the statement that covers those days; otherwise, once this file is saved, the month view shows the gap and the operations it most
-            likely is (for example the rent), and adds them as estimated in one click.
-          </Typography>
-        </Alert>
-      ))}
     </Box>
   )
 }
@@ -206,7 +182,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         </Box>
       </Box>
 
-      {!draft.alreadyImported && <BalanceCheck draft={draft} accountName={accounts.find((a) => a.id === accountId)?.name ?? null} />}
+      {!draft.alreadyImported && <BalanceCheck draft={draft} />}
       {needsColumns && draft.pageCount > 0 && (
         <Alert
           severity={draft.status === 'mismatch' ? 'warning' : 'error'}

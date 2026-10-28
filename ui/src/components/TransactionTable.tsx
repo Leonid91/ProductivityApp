@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Autocomplete, Box, Checkbox, Chip, IconButton, InputBase, ListItemIcon, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
+  Autocomplete, Box, Checkbox, IconButton, InputBase, ListItemIcon, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
   TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
@@ -87,11 +87,6 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: strin
           {tx.brand}
         </Box>
       </Tooltip>
-      {tx.estimated && (
-        <Tooltip title={tx.note || 'Added from a balance gap: no imported file contains it yet. Importing the statement that has it replaces it.'}>
-          <Chip size="small" label="Estimated" color="warning" variant="outlined" sx={{ height: 20, fontSize: 11, flex: '0 0 auto' }} />
-        </Tooltip>
-      )}
     </Box>
   )
 }

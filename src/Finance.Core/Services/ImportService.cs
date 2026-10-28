@@ -51,12 +51,6 @@ public sealed class ImportDraft
 /// </summary>
 public sealed record DraftEdit(int Index, string? Brand, string? CategoryId, bool Include, bool? AllOfBrand = null);
 
-/// <summary>
-/// How a statement follows on from what is already saved for its account: the last balance known before it, plus the
-/// operations saved since, should give the balance the statement starts with. <see cref="Missing"/> is what no
-/// imported file explains.
-/// </summary>
-public sealed record Continuity(string KnownDate, decimal KnownBalance, decimal SavedSince, decimal Expected, string FileStart, decimal FileOpening, decimal Missing, string GapFrom, string GapTo);
 
 public sealed record CommitRequest(Guid DraftId, long? AccountId, string? NewAccountName, string Currency, AccountKind? Kind, List<DraftEdit> Edits);
 
@@ -190,7 +184,6 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         var from = draft.Rows.Min(r => r.Date);
         var to = draft.Rows.Max(r => r.Date);
         var existing = db.TransactionsForAccount(accountId.Value, from, to)
-            .Where(t => !t.Estimated)
             .GroupBy(t => (t.Date, t.Amount))
             .ToDictionary(g => g.Key, g => g.Select(t => t.RawLabel).ToList());
         foreach (var r in draft.Rows)
@@ -292,7 +285,6 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
                 }
                 db.AddTransaction(t);
                 added++;
-                ReplaceEstimated(accountId, t);
             }
             foreach (var (key, brand, category) in learned)
             {
@@ -309,43 +301,6 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             kept.Count > 0 ? kept.Min(r => r.Date).ToString("yyyy-MM-dd") : null,
             kept.Count > 0 ? kept.Max(r => r.Date).ToString("yyyy-MM-dd") : null);
     }
-
-    /// <summary>An operation added by hand from a balance gap is replaced by the real one when it arrives.</summary>
-    private void ReplaceEstimated(long accountId, Transaction real)
-    {
-        var estimate = db.TransactionsForAccount(accountId, real.Date.AddDays(-20), real.Date.AddDays(20))
-            .Where(x => x.Estimated && x.Amount == real.Amount && SameOperation(x.RawLabel.Length > 0 ? x.RawLabel : x.Brand, real.RawLabel))
-            .OrderBy(x => Math.Abs(x.Date.DayNumber - real.Date.DayNumber))
-            .FirstOrDefault();
-        if (estimate is not null) db.DeleteTransaction(estimate.Id);
-    }
-
-    /// <summary>Compares where the file starts with the last balance already known for the chosen account, if any.</summary>
-    public Continuity? ContinuityOf(ImportDraft d)
-    {
-        var p = d.Parse;
-        if (d.AccountId is not { } accountId || !p.Verified || p.PeriodStart is not { } start || p.OpeningBalance is not { } opening) return null;
-        // Known balances strictly before the file starts: openings of earlier days, closings of earlier days.
-        var anchors = db.Statements().Where(s => s.AccountId == accountId && s.Verified)
-            .SelectMany(s => new[]
-            {
-                s.PeriodStart is { } ps && s.OpeningBalance is { } o && ps < start ? (ps, false, o) : ((DateOnly Day, bool End, decimal Balance)?)null,
-                s.PeriodEnd is { } pe && s.ClosingBalance is { } c && pe < start ? (pe, true, c) : null,
-            })
-            .OfType<(DateOnly Day, bool End, decimal Balance)>()
-            .OrderBy(a => a.Day).ThenBy(a => a.End)
-            .ToList();
-        if (anchors.Count == 0) return null;
-        var last = anchors[^1];
-        var lo = last.End ? last.Day.AddDays(1) : last.Day;
-        var hi = start.AddDays(-1);
-        var saved = lo <= hi ? db.TransactionsForAccount(accountId, lo, hi).Sum(t => t.Amount) : 0m;
-        var expected = last.Balance + saved;
-        return new Continuity(Iso(last.Day), last.Balance, saved, expected, Iso(start), opening, opening - expected,
-            Iso(lo <= hi ? lo : start), Iso(lo <= hi ? hi : start));
-    }
-
-    private static string Iso(DateOnly d) => d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
     public static string DefaultAccountName(StatementParse p)
     {

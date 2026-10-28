@@ -10,7 +10,7 @@ namespace ProductivityApp.Finance.Reports;
 
 /// <summary>
 /// The period report, always in the same layout (US Letter, portrait), with the same sections as the screen:
-/// missing-operation warnings, operations, recurring payments, regular income, transfers (From / To), totals,
+/// operations, recurring payments, regular income, transfers (From / To), totals,
 /// pies (category, brand, recurring payments, regular income), expenses per day (or month, or year) and the
 /// diagram of the money moved.
 /// </summary>
@@ -73,7 +73,6 @@ public static class ReportBuilder
             page.Content().Column(col =>
             {
                 col.Spacing(16);
-                foreach (var g in s.Gaps) col.Item().ShowEntire().Element(c => GapBlock(c, g, dateFormat));
                 col.Item().Element(c => OperationsTable(c, main, s.Currency, dateFormat, "No other operations in this period."));
                 if (recurringOut.Count > 0)
                     col.Item().Element(c => Section(c, "Recurring payments & subscriptions", s.RecurringExpenses, s,
@@ -112,23 +111,6 @@ public static class ReportBuilder
     }
 
     private static string Day(string iso, string dateFormat) => Formatting.FormatDate(DateOnly.ParseExact(iso, "yyyy-MM-dd"), dateFormat);
-
-    private static void GapBlock(IContainer container, BalanceGap g, string dateFormat)
-    {
-        container.Background(Palette.WarningSoft).CornerRadius(8).Padding(12).Column(col =>
-        {
-            var what = g.Missing < 0 ? "left" : "arrived in";
-            col.Item().Text($"Missing operations in {g.Account}").SemiBold().FontSize(10).FontColor(Palette.WarningInk);
-            col.Item().PaddingTop(3).Text(
-                    $"{Formatting.Money(Math.Abs(g.Missing), g.Currency)} {what} the account between {Day(g.From, dateFormat)} and {Day(g.To, dateFormat)}, " +
-                    $"but no imported file shows it. Balance {Formatting.Money(g.KnownBalance, g.Currency)} on {Day(g.KnownDate, dateFormat)}, " +
-                    $"{Formatting.Money(g.NextBalance, g.Currency)} on {Day(g.NextDate, dateFormat)}; operations saved in between: {Formatting.Money(g.Explained, g.Currency, sign: true)}.")
-                .FontSize(8.5f).FontColor(Palette.InkSecondary);
-            if (g.Suggestions.Count > 0)
-                col.Item().PaddingTop(3).Text("Most likely: " + string.Join(" + ", g.Suggestions.Select(x => $"{x.Brand} {Formatting.Money(Math.Abs(x.Amount), g.Currency)}")) +
-                    " (as on " + string.Join(", ", g.Suggestions.Select(x => Day(x.SeenOn, dateFormat)).Distinct()) + ").").FontSize(8.5f).FontColor(Palette.InkSecondary);
-        });
-    }
 
     /// <summary>A titled table with its total in the corner.</summary>
     private static void Section(IContainer container, string title, decimal total, PeriodSummary s, Action<IContainer> body)
@@ -180,7 +162,7 @@ public static class ReportBuilder
                 var gold = cat.Group == Categories.Exceptional;
                 table.Cell().Element(Cell).Text(Day(t.Date, dateFormat)).EnableFontFeature("tnum");
                 table.Cell().Element(Cell).Text(cat.Name).FontColor(gold ? Palette.Gold : transfer ? Palette.InkMuted : Palette.Ink);
-                table.Cell().Element(Cell).Text(t.Brand + (t.Estimated ? " (estimated)" : "")).ClampLines(1);
+                table.Cell().Element(Cell).Text(t.Brand).ClampLines(1);
                 if (frequency) table.Cell().Element(Cell).Text(t.Recurring ?? "").FontColor(Palette.InkSecondary);
                 table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(t.Amount, currency, sign: true)).EnableFontFeature("tnum")
                     .FontColor(transfer ? Palette.InkMuted : t.Amount > 0 ? Palette.Positive : Palette.Ink);
@@ -216,7 +198,7 @@ public static class ReportBuilder
                 IContainer Cell(IContainer c) => c.BorderBottom(0.5f).BorderColor(Palette.Hairline).PaddingVertical(4).PaddingHorizontal(4);
                 table.Cell().Element(Cell).Text(Day(m.Date, dateFormat)).EnableFontFeature("tnum").FontSize(8f);
                 table.Cell().Element(Cell).Text(Categories.Get(m.CategoryId).Name).FontSize(8f).FontColor(Palette.InkSecondary).ClampLines(1);
-                table.Cell().Element(Cell).Text(m.Label + (m.Estimated ? " (estimated)" : "")).FontSize(8f).ClampLines(1);
+                table.Cell().Element(Cell).Text(m.Label).FontSize(8f).ClampLines(1);
                 table.Cell().Element(Cell).Text(m.From).FontSize(8f).SemiBold().FontColor(m.FromOutside ? Palette.OutsideInk : Palette.Ink).ClampLines(1);
                 table.Cell().Element(Cell).Text("→ " + m.To).FontSize(8f).SemiBold().FontColor(m.ToOutside ? Palette.OutsideInk : Palette.Ink).ClampLines(1);
                 table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(m.Amount, currency)).EnableFontFeature("tnum").FontSize(8f);

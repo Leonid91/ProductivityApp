@@ -51,8 +51,6 @@ export interface TransactionView {
   statementId: number | null
   /** How often it comes back ("monthly", "twice a month", "yearly"); null when it is not recurring. */
   recurring: string | null
-  /** Added from a balance gap: no imported file contains it yet. */
-  estimated: boolean
   linkedId: number | null
 }
 
@@ -68,28 +66,10 @@ export interface MovementView {
   toOutside: boolean
   editId: number
   otherId: number | null
-  estimated: boolean
 }
 
 export interface Flow { from: string; to: string; amount: number; fromOutside: boolean; toOutside: boolean; count: number }
 
-export interface GapSuggestion { date: string; brand: string; label: string; categoryId: string; amount: number; seenOn: string }
-
-/** Money that left (or arrived in) an account on days no imported file covers. */
-export interface BalanceGap {
-  accountId: number
-  account: string
-  currency: string
-  from: string
-  to: string
-  knownDate: string
-  knownBalance: number
-  nextDate: string
-  nextBalance: number
-  explained: number
-  missing: number
-  suggestions: GapSuggestion[]
-}
 
 export interface PeriodSummary {
   from: string
@@ -115,7 +95,6 @@ export interface PeriodSummary {
   recurringIncomePie: Slice[]
   movements: MovementView[]
   flows: Flow[]
-  gaps: BalanceGap[]
 }
 
 export interface MonthEntry { year: number; month: number; count: number }
@@ -173,20 +152,6 @@ export interface Draft {
   pageCount: number
   suggestedMatch: string
   rows: DraftRow[]
-  /** How the file follows on from the balance already saved for the chosen account; null for a first file. */
-  continuity: Continuity | null
-}
-
-export interface Continuity {
-  knownDate: string
-  knownBalance: number
-  savedSince: number
-  expected: number
-  fileStart: string
-  fileOpening: number
-  missing: number
-  gapFrom: string
-  gapTo: string
 }
 
 /** allOfBrand false: the new category is for this line only. */
@@ -286,9 +251,6 @@ export const api = {
       invoke<{ folder: string; fileName: string }>('report.defaults', { from, to, granularity, currency }),
     export: (p: { from: string; to: string; granularity: Granularity; currency: string; folder: string; fileName: string }) =>
       invoke<{ path: string }>('report.export', p),
-  },
-  gaps: {
-    fill: (accountId: number, items: GapSuggestion[], from: string, to: string) => invoke<{ added: number }>('gaps.fill', { accountId, items, from, to }),
   },
   eraseAll: () => invoke<null>('data.eraseAll'),
 }
