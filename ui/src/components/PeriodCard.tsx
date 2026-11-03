@@ -7,7 +7,7 @@ import EventRepeat from '@mui/icons-material/EventRepeatRounded'
 import Payments from '@mui/icons-material/PaymentsRounded'
 import { api, type Granularity, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { money } from '../format'
+import { money, plural } from '../format'
 import { ExpenseBars, ExpensePie } from './Charts'
 import { ExportDialog } from './ExportDialog'
 import { FlowChart } from './FlowChart'
@@ -27,14 +27,14 @@ function Stat({ label, value, color, bg, note }: { label: string; value: string;
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`)
 
 /** A table under its own heading, with the total of the period on the right. */
-function Section({ icon, title, total, note, children, id, tint }: { icon: ReactNode; title: string; total: string; note?: string; children: ReactNode; id: string; tint: string }) {
+function Section({ icon, title, total, note, children, id, tint }: { icon: ReactNode; title: string; total?: string; note?: string; children: ReactNode; id: string; tint?: string }) {
   return (
     <Box data-section={id} sx={{ mt: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.25, mb: 1, flexWrap: 'wrap' }}>
         <Box sx={{ alignSelf: 'center', display: 'flex', color: 'text.secondary' }}>{icon}</Box>
         <Typography variant="h6" sx={{ flex: 1 }}>{title}</Typography>
         {/* The total on a faint tint: red for payments, green for income. */}
-        <Typography data-section-total className="tnum" sx={{ fontWeight: 650, bgcolor: tint, borderRadius: '10px', px: 1.25, py: 0.4 }}>{total}</Typography>
+        {total && <Typography data-section-total className="tnum" sx={{ fontWeight: 650, bgcolor: tint, borderRadius: '10px', px: 1.25, py: 0.4 }}>{total}</Typography>}
         {note && <Typography variant="body2" color="text.secondary" className="tnum">{note}</Typography>}
       </Box>
       {children}
@@ -46,13 +46,15 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
  * One period: title, operations, recurring payments, regular income, transfers (From / To),
  * Expenses / Earnings / Balance, the pies, expenses per day, the money moved, and the PDF export.
  */
-export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }: {
+export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, showDays }: {
   from: string
   to: string
   granularity: Granularity
   currency: string
   onEdit: (tx: TransactionView) => void
   onLoaded?: (s: PeriodSummary) => void
+  /** Shows how many days the period has, next to its title (months differ in length). */
+  showDays?: boolean
 }) {
   const { dataVersion, fail, category, settings } = useApp()
   const theme = useTheme()
@@ -129,7 +131,14 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
         </>
       ) : (
         <>
-          <Typography variant="h5" component="h2" sx={{ mb: 2.5 }}>{summary.title}</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 2.5 }}>
+            <Typography variant="h5" component="h2" sx={{ flex: 1 }}>{summary.title}</Typography>
+            {showDays && (
+              <Typography data-days color="text.secondary" className="tnum" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
+              </Typography>
+            )}
+          </Box>
           <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} empty="No other spending in this period" />
 
           {recurringOut.length > 0 && (
@@ -143,6 +152,11 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
             </Section>
           )}
 
+          {mode === 'table' && summary.movements.length > 0 && (
+            <Section id="movements" icon={<SwapHoriz />} title="Transfers, card payments & investments" note={String(summary.movements.length)}>
+              <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
+            </Section>
+          )}
           {mode === 'separate' && summary.movements.length > 0 && (
             <Accordion
               data-section="movements"

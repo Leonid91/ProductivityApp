@@ -12,6 +12,7 @@ ui/node_modules/.tmp/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
 *.pdf
 *.log

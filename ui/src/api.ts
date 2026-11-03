@@ -8,13 +8,17 @@ export type KindHint = 'auto' | 'bank' | 'creditCard'
 export type AccountKind = 'bank' | 'creditCard' | 'savings'
 export type Verification = 'verified' | 'mismatch' | 'noBalances' | 'noTransactions'
 
-export interface Category { id: string; name: string; kind: CategoryKind; icon: string; group: string | null }
+/** parentId: the category it is nested in (null at the top); color: '#rrggbb' or null; builtIn: comes with the app (cannot be deleted). */
+export interface Category { id: string; name: string; kind: CategoryKind; icon: string; group: string | null; parentId: string | null; color: string | null; builtIn: boolean }
 
-export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'bankingSystem' | 'bankFocus' | 'periodTransfers' | 'calendarHideCardPayments' | 'calendarHideTransfers' | 'pieShowAll', string> & Record<string, string>
+export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'periodTransfers' | 'calendarHideCardPayments' | 'calendarHideTransfers' | 'calendarHideInvestments' | 'pieShowAll', string> & Record<string, string>
 
-export interface BankProfile { id: string; name: string; proven: boolean }
+export type BankingSystem = 'northAmerica' | 'france'
+export interface Bank { id: number; name: string; country: string; system: BankingSystem; currency: string }
 
-/** Account types, named the way the chosen banking system names them. */
+export const currencies = ['CAD', 'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'JPY', 'MXN']
+
+/** Account types, named the way the bank's banking system names them. */
 export function accountKinds(system: string): { value: AccountKind; label: string }[] {
   return system === 'france'
     ? [{ value: 'bank', label: 'Current account' }, { value: 'savings', label: 'Savings (livret)' }, { value: 'creditCard', label: 'Deferred debit card' }]
@@ -30,11 +34,10 @@ export interface InitInfo {
   nonClientRegions: boolean
   maximized: boolean
   dataFolder: string
-  bankProfiles: BankProfile[]
 }
 
 export interface Slice { key: string; label: string; amount: number; share: number }
-export interface Bar { key: string; label: string; expenses: number; earnings: number; moved: number; cardPaid: number }
+export interface Bar { key: string; label: string; expenses: number; earnings: number; moved: number; cardPaid: number; invested: number }
 
 export interface TransactionView {
   id: number
@@ -117,7 +120,7 @@ export interface PeriodSummary {
 export interface MonthEntry { year: number; month: number; count: number }
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
-export interface Account { id: number; name: string; currency: string; kind: AccountKind; bank: string | null; last4: string | null }
+export interface Account { id: number; name: string; currency: string; kind: AccountKind; bank: string | null; last4: string | null; bankId: number | null; system: BankingSystem }
 
 export interface TemplateColumn { role: ColumnRole; left: number; right: number }
 export interface BankTemplate { id: number; name: string; matchText: string; columns: TemplateColumn[]; dateOrder: DateOrder; kind: KindHint; updatedAt?: string }
@@ -164,6 +167,8 @@ export interface Draft {
   /** Account and type chosen by the person; null until they choose. */
   accountId: number | null
   defaultAccountName: string
+  /** The bank of the list the statement names, if any. */
+  suggestedBankId: number | null
   template: BankTemplate | null
   columns: TemplateColumn[]
   pageCount: number
@@ -177,6 +182,8 @@ export interface CommitResult { statementId: number; accountId: number; added: n
 
 export interface StatementInfo {
   id: number
+  bankId: number | null
+  bank: string | null
   accountId: number
   account: string
   fileName: string
@@ -228,12 +235,23 @@ export const api = {
   brands: {
     list: () => invoke<{ brands: BrandInfo[]; rules: BrandRule[]; builtInCount: number }>('brands.list'),
     setCategory: (brand: string, categoryId: string) => invoke<{ changed: number }>('brands.setCategory', { brand, categoryId }),
-    deleteRule: (id: number) => invoke<{ changed: number }>('brands.deleteRule', { id }),
+    forget: (brand: string) => invoke<{ changed: number }>('brands.forget', { brand }),
+  },
+  categories: {
+    create: (c: { name: string; parentId: string | null; kind: CategoryKind; color: string | null }) => invoke<Category[]>('categories.create', c),
+    update: (c: { id: string; name: string; parentId: string | null; color: string | null }) => invoke<Category[]>('categories.update', c),
+    remove: (id: string) => invoke<Category[]>('categories.delete', { id }),
+  },
+  banks: {
+    list: () => invoke<Bank[]>('banks.list'),
+    save: (bank: Bank) => invoke<Bank[]>('banks.save', { bank }),
+    remove: (id: number) => invoke<Bank[]>('banks.delete', { id }),
   },
   accounts: {
     list: () => invoke<Account[]>('accounts.list'),
-    rename: (id: number, name: string) => invoke<Account>('accounts.update', { id, name }),
-    update: (id: number, name: string, kind: AccountKind) => invoke<Account>('accounts.update', { id, name, kind }),
+    /** bankId 0: no bank. */
+    update: (a: Account, change: { name?: string; kind?: AccountKind; currency?: string; bankId?: number }) =>
+      invoke<Account>('accounts.update', { id: a.id, name: a.name, ...change }),
     remove: (id: number) => invoke<null>('accounts.delete', { id }),
   },
   statements: {
@@ -243,8 +261,8 @@ export const api = {
   imports: {
     parseFile: (path: string) => invoke<Draft>('import.parseFile', { path }),
     parseBytes: (name: string, base64: string) => invoke<Draft>('import.parseBytes', { name, base64 }),
-    choose: (draftId: string, accountId: number | null, kind: AccountKind | null) => invoke<Draft>('import.choose', { draftId, accountId, kind }),
-    commit: (p: { draftId: string; accountId: number | null; newAccountName: string | null; currency: string; kind: AccountKind | null; edits: DraftEdit[] }) =>
+    choose: (draftId: string, accountId: number | null, kind: AccountKind | null, bankId: number | null) => invoke<Draft>('import.choose', { draftId, accountId, kind, bankId }),
+    commit: (p: { draftId: string; accountId: number | null; newAccountName: string | null; currency: string; kind: AccountKind | null; edits: DraftEdit[]; bankId: number | null; newBankName: string | null }) =>
       invoke<CommitResult>('import.commit', p),
     discard: (draftId: string) => invoke<null>('import.discard', { draftId }),
     page: (draftId: string, page: number, width: number) => invoke<PageImage>('import.page', { draftId, page, width }),
@@ -270,4 +288,5 @@ export const api = {
       invoke<{ path: string }>('report.export', p),
   },
   eraseAll: () => invoke<null>('data.eraseAll'),
+  moveDatabase: (folder: string) => invoke<{ dataFolder: string }>('data.moveDatabase', { folder }),
 }

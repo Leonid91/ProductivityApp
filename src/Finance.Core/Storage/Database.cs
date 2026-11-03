@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 5;
+    private const int SchemaVersion = 6;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -27,6 +27,7 @@ public sealed class Database : IDisposable
         _cn.Open();
         Exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;");
         Migrate();
+        SeedCategories();
     }
 
     public void Dispose() => _cn.Dispose();
@@ -85,7 +86,25 @@ public sealed class Database : IDisposable
             // earned: the part of money back from an investment that the person says was gain (exact decimal text).
             Exec("ALTER TABLE transactions ADD COLUMN earned TEXT; PRAGMA user_version = 5;");
         }
+        if (version < 6)
+        {
+            // Several banks, each with its banking system and currency; categories the person can nest and colour.
+            Exec("""
+                CREATE TABLE banks (id INTEGER PRIMARY KEY, name TEXT NOT NULL, country TEXT NOT NULL, system INTEGER NOT NULL, currency TEXT NOT NULL);
+                ALTER TABLE accounts ADD COLUMN bank_id INTEGER REFERENCES banks(id) ON DELETE SET NULL;
+                CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind INTEGER NOT NULL, parent_id TEXT, color TEXT, seq INTEGER NOT NULL);
+                UPDATE accounts SET bank = 'National Bank of Canada' WHERE bank = 'Banque Nationale';
+                """);
+            // The banks the accounts were imported from become the bank list, with the one banking system used so far.
+            var system = GetSetting("bankingSystem") == "france" ? BankingSystem.France : BankingSystem.NorthAmerica;
+            AddBank(new Bank { Name = KnownBanks.National, Country = "Canada", System = BankingSystem.NorthAmerica, Currency = "CAD" });
+            foreach (var (name, currency) in Query("SELECT bank, MIN(currency) FROM accounts WHERE bank IS NOT NULL AND bank <> $n GROUP BY bank ORDER BY MIN(id)",
+                r => (r.GetString(0), r.GetString(1)), ("$n", KnownBanks.National)))
+                AddBank(new Bank { Name = name, System = system, Currency = currency });
+            Exec("UPDATE accounts SET bank_id = (SELECT b.id FROM banks b WHERE b.name = accounts.bank); PRAGMA user_version = 6;");
+        }
     }
+
 
     // ---------------------------------------------------------------- helpers
 
@@ -169,19 +188,109 @@ public sealed class Database : IDisposable
 
     // ---------------------------------------------------------------- accounts
 
-    public List<Account> Accounts() => Query("SELECT id, name, currency, kind, bank, last4 FROM accounts ORDER BY name", r => new Account
+    public List<Account> Accounts() => Query("""
+        SELECT a.id, a.name, a.currency, a.kind, a.bank, a.last4, a.bank_id, COALESCE(b.system, 0)
+        FROM accounts a LEFT JOIN banks b ON b.id = a.bank_id ORDER BY a.name
+        """, r => new Account
     {
         Id = r.GetInt64(0), Name = r.GetString(1), Currency = r.GetString(2), Kind = (AccountKind)r.GetInt32(3),
         Bank = r.IsDBNull(4) ? null : r.GetString(4), Last4 = r.IsDBNull(5) ? null : r.GetString(5),
+        BankId = r.IsDBNull(6) ? null : r.GetInt64(6), System = (BankingSystem)r.GetInt32(7),
     });
 
     public long AddAccount(Account a) => (long)Scalar(
-        "INSERT INTO accounts(name, currency, kind, bank, last4) VALUES($n, $c, $k, $b, $l) RETURNING id",
-        ("$n", a.Name), ("$c", a.Currency), ("$k", (int)a.Kind), ("$b", a.Bank), ("$l", a.Last4))!;
+        "INSERT INTO accounts(name, currency, kind, bank, last4, bank_id) VALUES($n, $c, $k, $b, $l, $bi) RETURNING id",
+        ("$n", a.Name), ("$c", a.Currency), ("$k", (int)a.Kind), ("$b", a.Bank), ("$l", a.Last4), ("$bi", a.BankId))!;
 
+    /// <summary>Saves the account; its operations take its currency.</summary>
     public void UpdateAccount(Account a) => Exec(
-        "UPDATE accounts SET name = $n, currency = $c, kind = $k WHERE id = $id",
-        ("$n", a.Name), ("$c", a.Currency), ("$k", (int)a.Kind), ("$id", a.Id));
+        "UPDATE accounts SET name = $n, currency = $c, kind = $k, bank_id = $bi WHERE id = $id; UPDATE transactions SET currency = $c WHERE account_id = $id",
+        ("$n", a.Name), ("$c", a.Currency), ("$k", (int)a.Kind), ("$bi", a.BankId), ("$id", a.Id));
+
+    // ---------------------------------------------------------------- banks
+
+    public List<Bank> Banks() => Query("SELECT id, name, country, system, currency FROM banks ORDER BY id", r => new Bank
+    {
+        Id = r.GetInt64(0), Name = r.GetString(1), Country = r.GetString(2), System = (BankingSystem)r.GetInt32(3), Currency = r.GetString(4),
+    });
+
+    public long AddBank(Bank b) => (long)Scalar("INSERT INTO banks(name, country, system, currency) VALUES($n, $c, $s, $cu) RETURNING id",
+        ("$n", b.Name), ("$c", b.Country), ("$s", (int)b.System), ("$cu", b.Currency))!;
+
+    public void UpdateBank(Bank b) => Exec("UPDATE banks SET name = $n, country = $c, system = $s, currency = $cu WHERE id = $id",
+        ("$n", b.Name), ("$c", b.Country), ("$s", (int)b.System), ("$cu", b.Currency), ("$id", b.Id));
+
+    public void DeleteBank(long id) => Exec("DELETE FROM banks WHERE id = $id", ("$id", id));
+
+    // ---------------------------------------------------------------- categories
+
+    /// <summary>Built-in categories missing from the table (a new database, or ones added by a later version) are added.</summary>
+    private void SeedCategories()
+    {
+        var seq = 0;
+        foreach (var c in Model.Categories.BuiltIn)
+            Exec("INSERT OR IGNORE INTO categories(id, name, kind, parent_id, color, seq) VALUES($i, $n, $k, NULL, NULL, $s)",
+                ("$i", c.Id), ("$n", c.Name), ("$k", (int)c.Kind), ("$s", seq++));
+        Model.Categories.Use(LoadCategories());
+    }
+
+    /// <summary>
+    /// Every category, built-in ones first. A category the person made takes its icon and group (exceptional) from the
+    /// nearest built-in category it is nested in.
+    /// </summary>
+    public List<Category> LoadCategories()
+    {
+        var rows = Query("SELECT id, name, kind, parent_id, color FROM categories ORDER BY seq, rowid",
+            r => (Id: r.GetString(0), Name: r.GetString(1), Kind: (CategoryKind)r.GetInt32(2), Parent: r.IsDBNull(3) ? null : r.GetString(3), Color: r.IsDBNull(4) ? null : r.GetString(4)));
+        var byId = rows.ToDictionary(r => r.Id);
+        var builtIn = Model.Categories.BuiltIn.ToDictionary(c => c.Id);
+        Category? Origin(string id)
+        {
+            // Bounded walk up the chain: a broken chain cannot loop.
+            string? cur = id;
+            for (var n = 0; cur is not null && n < 1000; n++)
+            {
+                if (builtIn.TryGetValue(cur, out var b)) return b;
+                cur = byId.TryGetValue(cur, out var row) ? row.Parent : null;
+            }
+            return null;
+        }
+        return rows.Select(r =>
+        {
+            var origin = Origin(r.Id);
+            var parent = r.Parent is not null && byId.ContainsKey(r.Parent) ? r.Parent : null;
+            return new Category(r.Id, r.Name, r.Kind, origin?.Icon ?? "Category", origin?.Group, parent, r.Color, builtIn.ContainsKey(r.Id));
+        }).ToList();
+    }
+
+    /// <summary>Adds a category the person made; returns its id ("u1", "u2"...).</summary>
+    public string AddCategory(string name, CategoryKind kind, string? parentId, string? color)
+    {
+        var n = Convert.ToInt64(Scalar("SELECT COALESCE(MAX(CAST(substr(id, 2) AS INTEGER)), 0) + 1 FROM categories WHERE id GLOB 'u[0-9]*'"), CultureInfo.InvariantCulture);
+        var id = "u" + n.ToString(CultureInfo.InvariantCulture);
+        Exec("INSERT INTO categories(id, name, kind, parent_id, color, seq) VALUES($i, $n, $k, $p, $c, (SELECT COALESCE(MAX(seq), 0) + 1 FROM categories))",
+            ("$i", id), ("$n", name), ("$k", (int)kind), ("$p", parentId), ("$c", color));
+        Model.Categories.Use(LoadCategories());
+        return id;
+    }
+
+    public void UpdateCategory(string id, string name, string? parentId, string? color)
+    {
+        Exec("UPDATE categories SET name = $n, parent_id = $p, color = $c WHERE id = $i", ("$i", id), ("$n", name), ("$p", parentId), ("$c", color));
+        Model.Categories.Use(LoadCategories());
+    }
+
+    /// <summary>Deletes a category: its operations and learned rules take <paramref name="replacement"/>, its nested categories move up to <paramref name="parentId"/>.</summary>
+    public void DeleteCategory(string id, string replacement, string? parentId)
+    {
+        InTransaction(() => Exec("""
+            UPDATE transactions SET category_id = $r WHERE category_id = $i;
+            UPDATE brand_rules SET category_id = $r WHERE category_id = $i;
+            UPDATE categories SET parent_id = $p WHERE parent_id = $i;
+            DELETE FROM categories WHERE id = $i;
+            """, ("$i", id), ("$r", replacement), ("$p", parentId)));
+        Model.Categories.Use(LoadCategories());
+    }
 
     public void DeleteAccount(long id) => Exec("DELETE FROM accounts WHERE id = $id", ("$id", id));
 
@@ -281,6 +390,13 @@ public sealed class Database : IDisposable
         """, ("$b", brand), ("$c", categoryId), ("$t", T(DateTime.UtcNow)));
 
     public void DeleteBrandRule(long id) => Exec("DELETE FROM brand_rules WHERE id = $id", ("$id", id));
+
+    /// <summary>Forgets everything learned for a brand: its wordings and its category.</summary>
+    public void DeleteBrandRules(string brand) => Exec("DELETE FROM brand_rules WHERE brand = $b COLLATE NOCASE", ("$b", brand));
+
+    /// <summary>Every wording learned for the brand takes the category too.</summary>
+    public void SetBrandRulesCategory(string brand, string categoryId) =>
+        Exec("UPDATE brand_rules SET category_id = $c WHERE brand = $b COLLATE NOCASE AND merchant_key <> ''", ("$b", brand), ("$c", categoryId));
 
     // ---------------------------------------------------------------- templates
 

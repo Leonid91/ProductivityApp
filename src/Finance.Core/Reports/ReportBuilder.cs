@@ -84,7 +84,7 @@ public static class ReportBuilder
                 if (income.Count > 0)
                     col.Item().Element(c => Section(c, "Income", s.Earnings, s, Palette.PositiveSoft,
                         x => OperationsTable(x, income, s.Currency, dateFormat, "", frequency: true)));
-                if (o.Transfers == "separate" && s.Movements.Count > 0)
+                if (o.Transfers is "separate" or "table" && s.Movements.Count > 0)
                     col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s, Palette.Surface,
                         x => MovementsTable(x, s.Movements, s.Currency, dateFormat)));
                 col.Item().ShowEntire().Column(t =>

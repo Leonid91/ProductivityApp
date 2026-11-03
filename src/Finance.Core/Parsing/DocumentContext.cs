@@ -52,7 +52,7 @@ internal sealed partial class DocumentContext
             LooksLikeSavings = Keywords.ContainsAny(headerFolded.Replace("CAISSE D'EPARGNE", "").Replace("CAISSE D EPARGNE", ""), Keywords.Savings),
             Profile = profile,
             Currency = DetectCurrency(folded, defaultCurrency),
-            Bank = profile == "bnc" ? "Banque Nationale" : DetectBank(headerFolded) ?? InstitutionHeading(headerBlocks),
+            Bank = profile == "bnc" ? KnownBanks.National : DetectBank(headerFolded) ?? InstitutionHeading(headerBlocks),
             Last4 = MaskedLast4(headerFolded) ?? DetectLast4(headerFolded) ?? DetectLast4(folded),
             DocumentYear = DetectYear(folded),
             FirstPageText = firstPage,

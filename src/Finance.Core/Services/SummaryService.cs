@@ -6,8 +6,8 @@ namespace ProductivityApp.Finance.Services;
 
 public sealed record Slice(string Key, string Label, decimal Amount, double Share);
 
-/// <summary>One day, month or year. Moved is money moved between own accounts or to investments; CardPaid is credit card payments.</summary>
-public sealed record Bar(string Key, string Label, decimal Expenses, decimal Earnings, decimal Moved = 0, decimal CardPaid = 0);
+/// <summary>One day, month or year. Moved is money moved between own accounts; CardPaid is credit card payments; Invested is investments.</summary>
+public sealed record Bar(string Key, string Label, decimal Expenses, decimal Earnings, decimal Moved = 0, decimal CardPaid = 0, decimal Invested = 0);
 
 /// <param name="Recurring">How often it comes back ("monthly", "twice a month", "yearly"), or null when it is not recurring.</param>
 public sealed record TransactionView(
@@ -58,7 +58,7 @@ public sealed record MonthEntry(int Year, int Month, int Count);
 
 public sealed record PeriodIndex(List<MonthEntry> Months, List<int> Years, List<string> Currencies, string? First, string? Last);
 
-public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSystem = null)
+public sealed class SummaryService(Database db)
 {
     /// <summary>Pies show this many slices, the rest folds into "Other".</summary>
     public const int PieSlices = 5;
@@ -82,7 +82,7 @@ public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSyst
         var recurring = RecurringDetector.Detect(everything);
         var byId = everything.ToDictionary(t => t.Id);
         var accounts = db.Accounts().ToDictionary(a => a.Id);
-        var movements = Movements.Build(txs, byId, accounts, bankingSystem?.Invoke() ?? BankingSystem.NorthAmerica);
+        var movements = Movements.Build(txs, byId, accounts);
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var toIso = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -201,7 +201,8 @@ public sealed class SummaryService(Database db, Func<BankingSystem>? bankingSyst
                 var moves = txs.Where(t => t.Date == d && Categories.IsTransfer(t.CategoryId)).ToList();
                 bars.Add(new Bar(d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), d.Day.ToString(CultureInfo.InvariantCulture),
                     -day.Where(t => t.Amount < 0).Sum(t => t.Amount), day.Where(t => t.Amount > 0).Sum(t => t.Amount),
-                    Moved(moves.Where(t => t.CategoryId != Categories.CardPayments)), Moved(moves.Where(t => t.CategoryId == Categories.CardPayments))));
+                    Moved(moves.Where(t => t.CategoryId is not (Categories.CardPayments or Categories.Investments))),
+                    Moved(moves.Where(t => t.CategoryId == Categories.CardPayments)), Moved(moves.Where(t => t.CategoryId == Categories.Investments))));
             }
             return (bars, "day");
         }

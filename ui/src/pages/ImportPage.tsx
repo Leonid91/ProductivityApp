@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box, Button, IconButton, LinearProgress, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography, useTheme,
+  Box, Button, IconButton, LinearProgress, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import CloudUpload from '@mui/icons-material/CloudUploadRounded'
 import CheckCircle from '@mui/icons-material/CheckCircleRounded'
 import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
-import { api, type BankTemplate, type Draft, type StatementInfo } from '../api'
+import WarningAmber from '@mui/icons-material/WarningAmberRounded'
+import { api, currencies, type BankTemplate, type Draft, type StatementInfo } from '../api'
 import { useApp } from '../AppContext'
 import { plural, shortDate } from '../format'
 import { DraftCard } from '../components/DraftCard'
 import { FileBrowser } from '../components/FileBrowser'
 import { ConfirmDialog, PageHeader, SectionCard } from '../components/common'
+import { useRowOrder } from '../components/order'
 
 function toBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -25,8 +27,11 @@ function toBase64(file: File): Promise<string> {
 
 type Job = { name: string; run: () => Promise<Draft> }
 
+/** Selects inside table rows: same height as the text rows around them. */
+const compact = { '& .MuiSelect-select': { py: 0.6, fontSize: 13.5 } }
+
 export function ImportPage() {
-  const { fail, dataVersion, dataChanged, notify } = useApp()
+  const { fail, dataVersion, dataChanged, notify, accounts, banks, refreshAccounts, refreshBanks } = useApp()
   const theme = useTheme()
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [queue, setQueue] = useState<Job[]>([])
@@ -44,6 +49,24 @@ export function ImportPage() {
   }, [fail])
 
   useEffect(() => { reloadLists() }, [reloadLists, dataVersion])
+  useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
+
+  // Files of one bank in different currencies are flagged.
+  const mismatched = useMemo(() => {
+    const by = new Map<number, Set<string>>()
+    for (const s of statements) if (s.bankId !== null) by.set(s.bankId, (by.get(s.bankId) ?? new Set()).add(s.currency))
+    return new Set([...by].filter(([, c]) => c.size > 1).map(([id]) => id))
+  }, [statements])
+  const statementKey = useCallback((s: StatementInfo) => String(s.id), [])
+  const templateKey = useCallback((t: BankTemplate) => String(t.id), [])
+  const statementOrder = useRowOrder('statements', statements, statementKey)
+  const templateOrder = useRowOrder('templates', templates, templateKey)
+
+  // Bank and currency belong to the file's account: changing them here changes them everywhere.
+  const updateAccount = (s: StatementInfo, change: { currency?: string; bankId?: number }, message: string) => {
+    const a = accounts.find((x) => x.id === s.accountId)
+    if (a) api.accounts.update(a, change).then(() => { notify(message); dataChanged() }, fail)
+  }
 
   // Statements are read one after the other; each becomes a draft to review.
   useEffect(() => {
@@ -81,7 +104,7 @@ export function ImportPage() {
   const ok = theme.palette.money.positive
 
   return (
-    <Box sx={{ maxWidth: 1180, mx: 'auto', pt: 3, pb: 6 }}>
+    <Box sx={{ maxWidth: 1320, mx: 'auto', pt: 3, pb: 6 }}>
       <PageHeader title="Import" />
       <Box
         onDragOver={(e) => { e.preventDefault(); setOver(true) }}
@@ -115,11 +138,14 @@ export function ImportPage() {
 
       {statements.length > 0 && (
         <SectionCard title="Imported statements" sx={{ mt: 3 }}>
-          <Table size="small">
+          <Table size="small" sx={{ '& td, & th': { px: 1 } }}>
             <TableHead>
               <TableRow>
+                <TableCell padding="none" />
                 <TableCell>File</TableCell>
+                <TableCell>Bank</TableCell>
                 <TableCell>Account</TableCell>
+                <TableCell>Currency</TableCell>
                 <TableCell>Period</TableCell>
                 <TableCell align="right">Operations</TableCell>
                 <TableCell align="center">Balances</TableCell>
@@ -127,10 +153,34 @@ export function ImportPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {statements.map((s) => (
-                <TableRow key={s.id} hover>
-                  <TableCell sx={{ maxWidth: 320 }}><Typography variant="body2" noWrap>{s.fileName}</Typography></TableCell>
-                  <TableCell><Typography variant="body2" noWrap>{s.account}</Typography></TableCell>
+              {statementOrder.rows.map((s) => (
+                <TableRow key={s.id} hover {...statementOrder.rowProps(s)}>
+                  {statementOrder.handle(s)}
+                  <TableCell sx={{ maxWidth: 240 }}><Typography variant="body2" noWrap title={s.fileName}>{s.fileName}</Typography></TableCell>
+                  <TableCell>
+                    <TextField
+                      select
+                      size="small"
+                      value={s.bankId ?? 0}
+                      onChange={(e) => updateAccount(s, { bankId: Number(e.target.value) }, 'Bank changed')}
+                      sx={{ width: 160, ...compact }}
+                      slotProps={{ htmlInput: { 'aria-label': 'Bank' } }}
+                    >
+                      <MenuItem value={0}>No bank</MenuItem>
+                      {banks.map((b) => <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>)}
+                    </TextField>
+                  </TableCell>
+                  <TableCell sx={{ maxWidth: 200 }}><Typography variant="body2" noWrap title={s.account}>{s.account}</Typography></TableCell>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <TextField select size="small" value={s.currency} onChange={(e) => updateAccount(s, { currency: e.target.value }, 'Currency changed')} sx={{ width: 84, ...compact }} slotProps={{ htmlInput: { 'aria-label': 'Currency' } }}>
+                        {[...new Set([s.currency, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                      </TextField>
+                      {s.bankId !== null && mismatched.has(s.bankId) && (
+                        <Tooltip title="Currency mismatch"><WarningAmber data-currency-mismatch sx={{ fontSize: 19, color: 'warning.main' }} /></Tooltip>
+                      )}
+                    </Box>
+                  </TableCell>
                   <TableCell className="tnum" sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>
                     {s.periodStart && s.periodEnd ? `${shortDate(s.periodStart)} – ${shortDate(s.periodEnd)}` : '—'}
                   </TableCell>
@@ -160,14 +210,16 @@ export function ImportPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
+                <TableCell padding="none" />
                 <TableCell>Name</TableCell>
                 <TableCell>Recognised by</TableCell>
                 <TableCell padding="checkbox" />
               </TableRow>
             </TableHead>
             <TableBody>
-              {templates.map((t) => (
-                <TableRow key={t.id} hover>
+              {templateOrder.rows.map((t) => (
+                <TableRow key={t.id} hover {...templateOrder.rowProps(t)}>
+                  {templateOrder.handle(t)}
                   <TableCell>{t.name}</TableCell>
                   <TableCell sx={{ color: 'text.secondary' }}>“{t.matchText}”</TableCell>
                   <TableCell padding="checkbox">

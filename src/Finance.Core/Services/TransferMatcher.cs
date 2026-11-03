@@ -12,7 +12,7 @@ public static class TransferMatcher
     /// <summary>Days allowed between the two halves (banks post them on different days).</summary>
     public const int Window = 4;
 
-    public static int Link(Database db, BankingSystem system)
+    public static int Link(Database db)
     {
         var accounts = db.Accounts().ToDictionary(a => a.Id);
         var changed = CardSpendingWithoutCard(db, accounts);
@@ -43,7 +43,7 @@ public static class TransferMatcher
                     var cardWording = o.CategoryId == Categories.CardPayments;
                     var gap = days * 10 + (cardSide == cardWording ? 0 : 5);
                     if (gap >= bestGap) continue;
-                    if (!Related(o, i, accounts, system)) continue;
+                    if (!Related(o, i, accounts)) continue;
                     best = i;
                     bestGap = gap;
                 }
@@ -74,13 +74,12 @@ public static class TransferMatcher
     /// Two opposite amounts on two accounts are one movement when a credit card or a savings account is involved
     /// (North America), or a savings account (France), or when the wording already says it is a transfer.
     /// </summary>
-    private static bool Related(Transaction o, Transaction i, Dictionary<long, Account> accounts, BankingSystem system)
+    private static bool Related(Transaction o, Transaction i, Dictionary<long, Account> accounts)
     {
         var a = accounts.GetValueOrDefault(o.AccountId)?.Kind;
         var b = accounts.GetValueOrDefault(i.AccountId)?.Kind;
         // A purchase or a salary is never half of a transfer, whatever its amount: at least one side must be worded as
         // a movement (card payment, transfer, investment), except between savings and another own account.
-        _ = system;
         if (a == AccountKind.CreditCard && !IsMovement(o)) return false;
         if (b == AccountKind.CreditCard && !IsMovement(i)) return false;
         if (IsMovement(o) || IsMovement(i)) return true;

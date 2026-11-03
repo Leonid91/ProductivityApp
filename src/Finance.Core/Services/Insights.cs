@@ -119,11 +119,10 @@ public static class Movements
     /// are imported) make one line; a half alone goes to or comes from the outside: an account that is not imported,
     /// another person, an investment account.
     /// </summary>
-    public static List<MovementView> Build(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts,
-        BankingSystem system = BankingSystem.NorthAmerica)
+    public static List<MovementView> Build(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts)
     {
         string? Type(string name, bool outside) => outside ? null
-            : accounts.Values.FirstOrDefault(a => a.Name == name) is { } a ? AccountTypes.Label(a.Kind, system) : null;
+            : accounts.Values.FirstOrDefault(a => a.Name == name) is { } a ? AccountTypes.Label(a.Kind, a.System) : null;
         var raw = BuildRaw(period, linked, accounts);
         return raw.Select(m => m with { FromType = Type(m.From, m.FromOutside), ToType = Type(m.To, m.ToOutside) }).ToList();
     }

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Box, Button, MenuItem, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material'
+import { DatePicker } from '@mui/x-date-pickers/DatePicker'
+import dayjs, { type Dayjs } from 'dayjs'
 import Add from '@mui/icons-material/AddRounded'
 import UploadFile from '@mui/icons-material/UploadFileRounded'
 import { api, type Granularity, type PeriodIndex, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, iso } from '../format'
 import { PeriodCard } from '../components/PeriodCard'
-import { TransactionDialog } from '../components/TransactionDialog'
+import { TransactionDialog, pickerFormats } from '../components/TransactionDialog'
 import { EmptyState } from '../components/common'
 
 interface Period { from: string; to: string; key: string }
@@ -14,7 +16,10 @@ interface Period { from: string; to: string; key: string }
 export function PeriodsPage() {
   const { settings, dataVersion, fail, go } = useApp()
   const [index, setIndex] = useState<PeriodIndex | null>(null)
-  const [mode, setMode] = useState<Granularity>('month')
+  const [mode, setMode] = useState<Granularity | 'custom'>('month')
+  // Custom period: any two days, picked on the calendar or typed.
+  const [customFrom, setCustomFrom] = useState<Dayjs | null>(null)
+  const [customTo, setCustomTo] = useState<Dayjs | null>(null)
   const [currency, setCurrency] = useState(settings.currency)
   const [fromYear, setFromYear] = useState<number | null>(null)
   const [toYear, setToYear] = useState<number | null>(null)
@@ -26,7 +31,14 @@ export function PeriodsPage() {
 
   useEffect(() => {
     api.periods.index(currency).then((ix) => {
+      // The data may be in other currencies only (a file's currency changed): open the main one.
+      if (ix.currencies.length && !ix.currencies.includes(currency)) { setCurrency(ix.currencies[0]); return }
       setIndex(ix)
+      if (ix.last) {
+        const last = dayjs(ix.last + '-01')
+        setCustomFrom((d) => d ?? last)
+        setCustomTo((d) => d ?? last.endOf('month'))
+      }
       if (ix.years.length) {
         setFromYear((y) => y ?? ix.years[ix.years.length - 1])
         setToYear((y) => y ?? ix.years[0])
@@ -42,11 +54,17 @@ export function PeriodsPage() {
     if (!index) return []
     if (mode === 'month') return index.months.map((m) => ({ from: iso(m.year, m.month, 1), to: iso(m.year, m.month, daysInMonth(m.year, m.month)), key: `${m.year}-${m.month}` }))
     if (mode === 'year') return index.years.map((y) => ({ from: iso(y, 1, 1), to: iso(y, 12, 31), key: `${y}` }))
+    if (mode === 'custom') {
+      if (!customFrom?.isValid() || !customTo?.isValid() || customTo.isBefore(customFrom, 'day')) return []
+      const from = customFrom.format('YYYY-MM-DD')
+      const to = customTo.format('YYYY-MM-DD')
+      return [{ from, to, key: `${from}_${to}` }]
+    }
     if (fromYear === null || toYear === null) return []
     const a = Math.min(fromYear, toYear)
     const b = Math.max(fromYear, toYear)
     return [{ from: iso(a, 1, 1), to: iso(b, 12, 31), key: `${a}-${b}` }]
-  }, [index, mode, fromYear, toYear])
+  }, [index, mode, fromYear, toYear, customFrom, customTo])
 
   const onEdit = useCallback((tx: TransactionView) => setEditing(tx), [])
 
@@ -64,7 +82,14 @@ export function PeriodsPage() {
           <ToggleButton value="month">Month</ToggleButton>
           <ToggleButton value="year">Year</ToggleButton>
           <ToggleButton value="range">Several years</ToggleButton>
+          <ToggleButton value="custom">Custom</ToggleButton>
         </ToggleButtonGroup>
+        {mode === 'custom' && (
+          <>
+            <DatePicker label="From" value={customFrom} onChange={setCustomFrom} format={pickerFormats[settings.dateFormat] ?? 'DD MMMM YYYY'} slotProps={{ textField: { size: 'small', sx: { width: 230 } } }} />
+            <DatePicker label="To" value={customTo} onChange={setCustomTo} minDate={customFrom ?? undefined} format={pickerFormats[settings.dateFormat] ?? 'DD MMMM YYYY'} slotProps={{ textField: { size: 'small', sx: { width: 230 } } }} />
+          </>
+        )}
         {mode === 'range' && index && index.years.length > 0 && (
           <>
             <TextField select size="small" label="From" value={fromYear ?? ''} onChange={(e) => setFromYear(Number(e.target.value))} sx={{ width: 110 }}>
@@ -93,7 +118,15 @@ export function PeriodsPage() {
       ) : (
         <Box sx={{ display: 'grid', gap: 3, pb: 6 }}>
           {periods.map((p) => (
-            <PeriodCard key={`${mode}:${p.key}:${currency}`} from={p.from} to={p.to} granularity={mode} currency={currency} onEdit={onEdit} />
+            <PeriodCard
+              key={`${mode}:${p.key}:${currency}`}
+              from={p.from}
+              to={p.to}
+              granularity={mode === 'custom' ? 'range' : mode}
+              currency={currency}
+              onEdit={onEdit}
+              showDays={mode === 'month' || mode === 'custom'}
+            />
           ))}
         </Box>
       )}

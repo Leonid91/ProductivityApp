@@ -26,7 +26,7 @@ public class BncAndCsvTests
             Assert.Equal(TextNorm.Fold(nonZero[i].Description), TextNorm.Fold(p.Rows[i].Label));
             Assert.Equal(TextNorm.Fold(nonZero[i].Category), TextNorm.Fold(p.Rows[i].BankCategory));
         }
-        Assert.Equal("Banque Nationale", p.Bank);
+        Assert.Equal("National Bank of Canada", p.Bank);
         Assert.Equal("bnc", p.Profile);
         Assert.Equal("CAD", p.Currency);
         Assert.True(p.NewestFirst);
@@ -199,7 +199,7 @@ public class BncAndCsvTests
         var savings = s.Db.AddAccount(new Account { Name = "Savings", Currency = "CAD", Kind = AccountKind.Savings });
         var t1 = s.Db.AddTransaction(new Transaction { AccountId = chequing, Date = new(2025, 9, 3), Amount = -300m, Currency = "CAD", RawLabel = "WEB 0042", Brand = "Web", CategoryId = "other" });
         var t2 = s.Db.AddTransaction(new Transaction { AccountId = savings, Date = new(2025, 9, 4), Amount = 300m, Currency = "CAD", RawLabel = "WEB 0042", Brand = "Web", CategoryId = "otherincome" });
-        Assert.Equal(2, TransferMatcher.Link(s.Db, BankingSystem.NorthAmerica));
+        Assert.Equal(2, TransferMatcher.Link(s.Db));
         Assert.Equal(Categories.Transfers, s.Db.GetTransaction(t1)!.CategoryId);
         Assert.Equal(ValueSource.Linked, s.Db.GetTransaction(t2)!.CategorySource);
     }

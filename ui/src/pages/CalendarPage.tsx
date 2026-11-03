@@ -14,15 +14,19 @@ import { api, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, iso, money, monthName, parts, today } from '../format'
 import { CategoryIcon } from '../components/CategoryIcon'
-import { Money } from '../components/common'
+import { Money, useCategoryColor } from '../components/common'
 import { TransactionDialog } from '../components/TransactionDialog'
 
 /** Month calendar: what went out and came in each day; a day opens its operations. */
 export function CalendarPage() {
   const { settings, dataVersion, fail, category } = useApp()
-  // Settings: every transfer, card payment and investment hidden (default), or only credit card payments.
-  const hideMoves = settings.calendarHideTransfers !== 'false'
-  const hideCard = hideMoves || settings.calendarHideCardPayments !== 'false'
+  const colorOf = useCategoryColor()
+  // Settings: transfers and credit card payments hidden by default, investments shown.
+  const hideMoves = settings.calendarHideTransfers === 'true'
+  const hideCard = settings.calendarHideCardPayments === 'true'
+  const hideInvest = settings.calendarHideInvestments === 'true'
+  const hidden = (id: string) => category(id).kind === 'transfer'
+    && (id === 'cardpayments' ? hideCard : id === 'investments' ? hideInvest : hideMoves)
   const theme = useTheme()
   const dark = theme.palette.mode === 'dark'
   const [month, setMonth] = useState(() => { const t = parts(today()); return { y: t.y, m: t.m } })
@@ -30,18 +34,20 @@ export function CalendarPage() {
   const [day, setDay] = useState<string>(today())
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
-  const currency = settings.currency
+  const [currency, setCurrency] = useState(settings.currency)
 
-  // Start on the latest month that has data.
+  // Start on the latest month that has data, in the main currency of the data.
   useEffect(() => {
-    api.periods.index(currency).then((ix) => {
+    api.periods.index(settings.currency).then((ix) => {
+      const c = ix.currencies[0] ?? settings.currency
+      setCurrency(c)
       if (ix.last) {
         const [y, m] = ix.last.split('-').map(Number)
         const t = parts(today())
         if (y * 12 + m < t.y * 12 + t.m) { setMonth({ y, m }); setDay(iso(y, m, 1)) }
       }
     }, fail)
-  }, [currency, fail])
+  }, [settings.currency, fail])
 
   useEffect(() => {
     const from = iso(month.y, month.m, 1)
@@ -52,21 +58,16 @@ export function CalendarPage() {
   const events = useMemo(() => {
     if (!summary) return []
     return summary.series.flatMap((b) => {
-      const moved = hideMoves ? 0 : b.moved + (hideCard ? 0 : b.cardPaid)
+      const moved = (hideMoves ? 0 : b.moved) + (hideCard ? 0 : b.cardPaid) + (hideInvest ? 0 : b.invested)
       return [
         ...(b.earnings > 0 ? [{ id: 'i' + b.key, start: b.key, allDay: true, title: money(b.earnings, currency, { sign: true }), extendedProps: { kind: 'in' } }] : []),
         ...(b.expenses > 0 ? [{ id: 'e' + b.key, start: b.key, allDay: true, title: money(-b.expenses, currency), extendedProps: { kind: 'out' } }] : []),
         ...(moved > 0 ? [{ id: 'm' + b.key, start: b.key, allDay: true, title: '⇄ ' + money(moved, currency), extendedProps: { kind: 'move' } }] : []),
       ]
     })
-  }, [summary, currency, hideCard, hideMoves])
+  }, [summary, currency, hideCard, hideMoves, hideInvest])
 
-  const dayTx = useMemo(
-    () => summary?.transactions.filter((t) => t.date === day
-      && !(hideMoves && category(t.categoryId).kind === 'transfer')
-      && !(hideCard && t.categoryId === 'cardpayments')) ?? [],
-    [summary, day, hideCard, hideMoves, category],
-  )
+  const dayTx = summary?.transactions.filter((t) => t.date === day && !hidden(t.categoryId)) ?? []
   const brands = useMemo(() => [...new Set(summary?.transactions.map((t) => t.brand) ?? [])], [summary])
 
   const shift = (delta: number) => {
@@ -160,14 +161,15 @@ export function CalendarPage() {
         <Box sx={{ display: 'grid', gap: 0.5 }}>
           {dayTx.map((t) => {
             const c = category(t.categoryId)
+            const color = colorOf(c)
             return (
               <Box
                 key={t.id}
                 onClick={() => setEditing(t)}
                 sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1, mx: -1, borderRadius: 2.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
               >
-                <Box sx={{ width: 36, height: 36, borderRadius: '12px', bgcolor: 'action.hover', display: 'grid', placeItems: 'center', flex: '0 0 36px' }}>
-                  <CategoryIcon name={c.icon} sx={{ fontSize: 19, color: 'text.secondary' }} />
+                <Box sx={{ width: 36, height: 36, borderRadius: '12px', bgcolor: color ? `${color}22` : 'action.hover', display: 'grid', placeItems: 'center', flex: '0 0 36px' }}>
+                  <CategoryIcon name={c.icon} sx={{ fontSize: 19, color: color ?? 'text.secondary' }} />
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Typography variant="body2" noWrap sx={{ fontWeight: 560 }}>{t.brand}</Typography>

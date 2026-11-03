@@ -35,12 +35,13 @@ import Chair from '@mui/icons-material/ChairRounded'
 import Build from '@mui/icons-material/BuildRounded'
 import MedicalServices from '@mui/icons-material/MedicalServicesRounded'
 import AutoAwesome from '@mui/icons-material/AutoAwesomeRounded'
+import Category from '@mui/icons-material/CategoryRounded'
 
 const icons: Record<string, React.ComponentType<SvgIconProps>> = {
   AccountBalance, Bolt, CardGiftcard, DirectionsBus, Flight, Home, LocalAtm, LocalGasStation, LocalPharmacy, MoreHoriz,
   Percent, Replay, Restaurant, Savings, School, Shield, ShoppingBag, ShoppingBasket, Spa, Subscriptions, SwapHoriz,
   Theaters, TrendingUp, Wifi, Work, Receipt, CreditCard, CreditScore, FlightTakeoff, Luggage, Redeem, Celebration, Chair, Build,
-  MedicalServices, AutoAwesome,
+  MedicalServices, AutoAwesome, Category,
 }
 
 export function CategoryIcon({ name, ...props }: { name: string } & SvgIconProps) {

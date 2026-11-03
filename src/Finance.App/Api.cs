@@ -19,13 +19,12 @@ internal static class Api
         {
             version = typeof(Api).Assembly.GetName().Version?.ToString(3),
             settings = s.Settings(),
-            categories = Categories.All.Select(c => new { c.Id, c.Name, kind = c.Kind, c.Icon, c.Group }),
+            categories = CategoryList(),
             dateFormats = Formatting.DateFormats,
             ocrAvailable = Finance.Pdf.PdfReader.OcrAvailable,
             nonClientRegions,
             maximized = window.Maximized,
-            dataFolder = s.DataDir,
-            bankProfiles = AppServices.BankProfiles.Select(p => new { p.Id, p.Name, p.Proven }),
+            dataFolder = s.DbFolder,
         });
         b.Register("app.ready", _ => null);
         b.Register("window.minimize", _ => { window.WindowState = FormWindowState.Minimized; return null; });
@@ -39,8 +38,6 @@ internal static class Api
             var key = p.Get<string>("key");
             s.SetSetting(key, p.Get<string>("value"));
             if (key == "theme") window.ApplyTheme(s.Setting("theme") == "dark");
-            // How own-account movements are recognised depends on the banking system.
-            if (key == "bankingSystem") s.Transactions.ReapplyRules();
             return s.Settings();
         });
 
@@ -60,19 +57,44 @@ internal static class Api
 
         // ------------------------------------------------------------ brands & dictionary
         b.Register("brands.list", _ => Brands(s));
-        b.Register("brands.setCategory", p =>
+        b.Register("brands.setCategory", p => new { changed = s.Transactions.SetBrandCategory(p.Get<string>("brand"), p.Get<string>("categoryId")) });
+        // Forgets every correction learned for a brand (its wordings and its category).
+        b.Register("brands.forget", p =>
         {
-            var brand = p.Get<string>("brand");
-            var category = p.Get<string>("categoryId");
-            if (!Categories.Exists(category)) throw new ArgumentException("Unknown category.");
-            s.Db.UpsertBrandCategory(brand, category);
+            s.Db.DeleteBrandRules(p.Get<string>("brand"));
             return new { changed = s.Transactions.ReapplyRules() };
         });
-        b.Register("brands.deleteRule", p =>
+
+        // ------------------------------------------------------------ categories
+        b.Register("categories.create", p =>
         {
-            s.Db.DeleteBrandRule(p.Get<long>("id"));
-            return new { changed = s.Transactions.ReapplyRules() };
+            s.Categories.Create(p.Get<string>("name"), p.Opt<string>("parentId"), p.Opt<CategoryKind?>("kind") ?? CategoryKind.Expense, p.Opt<string>("color"));
+            return CategoryList();
         });
+        b.Register("categories.update", p =>
+        {
+            s.Categories.Update(p.Get<string>("id"), p.Get<string>("name"), p.Opt<string>("parentId"), p.Opt<string>("color"));
+            return CategoryList();
+        });
+        b.Register("categories.delete", p => { s.Categories.Delete(p.Get<string>("id")); return CategoryList(); });
+
+        // ------------------------------------------------------------ banks
+        b.Register("banks.list", _ => s.Db.Banks());
+        b.Register("banks.save", p =>
+        {
+            var bank = p.Get<Bank>("bank");
+            bank.Name = bank.Name.Trim();
+            bank.Country = bank.Country.Trim();
+            if (bank.Name.Length is 0 or > 80) throw new ArgumentException("The bank name must be 1 to 80 characters.");
+            if (bank.Currency.Length != 3 || !bank.Currency.All(char.IsAsciiLetterUpper)) throw new ArgumentException("A currency is a three-letter code such as CAD.");
+            var before = s.Db.Banks().FirstOrDefault(x => x.Id == bank.Id);
+            if (before is null) bank.Id = s.Db.AddBank(bank);
+            else s.Db.UpdateBank(bank);
+            // How cards and movements are read depends on the banking system.
+            if (before is not null && before.System != bank.System) s.Transactions.ReapplyRules();
+            return s.Db.Banks();
+        });
+        b.Register("banks.delete", p => { s.Db.DeleteBank(p.Get<long>("id")); s.Transactions.ReapplyRules(); return s.Db.Banks(); });
 
         // ------------------------------------------------------------ accounts & statements
         b.Register("accounts.list", _ => s.Db.Accounts());
@@ -82,18 +104,28 @@ internal static class Api
             var name = p.Get<string>("name").Trim();
             if (name.Length is 0 or > 80) throw new ArgumentException("The account name must be 1 to 80 characters.");
             a.Name = name;
-            var kindChanged = false;
-            if (p.Opt<AccountKind?>("kind") is { } kind && kind != a.Kind) { a.Kind = kind; kindChanged = true; }
+            var reread = false;
+            if (p.Opt<AccountKind?>("kind") is { } kind && kind != a.Kind) { a.Kind = kind; reread = true; }
+            if (p.Opt<string>("currency") is { } currency)
+            {
+                if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper)) throw new ArgumentException("A currency is a three-letter code such as CAD.");
+                a.Currency = currency;
+            }
+            // 0: no bank (cash and manual entries).
+            if (p.Opt<long?>("bankId") is { } bankId && bankId != (a.BankId ?? 0)) { a.BankId = bankId == 0 ? null : bankId; reread = true; }
             s.Db.UpdateAccount(a);
-            if (kindChanged) s.Transactions.ReapplyRules();
+            if (reread) s.Transactions.ReapplyRules();
             return a;
         });
         b.Register("accounts.delete", p => { s.Db.DeleteAccount(p.Get<long>("id")); s.Transactions.ReapplyRules(); return null; });
         b.Register("statements.list", _ =>
         {
             var accounts = s.Db.Accounts().ToDictionary(a => a.Id);
+            var banks = s.Db.Banks().ToDictionary(x => x.Id);
             return s.Db.Statements().Select(st => new
             {
+                bankId = accounts.GetValueOrDefault(st.AccountId)?.BankId,
+                bank = accounts.GetValueOrDefault(st.AccountId)?.BankId is { } bid ? banks.GetValueOrDefault(bid)?.Name : null,
                 st.Id, st.AccountId, account = accounts.GetValueOrDefault(st.AccountId)?.Name ?? "", st.FileName,
                 periodStart = st.PeriodStart?.ToString("yyyy-MM-dd"), periodEnd = st.PeriodEnd?.ToString("yyyy-MM-dd"),
                 st.OpeningBalance, st.ClosingBalance, st.Verified, st.Method, importedAt = st.ImportedAt.ToString("O"), st.TransactionCount,
@@ -124,11 +156,12 @@ internal static class Api
         b.RegisterBackground("import.choose", p =>
         {
             var id = p.Get<Guid>("draftId");
-            return Task.FromResult<object?>(DraftView(s.Imports.Choose(id, p.Opt<long?>("accountId"), p.Opt<AccountKind?>("kind")), s));
+            return Task.FromResult<object?>(DraftView(s.Imports.Choose(id, p.Opt<long?>("accountId"), p.Opt<AccountKind?>("kind"), p.Opt<long?>("bankId")), s));
         });
         b.Register("import.commit", p => s.Imports.Commit(new CommitRequest(
             p.Get<Guid>("draftId"), p.Opt<long?>("accountId"), p.Opt<string>("newAccountName"),
-            p.Get<string>("currency"), p.Opt<AccountKind?>("kind"), p.Opt<List<DraftEdit>>("edits") ?? [])));
+            p.Get<string>("currency"), p.Opt<AccountKind?>("kind"), p.Opt<List<DraftEdit>>("edits") ?? [],
+            p.Opt<long?>("bankId"), p.Opt<string>("newBankName"))));
         b.Register("import.discard", p => { s.Imports.Discard(p.Get<Guid>("draftId")); return null; });
         b.RegisterBackground("import.page", async p =>
         {
@@ -215,6 +248,7 @@ internal static class Api
 
         // ------------------------------------------------------------ data
         b.Register("data.eraseAll", _ => { s.Db.EraseAll(); return null; });
+        b.Register("data.moveDatabase", p => { s.MoveDatabase(p.Get<string>("folder")); return new { dataFolder = s.DbFolder }; });
     }
 
     private static DateOnly ParseDate(string s) =>
@@ -265,6 +299,9 @@ internal static class Api
             rowChecks = p.RowBalanceChecks,
             rowMismatches = p.RowBalanceMismatches,
             defaultAccountName = ImportService.DefaultAccountName(p),
+            // The bank of the list whose name the statement shows, if any.
+            suggestedBankId = p.Bank is null ? null : s.Db.Banks().FirstOrDefault(x => x.Name.Contains(p.Bank, StringComparison.OrdinalIgnoreCase)
+                || p.Bank.Contains(x.Name, StringComparison.OrdinalIgnoreCase))?.Id,
             template = d.Template,
             columns = p.Columns,
             pageCount = d.Pages.Count,
@@ -284,6 +321,9 @@ internal static class Api
         var line = firstPage.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length >= 4 && l.Any(char.IsLetter) && !l.Any(char.IsDigit));
         return line is null ? "" : line.Length > 40 ? line[..40] : line;
     }
+
+    private static object CategoryList() =>
+        Categories.All.Select(c => new { c.Id, c.Name, kind = c.Kind, c.Icon, c.Group, parentId = c.Parent, c.Color, c.BuiltIn });
 
     private static object Brands(AppServices s)
     {

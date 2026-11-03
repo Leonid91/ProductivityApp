@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Box, ButtonBase, CssBaseline, ThemeProvider, Typography } from '@mui/material'
+import { Box, ButtonBase, CssBaseline, IconButton, ThemeProvider, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
@@ -9,8 +9,10 @@ import CalendarMonth from '@mui/icons-material/CalendarMonthRounded'
 import CalendarMonthOutlined from '@mui/icons-material/CalendarMonthOutlined'
 import UploadFile from '@mui/icons-material/UploadFileRounded'
 import UploadFileOutlined from '@mui/icons-material/UploadFileOutlined'
-import Storefront from '@mui/icons-material/StorefrontRounded'
-import StorefrontOutlined from '@mui/icons-material/StorefrontOutlined'
+import CategoryRounded from '@mui/icons-material/CategoryRounded'
+import CategoryOutlined from '@mui/icons-material/CategoryOutlined'
+import LightMode from '@mui/icons-material/LightModeOutlined'
+import DarkMode from '@mui/icons-material/DarkModeOutlined'
 import Settings from '@mui/icons-material/SettingsRounded'
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import { api, type InitInfo } from './api'
@@ -20,14 +22,15 @@ import { ResizeEdges, TitleBar, useMaximized } from './components/WindowChrome'
 import { PeriodsPage } from './pages/PeriodsPage'
 import { CalendarPage } from './pages/CalendarPage'
 import { ImportPage } from './pages/ImportPage'
-import { BrandsPage } from './pages/BrandsPage'
+import { CategoriesPage } from './pages/CategoriesPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { FindBar } from './components/FindBar'
 
 const nav: { page: Page; label: string; icon: React.ReactNode; active: React.ReactNode }[] = [
   { page: 'periods', label: 'Periods', icon: <DonutLargeOutlined />, active: <DonutLarge /> },
   { page: 'calendar', label: 'Calendar', icon: <CalendarMonthOutlined />, active: <CalendarMonth /> },
   { page: 'import', label: 'Import', icon: <UploadFileOutlined />, active: <UploadFile /> },
-  { page: 'brands', label: 'Brands', icon: <StorefrontOutlined />, active: <Storefront /> },
+  { page: 'categories', label: 'Categories', icon: <CategoryOutlined />, active: <CategoryRounded /> },
 ]
 
 function RailItem({ label, icon, selected, onClick }: { label: string; icon: React.ReactNode; selected: boolean; onClick: () => void }) {
@@ -54,7 +57,8 @@ function RailItem({ label, icon, selected, onClick }: { label: string; icon: Rea
 }
 
 function Shell() {
-  const { page, go, info } = useApp()
+  const { page, go, info, settings, setSetting, refreshAccounts, refreshBanks } = useApp()
+  const dark = settings.theme === 'dark'
   const maximized = useMaximized(info.maximized)
   const scroller = useRef<HTMLDivElement>(null)
 
@@ -69,6 +73,7 @@ function Shell() {
   }, [])
 
   useEffect(() => { void api.ready() }, [])
+  useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
@@ -80,6 +85,11 @@ function Shell() {
             <RailItem key={n.page} label={n.label} icon={page === n.page ? n.active : n.icon} selected={page === n.page} onClick={() => go(n.page)} />
           ))}
           <Box sx={{ flex: 1 }} />
+          <Tooltip title={dark ? 'Light mode' : 'Dark mode'} placement="right">
+            <IconButton aria-label={dark ? 'Light mode' : 'Dark mode'} onClick={() => void setSetting('theme', dark ? 'light' : 'dark')} sx={{ color: 'text.secondary' }}>
+              {dark ? <LightMode /> : <DarkMode />}
+            </IconButton>
+          </Tooltip>
           <RailItem label="Settings" icon={page === 'settings' ? <Settings /> : <SettingsOutlined />} selected={page === 'settings'} onClick={() => go('settings')} />
         </Box>
         <Box
@@ -90,10 +100,11 @@ function Shell() {
           {page === 'periods' && <PeriodsPage />}
           {page === 'calendar' && <CalendarPage />}
           {page === 'import' && <ImportPage />}
-          {page === 'brands' && <BrandsPage />}
+          {page === 'categories' && <CategoriesPage />}
           {page === 'settings' && <SettingsPage />}
         </Box>
       </Box>
+      <FindBar />
     </Box>
   )
 }

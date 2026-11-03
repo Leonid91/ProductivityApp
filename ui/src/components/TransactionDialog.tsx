@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Autocomplete, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment, ListItemIcon, ListItemText, ListSubheader,
   MenuItem, TextField, ToggleButton, ToggleButtonGroup, useTheme,
@@ -9,9 +9,9 @@ import { api, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { today } from '../format'
 import { CategoryIcon } from './CategoryIcon'
-import { ConfirmDialog } from './common'
+import { ConfirmDialog, categorySections, useCategoryColor } from './common'
 
-const pickerFormats: Record<string, string> = {
+export const pickerFormats: Record<string, string> = {
   'DD month YYYY': 'DD MMMM YYYY', 'YYYY-MM-DD': 'YYYY-MM-DD', 'DD-MM-YYYY': 'DD-MM-YYYY', 'DD/MM/YYYY': 'DD/MM/YYYY', 'MM/DD/YYYY': 'MM/DD/YYYY',
 }
 
@@ -23,7 +23,8 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   defaultDate?: string
   onClose: () => void
 }) {
-  const { categories, accounts, settings, notify, fail, dataChanged, refreshAccounts, askScope, category } = useApp()
+  const { tree, accounts, settings, notify, fail, dataChanged, refreshAccounts, askScope, category } = useApp()
+  const colorOf = useCategoryColor()
   const theme = useTheme()
   const gold = theme.palette.gold.text
   const [date, setDate] = useState<Dayjs | null>(dayjs())
@@ -63,12 +64,6 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   const value = Number(amount.replace(',', '.'))
   const valid = date?.isValid() && Number.isFinite(value) && value > 0 && brand.trim().length > 0
 
-  const grouped = useMemo(() => [
-    ['Expenses', categories.filter((c) => c.kind === 'expense' && c.group !== 'exceptional')],
-    ['Exceptional', categories.filter((c) => c.group === 'exceptional')],
-    ['Income', categories.filter((c) => c.kind === 'income')],
-    ['Between my accounts', categories.filter((c) => c.kind === 'transfer')],
-  ] as const, [categories])
 
   // Money coming back from an investment (or a transfer in): the person may say how much of it was gain.
   const canEarn = direction === 'in' && category(categoryId).kind === 'transfer'
@@ -146,18 +141,18 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
           label="Category"
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
-          // Exceptional expenses are gold everywhere, here too: the chosen value, the heading and every item.
-          slotProps={{ select: { sx: category(categoryId).group === 'exceptional' ? { color: gold, fontWeight: 600, '& .MuiListItemIcon-root': { color: gold } } : undefined } }}
+          // A category's colour (gold for exceptional expenses) shows everywhere, here too: the chosen value and every item.
+          slotProps={{ select: { sx: colorOf(category(categoryId)) ? { color: colorOf(category(categoryId)), fontWeight: 600, '& .MuiListItemIcon-root': { color: colorOf(category(categoryId)) } } : undefined } }}
         >
-          {grouped.flatMap(([label, list]) => [
-            <ListSubheader key={label} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em', color: label === 'Exceptional' ? gold : undefined }}>{label}</ListSubheader>,
-            ...list.map((c) => {
-              const exceptional = c.group === 'exceptional'
+          {categorySections.flatMap(([kind, label, test]) => [
+            <ListSubheader key={label} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em', color: kind === 'exceptional' ? gold : undefined }}>{label}</ListSubheader>,
+            ...tree.filter((e) => test(e.root)).map(({ c, depth }) => {
+              const color = colorOf(c)
               return (
-                <MenuItem key={c.id} value={c.id} data-exceptional={exceptional || undefined} sx={exceptional ? { color: gold, fontWeight: 600 } : undefined}>
+                <MenuItem key={c.id} value={c.id} data-exceptional={c.group === 'exceptional' || undefined} sx={{ pl: 2 + depth * 2.25, ...(color ? { color, fontWeight: 600 } : {}) }}>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <ListItemIcon sx={{ minWidth: 32, color: exceptional ? gold : undefined }}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
-                    <ListItemText slotProps={{ primary: { sx: exceptional ? { color: gold, fontWeight: 600 } : undefined } }}>{c.name}</ListItemText>
+                    <ListItemIcon sx={{ minWidth: 32, color: color ?? undefined }}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
+                    <ListItemText slotProps={{ primary: { sx: color ? { color, fontWeight: 600 } : undefined } }}>{c.name}</ListItemText>
                   </Box>
                 </MenuItem>
               )

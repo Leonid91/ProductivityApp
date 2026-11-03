@@ -3,7 +3,9 @@ import {
   Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
   Typography, useTheme, type SxProps, type Theme,
 } from '@mui/material'
+import { alpha } from '@mui/material/styles'
 import Check from '@mui/icons-material/CheckRounded'
+import type { Category } from '../api'
 import { useApp } from '../AppContext'
 import { money } from '../format'
 import { CategoryIcon } from './CategoryIcon'
@@ -18,34 +20,46 @@ export function Money({ value, currency, sign, sx, muted }: { value: number; cur
   )
 }
 
-/** Category picker grouped by kind; used in tables, drafts and dialogs. */
+/** The colour a category is shown in: its own, gold for exceptional expenses, or none. */
+export function useCategoryColor(): (c: Category) => string | null {
+  const theme = useTheme()
+  return (c) => c.color ?? (c.group === 'exceptional' ? theme.palette.gold.text : null)
+}
+
+/** The four sections of the category picker; a nested category shows under the section of its top category. */
+export const categorySections: [string, string, (root: Category) => boolean][] = [
+  ['expense', 'Expenses', (c) => c.kind === 'expense' && c.group !== 'exceptional'],
+  ['exceptional', 'Exceptional', (c) => c.group === 'exceptional'],
+  ['income', 'Income', (c) => c.kind === 'income'],
+  ['transfer', 'Between my accounts', (c) => c.kind === 'transfer'],
+]
+
+/** Category picker grouped by kind, nested categories indented under theirs; used in tables, drafts and dialogs. */
 export function CategoryMenu({ anchor, value, onClose, onPick }: {
   anchor: HTMLElement | null
   value?: string
   onClose: () => void
   onPick: (id: string) => void
 }) {
-  const { categories } = useApp()
+  const { tree } = useApp()
   const theme = useTheme()
-  const groups: [string, string, (c: (typeof categories)[number]) => boolean][] = [
-    ['expense', 'Expenses', (c) => c.kind === 'expense' && c.group !== 'exceptional'],
-    ['exceptional', 'Exceptional', (c) => c.group === 'exceptional'],
-    ['income', 'Income', (c) => c.kind === 'income'],
-    ['transfer', 'Between my accounts', (c) => c.kind === 'transfer'],
-  ]
+  const colorOf = useCategoryColor()
   return (
-    <Menu anchorEl={anchor} open={anchor !== null} onClose={onClose} slotProps={{ paper: { sx: { maxHeight: 480, width: 260 } } }}>
-      {groups.flatMap(([kind, label, test]) => [
+    <Menu anchorEl={anchor} open={anchor !== null} onClose={onClose} slotProps={{ paper: { sx: { maxHeight: 480, minWidth: 260 } } }}>
+      {categorySections.flatMap(([kind, label, test]) => [
         <ListSubheader key={'h' + kind} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, letterSpacing: '.04em', textTransform: 'uppercase', bgcolor: 'background.paper', color: kind === 'exceptional' ? theme.palette.gold.text : undefined }}>
           {label}
         </ListSubheader>,
-        ...categories.filter(test).map((c) => (
-          <MenuItem key={c.id} selected={c.id === value} onClick={() => { onPick(c.id); onClose() }} sx={c.group === 'exceptional' ? { color: theme.palette.gold.text, fontWeight: 600 } : undefined}>
-            <ListItemIcon sx={c.group === 'exceptional' ? { color: theme.palette.gold.text } : undefined}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
-            <ListItemText>{c.name}</ListItemText>
-            {c.id === value && <Check fontSize="small" sx={{ color: 'primary.main', ml: 1 }} />}
-          </MenuItem>
-        )),
+        ...tree.filter((e) => test(e.root)).map(({ c, depth }) => {
+          const color = colorOf(c)
+          return (
+            <MenuItem key={c.id} selected={c.id === value} onClick={() => { onPick(c.id); onClose() }} sx={{ pl: 2 + depth * 2.25, ...(color ? { color, fontWeight: 600 } : {}) }}>
+              <ListItemIcon sx={color ? { color } : undefined}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
+              <ListItemText>{c.name}</ListItemText>
+              {c.id === value && <Check fontSize="small" sx={{ color: 'primary.main', ml: 1 }} />}
+            </MenuItem>
+          )
+        }),
       ])}
     </Menu>
   )
@@ -58,7 +72,7 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const c = category(id)
   const dark = theme.palette.mode === 'dark'
-  const gold = c.group === 'exceptional'
+  const color = useCategoryColor()(c)
   return (
     <>
       <Box
@@ -77,16 +91,16 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
           maxWidth: '100%',
           font: 'inherit',
           fontSize: 13,
-          fontWeight: gold ? 620 : 520,
-          color: gold ? theme.palette.gold.text : c.kind === 'transfer' ? 'text.secondary' : 'text.primary',
-          bgcolor: gold ? theme.palette.gold.soft : dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)',
+          fontWeight: color ? 620 : 520,
+          color: color ?? (c.kind === 'transfer' ? 'text.secondary' : 'text.primary'),
+          bgcolor: color ? alpha(color, dark ? 0.2 : 0.13) : dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)',
           cursor: onChange ? 'pointer' : 'default',
           transition: 'background-color 120ms',
-          '&:hover:not(:disabled)': { bgcolor: dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.075)' },
+          '&:hover:not(:disabled)': { bgcolor: color ? alpha(color, dark ? 0.28 : 0.2) : dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.075)' },
           '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}` },
         }}
       >
-        <CategoryIcon name={c.icon} sx={{ fontSize: 16, color: gold ? theme.palette.gold.text : 'text.secondary' }} />
+        <CategoryIcon name={c.icon} sx={{ fontSize: 16, color: color ?? 'text.secondary' }} />
         <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</Box>
       </Box>
       {onChange && <CategoryMenu anchor={anchor} value={id} onClose={() => setAnchor(null)} onPick={onChange} />}

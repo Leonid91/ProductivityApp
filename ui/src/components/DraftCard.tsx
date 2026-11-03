@@ -7,13 +7,11 @@ import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
 import HelpOutline from '@mui/icons-material/HelpOutlineRounded'
 import ViewColumn from '@mui/icons-material/ViewColumnRounded'
 import DocumentScanner from '@mui/icons-material/DocumentScannerRounded'
-import { accountKinds, api, type AccountKind, type Draft, type DraftEdit } from '../api'
+import { accountKinds, api, currencies, type AccountKind, type Draft, type DraftEdit } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural, shortDate } from '../format'
 import { CategoryPill, Money } from './common'
 import { TemplateEditor } from './TemplateEditor'
-
-const currencies = ['CAD', 'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'JPY', 'MXN']
 
 export function StatusChip({ draft }: { draft: Draft }) {
   if (draft.alreadyImported) return <Chip size="small" color="default" label="Already imported" />
@@ -80,35 +78,46 @@ function BalanceCheck({ draft }: { draft: Draft }) {
 
 /** A statement read from a PDF, waiting for the person to check it and save it. */
 export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (saved: boolean) => void }) {
-  const { accounts, settings, notify, fail, dataChanged, refreshAccounts, askScope, category } = useApp()
+  const { accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
   const [draft, setDraft] = useState(initial)
   // Nothing is chosen for the person: the file waits until they say which account it belongs to.
   const [accountId, setAccountId] = useState<number | 'new' | ''>('')
   const [name, setName] = useState('')
   const [kind, setKind] = useState<AccountKind | ''>('')
-  const [currency, setCurrency] = useState(initial.currency || settings.currency)
+  // A new account goes to a bank of the list (the one the statement names, if any) or to a new bank.
+  const [bankId, setBankId] = useState<number | 'new' | ''>(initial.suggestedBankId ?? '')
+  const [bankName, setBankName] = useState(initial.bank ?? '')
+  const [currency, setCurrency] = useState(banks.find((b) => b.id === initial.suggestedBankId)?.currency ?? (initial.currency || settings.currency))
   const [edits, setEdits] = useState<Map<number, DraftEdit>>(new Map())
   const [busy, setBusy] = useState(false)
   const [editingColumns, setEditingColumns] = useState(false)
 
-  useEffect(() => { void refreshAccounts() }, [refreshAccounts])
+  useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
 
-  const choose = async (account: number | 'new', newKind: AccountKind | '') => {
+  const choose = async (account: number | 'new', newKind: AccountKind | '', bank: number | 'new' | '' = bankId) => {
     setAccountId(account)
     const a = accounts.find((x) => x.id === account)
     if (a) { setCurrency(a.currency); setKind(a.kind) }
     else setKind(newKind)
     if (account === 'new' && newKind === '') return
     try {
-      // The file is read again for the chosen type, and checked against that account only.
-      setDraft(await api.imports.choose(draft.id, account === 'new' ? null : account, account === 'new' ? newKind as AccountKind : null))
+      // The file is read again for the chosen type and the bank's banking system, and checked against that account only.
+      setDraft(await api.imports.choose(draft.id, account === 'new' ? null : account, account === 'new' ? newKind as AccountKind : null, typeof bank === 'number' ? bank : null))
     } catch (e) {
       fail(e)
     }
   }
 
-  const kindLabel = (k: AccountKind) => accountKinds(settings.bankingSystem).find((x) => x.value === k)?.label ?? k
-  const chosen = accountId !== '' && (accountId !== 'new' || kind !== '')
+  const chooseBank = (b: number | 'new') => {
+    setBankId(b)
+    const found = banks.find((x) => x.id === b)
+    if (found) setCurrency(found.currency)
+    if (kind !== '') void choose('new', kind, b)
+  }
+
+  const system = accountId === 'new' ? banks.find((b) => b.id === bankId)?.system ?? 'northAmerica' : 'northAmerica'
+  const kindLabel = (k: AccountKind, s = system) => accountKinds(s).find((x) => x.value === k)?.label ?? k
+  const chosen = accountId !== '' && (accountId !== 'new' || (kind !== '' && bankId !== '' && (bankId !== 'new' || bankName.trim() !== '')))
 
   const edit = (index: number, change: Partial<DraftEdit>) => {
     const next = new Map(edits)
@@ -146,6 +155,8 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         currency,
         kind: kind === '' ? null : kind,
         edits: [...edits.values()],
+        bankId: accountId === 'new' && typeof bankId === 'number' ? bankId : null,
+        newBankName: accountId === 'new' && bankId === 'new' ? bankName.trim() : null,
       })
       notify(`${plural(r.added, 'operation')} imported` + (r.skippedDuplicates ? ` · ${r.skippedDuplicates} already there` : ''))
       dataChanged()
@@ -211,13 +222,29 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
               {accounts.map((a) => (
                 <MenuItem key={a.id} value={a.id}>
                   <Box sx={{ flex: 1 }}>{a.name}</Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>{kindLabel(a.kind)} · {a.currency}</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>{kindLabel(a.kind, a.system)} · {a.currency}</Typography>
                 </MenuItem>
               ))}
               <MenuItem value="new">New account</MenuItem>
             </TextField>
             {accountId === 'new' && (
               <>
+                <TextField
+                  select
+                  size="small"
+                  label="Bank"
+                  value={bankId}
+                  error={bankId === ''}
+                  onChange={(e) => chooseBank(e.target.value === 'new' ? 'new' : Number(e.target.value))}
+                  sx={{ width: 230 }}
+                  slotProps={{ select: { displayEmpty: true, renderValue: (v) => v === '' ? 'Choose the bank' : v === 'new' ? 'New bank' : banks.find((b) => b.id === v)?.name ?? '' }, inputLabel: { shrink: true } }}
+                >
+                  {banks.map((b) => <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>)}
+                  <MenuItem value="new">New bank</MenuItem>
+                </TextField>
+                {bankId === 'new' && (
+                  <TextField size="small" label="Bank name" value={bankName} error={bankName.trim() === ''} onChange={(e) => setBankName(e.target.value)} sx={{ width: 220 }} slotProps={{ inputLabel: { shrink: true } }} />
+                )}
                 <TextField
                   select
                   size="small"
@@ -228,7 +255,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
                   sx={{ width: 210 }}
                   slotProps={{ select: { displayEmpty: true, renderValue: (v) => v === '' ? 'Choose the type' : kindLabel(v as AccountKind) }, inputLabel: { shrink: true } }}
                 >
-                  {accountKinds(settings.bankingSystem).map((k) => <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>)}
+                  {accountKinds(system).map((k) => <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>)}
                 </TextField>
                 <TextField size="small" label="Name" value={name} placeholder={draft.defaultAccountName} onChange={(e) => setName(e.target.value)} sx={{ minWidth: 260, flex: '1 1 260px' }} slotProps={{ inputLabel: { shrink: true } }} />
                 <TextField select size="small" label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)} sx={{ width: 110 }}>

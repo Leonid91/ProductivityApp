@@ -8,11 +8,12 @@ namespace ProductivityApp.Finance.Services;
 public sealed record TransactionInput(string Date, decimal Amount, string Brand, string CategoryId, long? AccountId, string? Note, decimal? Earned = null);
 
 /// <summary>Manual changes to operations. Every brand or category correction teaches the dictionary.</summary>
-public sealed class TransactionService(Database db, Func<string> defaultCurrency, Func<BankingSystem>? bankingSystem = null)
+public sealed class TransactionService(Database db, Func<string> defaultCurrency)
 {
-    public BankingSystem System => bankingSystem?.Invoke() ?? BankingSystem.NorthAmerica;
+    /// <summary>Operations are read with the banking system of their account's bank.</summary>
+    public Classifier NewClassifier(BankingSystem system = BankingSystem.NorthAmerica) => new(db.BrandRules(), system);
 
-    public Classifier NewClassifier() => new(db.BrandRules(), System);
+    private BankingSystem SystemOf(long accountId) => db.Accounts().FirstOrDefault(a => a.Id == accountId)?.System ?? BankingSystem.NorthAmerica;
 
     public const string ManualAccountName = "Cash & manual entries";
 
@@ -41,7 +42,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
     private void ApplyToBrand(Transaction t, string categoryId)
     {
         var label = t.RawLabel.Length > 0 ? t.RawLabel : t.Brand;
-        var key = Classifier.LearningKey(label, t.Amount, t.BankCategory, System);
+        var key = Classifier.LearningKey(label, t.Amount, t.BankCategory, SystemOf(t.AccountId));
         if (key.Length > 0) db.UpsertKeyRule(key, t.Brand, categoryId);
         db.UpsertBrandCategory(t.Brand, categoryId);
         foreach (var other in db.AllTransactions().Where(x => x.Id != t.Id && string.Equals(x.Brand, t.Brand, StringComparison.OrdinalIgnoreCase)))
@@ -70,7 +71,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         // The brand may carry a learned category.
         if (t.CategorySource != ValueSource.User)
         {
-            var c = NewClassifier().Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount, t.BankCategory, KindOf(t.AccountId));
+            var c = NewClassifier(SystemOf(t.AccountId)).Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount, t.BankCategory, KindOf(t.AccountId));
             if (c.CategoryId != t.CategoryId) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; db.UpdateTransaction(t); }
         }
         return ReapplyRules();
@@ -112,15 +113,39 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
     public void Delete(long id) => db.DeleteTransaction(id);
 
     /// <summary>
+    /// The category of a brand, set from the brand list: every operation of the brand and every wording learned for it
+    /// take it. Returns how many operations changed.
+    /// </summary>
+    public int SetBrandCategory(string brand, string categoryId)
+    {
+        if (!Categories.Exists(categoryId)) throw new ArgumentException($"Unknown category '{categoryId}'.");
+        var before = db.AllTransactions().ToDictionary(x => x.Id, x => x.CategoryId);
+        db.InTransaction(() =>
+        {
+            db.UpsertBrandCategory(brand, categoryId);
+            db.SetBrandRulesCategory(brand, categoryId);
+            foreach (var t in db.AllTransactions().Where(x => string.Equals(x.Brand, brand, StringComparison.OrdinalIgnoreCase) && x.CategoryId != categoryId))
+            {
+                t.CategoryId = categoryId;
+                t.CategorySource = ValueSource.User;
+                db.UpdateTransaction(t);
+            }
+        });
+        ReapplyRules();
+        return db.AllTransactions().Count(x => before.TryGetValue(x.Id, out var c) && c != x.CategoryId);
+    }
+
+    /// <summary>
     /// Remembers a correction. A real merchant is learned by its name (and its brand for the category);
     /// generic bank wording ("Paiement de facture", "Transfert entre comptes") only together with its exact amount.
     /// </summary>
     private void Learn(Transaction t, string brand, string? categoryId)
     {
         var label = t.RawLabel.Length > 0 ? t.RawLabel : brand;
-        var key = Classifier.LearningKey(label, t.Amount, t.BankCategory, System);
+        var system = SystemOf(t.AccountId);
+        var key = Classifier.LearningKey(label, t.Amount, t.BankCategory, system);
         if (key.Length > 0) db.UpsertKeyRule(key, brand, categoryId);
-        if (categoryId is not null && !Classifier.IsGenericLabel(label, t.BankCategory, System)) db.UpsertBrandCategory(brand, categoryId);
+        if (categoryId is not null && !Classifier.IsGenericLabel(label, t.BankCategory, system)) db.UpsertBrandCategory(brand, categoryId);
     }
 
     private AccountKind KindOf(long accountId) => db.Accounts().FirstOrDefault(a => a.Id == accountId)?.Kind ?? AccountKind.Bank;
@@ -167,21 +192,24 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
     public int ReapplyRules()
     {
         var before = db.AllTransactions().ToDictionary(t => t.Id, t => (t.Brand, t.CategoryId));
-        var classifier = NewClassifier();
-        var kinds = db.Accounts().ToDictionary(a => a.Id, a => a.Kind);
+        var classifiers = new Dictionary<BankingSystem, Classifier>();
+        var accounts = db.Accounts().ToDictionary(a => a.Id);
         db.InTransaction(() =>
         {
             foreach (var t in db.AllTransactions())
             {
                 if (t.BrandSource == ValueSource.User && t.CategorySource == ValueSource.User) continue;
-                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount, t.BankCategory, kinds.GetValueOrDefault(t.AccountId));
+                var account = accounts.GetValueOrDefault(t.AccountId);
+                var system = account?.System ?? BankingSystem.NorthAmerica;
+                if (!classifiers.TryGetValue(system, out var classifier)) classifiers[system] = classifier = NewClassifier(system);
+                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount, t.BankCategory, account?.Kind ?? AccountKind.Bank);
                 var dirty = false;
                 if (t.BrandSource != ValueSource.User && t.RawLabel.Length > 0 && c.Brand != t.Brand) { t.Brand = c.Brand; t.BrandSource = c.BrandSource; dirty = true; }
                 if (t.CategorySource != ValueSource.User && (c.CategoryId != t.CategoryId || t.CategorySource == ValueSource.Linked)) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; dirty = true; }
                 if (dirty) db.UpdateTransaction(t);
             }
         });
-        TransferMatcher.Link(db, System);
+        TransferMatcher.Link(db);
         return db.AllTransactions().Count(t => before.TryGetValue(t.Id, out var b) && (b.Brand != t.Brand || b.CategoryId != t.CategoryId));
     }
 }

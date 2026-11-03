@@ -40,9 +40,25 @@ public sealed class Account
     public string Name { get; set; } = "";
     public string Currency { get; set; } = "CAD";
     public AccountKind Kind { get; set; }
+    /// <summary>Bank name read on the statement, if any.</summary>
     public string? Bank { get; set; }
     /// <summary>Last four digits only. The full number is never stored.</summary>
     public string? Last4 { get; set; }
+    /// <summary>The bank (of the person's bank list) this account is at; null for cash and manual entries.</summary>
+    public long? BankId { get; set; }
+    /// <summary>Banking system of that bank (read with the account, never stored on it).</summary>
+    public BankingSystem System { get; set; }
+}
+
+/// <summary>A bank of the person's list. Its banking system decides how its cards and movements are read.</summary>
+public sealed class Bank
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Country { get; set; } = "";
+    public BankingSystem System { get; set; }
+    /// <summary>Currency new accounts of this bank are imported in.</summary>
+    public string Currency { get; set; } = "CAD";
 }
 
 public sealed class Transaction
@@ -98,4 +114,10 @@ public sealed class BrandRule
     public string Brand { get; set; } = "";
     public string? CategoryId { get; set; }
     public DateTime UpdatedAt { get; set; }
+}
+
+public static class KnownBanks
+{
+    /// <summary>The bank whose statements and exports the reader is proven on.</summary>
+    public const string National = "National Bank of Canada";
 }

@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Snackbar, Typography } from '@mui/material'
-import { api, type Account, type Category, type InitInfo, type Settings } from './api'
+import { api, type Account, type Bank, type Category, type InitInfo, type Settings } from './api'
+import { categoryTree, savedOrder, type TreeEntry } from './components/order'
 
-export type Page = 'periods' | 'calendar' | 'import' | 'brands' | 'settings'
+export type Page = 'periods' | 'calendar' | 'import' | 'categories' | 'settings'
 
 interface Toast {
   key: number
@@ -16,9 +17,17 @@ interface AppState {
   settings: Settings
   setSetting: (key: string, value: string) => Promise<void>
   categories: Category[]
+  setCategories: (list: Category[]) => void
+  /** Every category as a tree, in the person's order. */
+  tree: TreeEntry[]
   category: (id: string) => Category
   accounts: Account[]
   refreshAccounts: () => Promise<void>
+  banks: Bank[]
+  refreshBanks: () => Promise<void>
+  /** Folder of the database (it can be moved). */
+  dataFolder: string
+  setDataFolder: (folder: string) => void
   /** Increases whenever stored data changes, so every view reloads what it shows. */
   dataVersion: number
   dataChanged: () => void
@@ -44,6 +53,9 @@ export function useApp(): AppState {
 export function AppProvider({ info, children, onTheme }: { info: InitInfo; children: ReactNode; onTheme: (t: 'light' | 'dark') => void }) {
   const [settings, setSettings] = useState<Settings>(info.settings)
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [banks, setBanks] = useState<Bank[]>([])
+  const [categories, setCategories] = useState<Category[]>(info.categories)
+  const [dataFolder, setDataFolder] = useState(info.dataFolder)
   const [dataVersion, setDataVersion] = useState(0)
   const [page, setPage] = useState<Page>('periods')
   const [toast, setToast] = useState<Toast | null>(null)
@@ -55,7 +67,8 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   }), [])
   const answer = (v: boolean | null) => { scope?.resolve(v); setScope(null) }
 
-  const byId = useMemo(() => new Map(info.categories.map((c) => [c.id, c])), [info.categories])
+  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
+  const tree = useMemo(() => categoryTree(categories, savedOrder(settings, 'categories')), [categories, settings])
 
   const notify = useCallback((message: string, severity: Toast['severity'] = 'success', actions?: Toast['actions']) => {
     setToast({ key: ++counter.current, message, severity, actions })
@@ -69,12 +82,15 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     setAccounts(await api.accounts.list())
   }, [])
 
+  const refreshBanks = useCallback(async () => {
+    setBanks(await api.banks.list())
+  }, [])
+
   const setSetting = useCallback(async (key: string, value: string) => {
     try {
       const next = await api.setSetting(key, value)
       setSettings(next)
       if (key === 'theme') onTheme(value === 'dark' ? 'dark' : 'light')
-      if (key === 'currency') setDataVersion((v) => v + 1)
     } catch (e) {
       fail(e)
     }
@@ -83,16 +99,23 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const dataChanged = useCallback(() => {
     setDataVersion((v) => v + 1)
     void refreshAccounts()
-  }, [refreshAccounts])
+    void refreshBanks()
+  }, [refreshAccounts, refreshBanks])
 
   const value: AppState = {
     info,
     settings,
     setSetting,
-    categories: info.categories,
-    category: (id) => byId.get(id) ?? info.categories[0],
+    categories,
+    setCategories,
+    tree,
+    category: (id) => byId.get(id) ?? byId.get('other') ?? categories[0],
     accounts,
     refreshAccounts,
+    banks,
+    refreshBanks,
+    dataFolder,
+    setDataFolder,
     dataVersion,
     dataChanged,
     notify,

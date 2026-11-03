@@ -43,6 +43,8 @@ public sealed class ImportDraft
     /// <summary>Account type the person chose (for a new account, or the type of the chosen account).</summary>
     public AccountKind? Kind { get; set; }
     public BankTemplate? Template { get; set; }
+    /// <summary>Banking system of the chosen account's bank (or of the bank chosen for a new account).</summary>
+    public BankingSystem System { get; set; }
 }
 
 /// <summary>
@@ -52,7 +54,9 @@ public sealed class ImportDraft
 public sealed record DraftEdit(int Index, string? Brand, string? CategoryId, bool Include, bool? AllOfBrand = null);
 
 
-public sealed record CommitRequest(Guid DraftId, long? AccountId, string? NewAccountName, string Currency, AccountKind? Kind, List<DraftEdit> Edits);
+/// <param name="BankId">Bank of a new account; or <paramref name="NewBankName"/> to add the bank to the list.</param>
+public sealed record CommitRequest(Guid DraftId, long? AccountId, string? NewAccountName, string Currency, AccountKind? Kind, List<DraftEdit> Edits,
+    long? BankId = null, string? NewBankName = null);
 
 public sealed record CommitResult(long StatementId, long AccountId, int Added, int SkippedDuplicates, string? FirstDate, string? LastDate);
 
@@ -75,7 +79,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             var csv = new ImportDraft
             {
                 FileName = fileName, FileHash = hash, Bytes = bytes, Pages = [],
-                Parse = Focus(CsvStatementReader.Parse(bytes, fileName, defaultCurrency(), null)),
+                Parse = CsvStatementReader.Parse(bytes, fileName, defaultCurrency(), null),
                 AlreadyImported = db.HasStatementHash(hash),
             };
             Fill(csv);
@@ -96,7 +100,6 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             var auto = StatementParser.Parse(pages, null, defaultCurrency());
             if (auto.Verified) { parse = auto; template = null; }
         }
-        parse = Focus(parse);
 
         var draft = new ImportDraft
         {
@@ -127,7 +130,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
     private void Read(ImportDraft draft)
     {
         if (draft.Pages.Count == 0)
-            draft.Parse = Focus(CsvStatementReader.Parse(draft.Bytes, draft.FileName, defaultCurrency(), draft.Kind));
+            draft.Parse = CsvStatementReader.Parse(draft.Bytes, draft.FileName, defaultCurrency(), draft.Kind);
         else
         {
             var hint = draft.Kind switch
@@ -138,25 +141,15 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             };
             var t = draft.Template;
             if (t is not null && hint != StatementKindHint.Auto) t = new BankTemplate { Id = t.Id, Name = t.Name, MatchText = t.MatchText, Columns = t.Columns, DateOrder = t.DateOrder, Kind = hint, UpdatedAt = t.UpdatedAt };
-            draft.Parse = Focus(StatementParser.Parse(draft.Pages, t, defaultCurrency(), hint));
+            draft.Parse = StatementParser.Parse(draft.Pages, t, defaultCurrency(), hint);
         }
         if (draft.Kind is { } k) draft.Parse.Kind = k;
         Fill(draft);
     }
 
-    /// <summary>Bank chosen in the settings: "bnc" (Banque Nationale) or "auto".</summary>
-    public Func<string> BankFocus { get; init; } = () => "auto";
-
-    /// <summary>With a bank in focus, statements that name no bank are taken to be from that bank.</summary>
-    private StatementParse Focus(StatementParse p)
-    {
-        if (BankFocus() == "bnc" && p.Bank is null) p.Bank = "Banque Nationale";
-        return p;
-    }
-
     private void Fill(ImportDraft draft)
     {
-        var classifier = transactions.NewClassifier();
+        var classifier = transactions.NewClassifier(draft.System);
         var kind = draft.Kind ?? draft.Parse.Kind;
         draft.Rows = draft.Parse.Rows.Select((r, i) =>
         {
@@ -208,7 +201,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
     }
 
     /// <summary>The person picks the account (or a new one and its type); the file is then read for that type.</summary>
-    public ImportDraft Choose(Guid id, long? accountId, AccountKind? newKind)
+    public ImportDraft Choose(Guid id, long? accountId, AccountKind? newKind, long? bankId = null)
     {
         var draft = _drafts.GetValueOrDefault(id) ?? throw new KeyNotFoundException("This import is no longer open.");
         if (accountId is { } a)
@@ -216,11 +209,13 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             var account = db.Accounts().FirstOrDefault(x => x.Id == a) ?? throw new KeyNotFoundException("This account no longer exists.");
             draft.AccountId = a;
             draft.Kind = account.Kind;
+            draft.System = account.System;
         }
         else
         {
             draft.AccountId = null;
             draft.Kind = newKind;
+            draft.System = db.Banks().FirstOrDefault(b => b.Id == bankId)?.System ?? BankingSystem.NorthAmerica;
         }
         Read(draft);
         return draft;
@@ -231,8 +226,11 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         var draft = _drafts.GetValueOrDefault(request.DraftId) ?? throw new KeyNotFoundException("This import is no longer open.");
         if (draft.AlreadyImported) throw new InvalidOperationException("This statement was already imported.");
         if (request.AccountId is null && request.Kind is null) throw new ArgumentException("Choose the account this file belongs to, or the type of the new account.");
-        if (request.AccountId is { } chosen && draft.AccountId != chosen || request.AccountId is null && draft.Kind != request.Kind)
-            Choose(draft.Id, request.AccountId, request.Kind);
+        Choose(draft.Id, request.AccountId, request.Kind, request.BankId);
+        var existing = request.AccountId is { } chosen ? db.Accounts().First(a => a.Id == chosen) : null;
+        // An existing account keeps its currency; a new one takes the one chosen (its bank's by default).
+        var currency = existing?.Currency ?? request.Currency;
+        if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper)) throw new ArgumentException("A currency is a three-letter code such as CAD.");
         if (draft.Rows.Count == 0) throw new InvalidOperationException("No operations were found in this statement.");
         var edits = request.Edits.ToDictionary(e => e.Index);
         foreach (var e in request.Edits)
@@ -244,13 +242,17 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         var learned = new List<(string Key, string Brand, string? Category)>();
         db.InTransaction(() =>
         {
+            var bankId = request.BankId;
+            if (existing is null && bankId is null && request.NewBankName?.Trim() is { Length: > 0 } bankName)
+                bankId = db.AddBank(new Bank { Name = bankName, Currency = currency, System = draft.System });
             accountId = request.AccountId ?? db.AddAccount(new Account
             {
                 Name = string.IsNullOrWhiteSpace(request.NewAccountName) ? DefaultAccountName(draft.Parse) : request.NewAccountName.Trim(),
-                Currency = request.Currency,
+                Currency = currency,
                 Kind = request.Kind!.Value,
                 Bank = draft.Parse.Bank,
                 Last4 = draft.Parse.Last4,
+                BankId = bankId,
             });
             var included = draft.Rows.Where(r => !edits.TryGetValue(r.Index, out var e) || e.Include).ToList();
             statementId = db.AddStatement(new StatementRecord
@@ -271,7 +273,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
                 if (r.Duplicate) { skipped++; continue; }
                 var t = new Transaction
                 {
-                    AccountId = accountId, StatementId = statementId, Date = r.Date, Amount = r.Amount, Currency = request.Currency,
+                    AccountId = accountId, StatementId = statementId, Date = r.Date, Amount = r.Amount, Currency = currency,
                     RawLabel = r.Label, MerchantKey = r.MerchantKey, Brand = r.Brand, BrandSource = r.BrandSource, BankCategory = r.BankCategory,
                     CategoryId = r.CategoryId, CategorySource = r.CategorySource,
                 };

@@ -173,3 +173,40 @@
 - A term investment closed at the bank ("Placement", filed by the bank under "Retrait") was counted as a refund,
   so as income: it is now money coming back from investments. Money coming back under "withdrawal" or "fees" is
   never a refund. "Placement", GIC / CPG, term deposits and Interactive Brokers are recognised as investments.
+
+## November 3rd, 2026 - Nested categories, several banks, currencies per file, settings in tabs - Commit 8
+
+### Added
+- Categories page in the side bar: categories the person makes, nested at any depth, renamed, coloured, moved into
+  another category of the same kind, reordered and deleted (built-in ones can be edited but not deleted; the
+  operations of a deleted category go to the category it was in). The colour shows on every category pill (periods,
+  calendar, import, brands) and in every category picker, where nested categories are indented under theirs.
+- Several banks at once, each with its country, banking system (North America or France) and currency. Every account
+  belongs to a bank and is read with that bank's banking system. The import dialog asks the bank of a new account
+  (the one the statement names is proposed) or adds a new bank; the currency follows the bank (CAD for the National
+  Bank of Canada).
+- Import table: Bank and Currency columns. The currency of a file is its account's: changing it there or in the
+  account table changes it everywhere. Files of one bank in different currencies show a "Currency mismatch" warning.
+- Periods: "Custom" tab with any two days, picked on a calendar or typed; the month and custom views show how many
+  days the period has.
+- Ctrl+F: finds text anywhere in the window, highlights every match, Enter / Shift+Enter go from one to the next.
+- Rows of every table outside Periods can be reordered by dragging their handle; the order is kept.
+- Light / dark mode button above the settings.
+- Database location can be changed to any folder (the database is moved there).
+
+### Changed
+- Settings in tabs: General (Display, Periods, Calendar, Data), Bank Configuration (one tab per bank with its
+  accounts: name, type, currency), Definitions (Brands, Bank). Brands left the side bar.
+- Periods setting "Transfers, card payments and investments" also offers "In a separate table" (open); the folded
+  table stays the default. "Show all data in pie charts", off by default.
+- Calendar: three settings, Hide transfers (on), Hide credit card payments (on), Hide investments (off).
+- "Banque Nationale (BNC)" is named National Bank of Canada; the global banking system and bank settings, the display
+  currency and the theme setting left the settings.
+
+### Bug fixed
+- A learned correction was listed twice (once for the statement wording, once as "Every operation of this brand"):
+  each brand is now one line with the wordings learned for it.
+- Changing the category of a brand in the brand list did not reach operations whose wording had a learned category:
+  every operation and every learned wording of the brand now take it.
+- Tests: 113 unit and integration tests (categories made, nested twelve levels, edited, moved, deleted; banks and
+  currencies) and 37 end-to-end checks.

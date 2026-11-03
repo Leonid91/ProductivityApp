@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Box, Chip, IconButton, InputBase, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography } from '@mui/material'
 import Search from '@mui/icons-material/SearchRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
@@ -6,10 +6,14 @@ import Storefront from '@mui/icons-material/StorefrontRounded'
 import { api, type BrandInfo, type BrandRule } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, plural } from '../format'
-import { CategoryPill, EmptyState, Money, PageHeader, SectionCard } from '../components/common'
+import { CategoryPill, EmptyState, Money, SectionCard } from '../components/common'
+import { useRowOrder } from '../components/order'
+
+/** What was learned for one brand: the statement wordings recognised as it, and its category. */
+interface Learned { brand: string; wordings: string[]; categoryId: string | null }
 
 /** The brand dictionary: every brand seen, its category, and the corrections the app has learned. */
-export function BrandsPage() {
+export function BrandsPanel() {
   const { dataVersion, dataChanged, notify, fail, category, settings } = useApp()
   const [brands, setBrands] = useState<BrandInfo[]>([])
   const [rules, setRules] = useState<BrandRule[]>([])
@@ -24,19 +28,37 @@ export function BrandsPage() {
     return brands.filter((b) => !q || b.brand.toLowerCase().includes(q) || category(b.categoryId).name.toLowerCase().includes(q))
   }, [brands, query, category])
 
-  const setCategory = async (b: BrandInfo, id: string) => {
+  // One line per brand: a correction is learned both for its wording and for the brand, which is still one correction.
+  const learned = useMemo(() => {
+    const by = new Map<string, Learned>()
+    for (const r of rules) {
+      const key = r.brand.toLowerCase()
+      const l = by.get(key) ?? { brand: r.brand, wordings: [], categoryId: null }
+      if (r.merchantKey) l.wordings.push(r.merchantKey)
+      if (r.categoryId && (!r.merchantKey || !l.categoryId)) l.categoryId = r.categoryId
+      by.set(key, l)
+    }
+    return [...by.values()]
+  }, [rules])
+
+  const brandKey = useCallback((b: BrandInfo) => b.brand.toLowerCase(), [])
+  const learnedKey = useCallback((l: Learned) => l.brand.toLowerCase(), [])
+  const brandOrder = useRowOrder('brands', shown, brandKey)
+  const learnedOrder = useRowOrder('learned', learned, learnedKey)
+
+  const setCategory = async (brand: string, id: string) => {
     try {
-      const r = await api.brands.setCategory(b.brand, id)
-      notify(`${b.brand} is now ${category(id).name}` + (r.changed ? ` · ${plural(r.changed, 'operation')} updated` : ''))
+      const r = await api.brands.setCategory(brand, id)
+      notify(`${brand} is now ${category(id).name}` + (r.changed ? ` · ${plural(r.changed, 'operation')} updated` : ''))
       dataChanged()
     } catch (e) {
       fail(e)
     }
   }
 
-  const forget = async (rule: BrandRule) => {
+  const forget = async (l: Learned) => {
     try {
-      const r = await api.brands.deleteRule(rule.id)
+      const r = await api.brands.forget(l.brand)
       notify('Correction removed' + (r.changed ? ` · ${plural(r.changed, 'operation')} updated` : ''))
       dataChanged()
     } catch (e) {
@@ -44,22 +66,23 @@ export function BrandsPage() {
     }
   }
 
-  return (
-    <Box sx={{ maxWidth: 1180, mx: 'auto', pt: 3, pb: 6 }}>
-      <PageHeader title="Brands">
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 999, px: 1.5, height: 38, width: 280 }}>
-          <Search sx={{ fontSize: 19, color: 'text.secondary' }} />
-          <InputBase placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} sx={{ flex: 1, fontSize: 14 }} />
-        </Box>
-      </PageHeader>
+  const search = (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, bgcolor: 'background.default', border: 1, borderColor: 'divider', borderRadius: 999, px: 1.5, height: 38, width: 280 }}>
+      <Search sx={{ fontSize: 19, color: 'text.secondary' }} />
+      <InputBase placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} sx={{ flex: 1, fontSize: 14 }} />
+    </Box>
+  )
 
+  return (
+    <Box sx={{ display: 'grid', gap: 3 }}>
       {brands.length === 0 ? (
         <EmptyState icon={<Storefront />} title="No brands yet" />
       ) : (
-        <SectionCard>
+        <SectionCard title="Brands" action={search}>
           <Table size="small">
             <TableHead>
               <TableRow>
+                <TableCell padding="none" />
                 <TableCell>Brand Name</TableCell>
                 <TableCell>Category</TableCell>
                 <TableCell align="right">Operations</TableCell>
@@ -68,15 +91,16 @@ export function BrandsPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {shown.map((b) => (
-                <TableRow key={b.brand} hover sx={{ '& td': { py: 0.9 } }}>
+              {brandOrder.rows.map((b) => (
+                <TableRow key={b.brand} hover sx={{ '& td': { py: 0.9 } }} {...brandOrder.rowProps(b)}>
+                  {brandOrder.handle(b)}
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Typography variant="body2" sx={{ fontWeight: 560 }}>{b.brand}</Typography>
                       {b.learned && <Chip size="small" label="Learned" variant="outlined" sx={{ height: 20, fontSize: 11 }} />}
                     </Box>
                   </TableCell>
-                  <TableCell><CategoryPill id={b.categoryId} onChange={(id) => void setCategory(b, id)} /></TableCell>
+                  <TableCell><CategoryPill id={b.categoryId} onChange={(id) => void setCategory(b.brand, id)} /></TableCell>
                   <TableCell align="right" className="tnum">{b.count}</TableCell>
                   <TableCell align="right"><Money value={b.spent} currency={b.currency} /></TableCell>
                   <TableCell align="right" className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(b.lastDate, settings.dateFormat)}</TableCell>
@@ -87,11 +111,12 @@ export function BrandsPage() {
         </SectionCard>
       )}
 
-      {rules.length > 0 && (
-        <SectionCard title="Learned corrections" sx={{ mt: 3 }}>
-          <Table size="small">
+      {learned.length > 0 && (
+        <SectionCard title="Learned corrections">
+          <Table size="small" data-learned>
             <TableHead>
               <TableRow>
+                <TableCell padding="none" />
                 <TableCell>Statement wording</TableCell>
                 <TableCell>Brand Name</TableCell>
                 <TableCell>Category</TableCell>
@@ -99,13 +124,18 @@ export function BrandsPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {rules.map((r) => (
-                <TableRow key={r.id} hover>
-                  <TableCell sx={{ color: 'text.secondary', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12.5 }}>{r.merchantKey || 'Every operation of this brand'}</TableCell>
-                  <TableCell>{r.brand}</TableCell>
-                  <TableCell>{r.categoryId ? <CategoryPill id={r.categoryId} /> : <Typography variant="body2" color="text.secondary">—</Typography>}</TableCell>
+              {learnedOrder.rows.map((l) => (
+                <TableRow key={l.brand} hover {...learnedOrder.rowProps(l)}>
+                  {learnedOrder.handle(l)}
+                  <TableCell sx={{ color: 'text.secondary', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12.5 }}>
+                    {l.wordings.length ? l.wordings.map((w) => <div key={w}>{w.replace(/^#(.*)\|.*$/, '$1')}</div>) : '—'}
+                  </TableCell>
+                  <TableCell>{l.brand}</TableCell>
+                  <TableCell>
+                    {l.categoryId ? <CategoryPill id={l.categoryId} onChange={(id) => void setCategory(l.brand, id)} /> : <Typography variant="body2" color="text.secondary">—</Typography>}
+                  </TableCell>
                   <TableCell padding="checkbox">
-                    <Tooltip title="Forget"><IconButton size="small" onClick={() => void forget(r)}><DeleteOutline fontSize="small" /></IconButton></Tooltip>
+                    <Tooltip title="Forget"><IconButton size="small" aria-label="Forget" onClick={() => void forget(l)}><DeleteOutline fontSize="small" /></IconButton></Tooltip>
                   </TableCell>
                 </TableRow>
               ))}

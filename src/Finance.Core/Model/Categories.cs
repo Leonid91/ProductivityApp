@@ -3,10 +3,11 @@ namespace ProductivityApp.Finance.Model;
 public enum CategoryKind { Expense, Income, Transfer }
 
 /// <summary>
-/// A predefined category. Icon is a Material icon name used by the interface. Group "exceptional" marks the
-/// exceptional expenses (shown in gold).
+/// A category. Icon is a Material icon name used by the interface. Group "exceptional" marks the exceptional expenses
+/// (shown in gold). Parent is the category it is nested in (null at the top); Color is "#rrggbb" or null.
+/// Built-in categories have fixed ids the engine relies on; the ones the person makes have ids "u1", "u2"...
 /// </summary>
-public sealed record Category(string Id, string Name, CategoryKind Kind, string Icon, string? Group = null);
+public sealed record Category(string Id, string Name, CategoryKind Kind, string Icon, string? Group = null, string? Parent = null, string? Color = null, bool BuiltIn = true);
 
 public static class Categories
 {
@@ -22,7 +23,8 @@ public static class Categories
     public const string Bills = "bills";
     public const string Exceptional = "exceptional";
 
-    public static readonly IReadOnlyList<Category> All =
+    /// <summary>The categories the app comes with, as they are before the person renames, nests or colours them.</summary>
+    public static readonly IReadOnlyList<Category> BuiltIn =
     [
         new("groceries", "Groceries", CategoryKind.Expense, "ShoppingBasket"),
         new("restaurants", "Restaurants & cafés", CategoryKind.Expense, "Restaurant"),
@@ -65,7 +67,17 @@ public static class Categories
         new(Investments, "Savings & investments", CategoryKind.Transfer, "TrendingUp"),
     ];
 
-    private static readonly Dictionary<string, Category> ById = All.ToDictionary(c => c.Id);
+    private static Dictionary<string, Category> ById = BuiltIn.ToDictionary(c => c.Id);
+
+    /// <summary>Every category in use: the built-in ones as the person edited them, then the ones they made.</summary>
+    public static IReadOnlyList<Category> All { get; private set; } = BuiltIn;
+
+    /// <summary>Replaces the categories in use (the database calls this when it opens and after every change).</summary>
+    public static void Use(IReadOnlyList<Category> all)
+    {
+        All = all;
+        ById = all.ToDictionary(c => c.Id);
+    }
 
     public static bool Exists(string id) => ById.ContainsKey(id);
 

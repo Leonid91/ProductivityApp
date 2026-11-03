@@ -304,7 +304,7 @@ public static partial class CsvStatementReader
             Currency = currency,
             Language = french ? "fr" : "en",
             Kind = kind,
-            Bank = profile == "bnc" ? "Banque Nationale" : null,
+            Bank = profile == "bnc" ? KnownBanks.National : null,
             Last4 = last4,
             Status = status,
             RowBalanceChecks = checks,

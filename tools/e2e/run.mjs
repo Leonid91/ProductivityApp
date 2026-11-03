@@ -104,7 +104,17 @@ try {
     } else {
       await p.clickText('New account', { selector: '[role=option]' })
       await sleep(300)
-      await p.mouseClick(`${sel} [role=combobox]`, 1)
+      // The bank the statement names is proposed; any other goes in as a new bank.
+      if (group.startsWith('BNC ')) check('National Bank of Canada proposed for ' + group, await p.eval(`document.querySelector('${sel}').innerText.includes('National Bank of Canada')`))
+      if (await p.eval(`document.querySelector('${sel}').innerText.includes('Choose the bank')`)) {
+        await p.mouseClick(`${sel} [role=combobox]`, 1)
+        await p.clickText('New bank', { selector: '[role=option]' })
+        await sleep(300)
+        const empty = await p.eval(`(() => { const i = [...document.querySelectorAll('${sel} input')].find(x => x.closest('.MuiFormControl-root')?.innerText.includes('Bank name')); i.focus(); return i.value === '' })()`)
+        if (empty) await p.send('Input.insertText', { text: group + ' Bank' })
+        await sleep(200)
+      }
+      await p.mouseClick(`${sel} [role=combobox]`, 2)
       await p.clickText(typeOf(file), { selector: '[role=option]' })
     }
     await p.waitFor(`[...document.querySelector('${sel}').querySelectorAll('button')].some(b => b.innerText.startsWith('Import') && !b.disabled) || document.querySelector('${sel}').innerText.includes('already imported')`, 20000, 'chosen ' + file)
@@ -129,9 +139,45 @@ try {
   await sleep(600)
   const accounts = await p.engine('accounts.list')
   check('accounts created once per account', accounts.length === 8, accounts.map((a) => a.name).join(', '))
-  check('BNC savings account recognised', accounts.some((a) => a.kind === 'savings' && a.name.startsWith('Banque Nationale')))
+  check('BNC savings account recognised', accounts.some((a) => a.kind === 'savings' && a.name.startsWith('National Bank of Canada')))
+  const banks = await p.engine('banks.list')
+  check('every imported account has its bank', accounts.every((a) => a.bankId !== null), banks.map((b) => b.name).join(', '))
   await p.scrollMain(0)
   await shot(p, '06-import-history.png')
+
+  // ---- the file's currency is its account's: changing it in the import table changes it everywhere, and flags the bank
+  const nbc = banks.find((b) => b.name === 'National Bank of Canada')
+  const row = await p.eval(`[...document.querySelectorAll('tbody tr')].findIndex(r => r.innerText.includes('National Bank of Canada') && r.innerText.includes('CAD'))`)
+  await p.eval(`[...document.querySelectorAll('tbody tr')][${row}].scrollIntoView({ block: 'center' })`)
+  const cur = await p.eval(`(() => { const rows = [...document.querySelectorAll('tbody tr')]; const all = [...document.querySelectorAll('[role=combobox]')]; return all.indexOf([...rows[${row}].querySelectorAll('[role=combobox]')][1]) })()`)
+  await p.mouseClick('[role=combobox]', cur)
+  await p.clickText('USD', { selector: '[role=option]' })
+  await p.waitFor(`document.querySelectorAll('[data-currency-mismatch]').length > 0`, 10000, 'mismatch warning')
+  await sleep(400)
+  await shot(p, '06b-import-currency-mismatch.png')
+  const usd = (await p.engine('accounts.list')).filter((a) => a.currency === 'USD')
+  check('currency changed from the import table', usd.length === 1 && usd[0].bankId === nbc.id, usd.map((a) => a.name).join(', '))
+  const flagged = await p.eval(`[...document.querySelectorAll('tbody tr')].filter(r => r.querySelector('[data-currency-mismatch]')).every(r => r.innerText.includes('National Bank of Canada'))`)
+  check('currency mismatch shown on every file of that bank only', flagged)
+  await p.engine('accounts.update', { id: usd[0].id, name: usd[0].name, currency: 'CAD' })
+
+  // ---- rows reordered by dragging their handle (statements table), order kept
+  const order = async () => p.eval(`[...document.querySelector('tbody').querySelectorAll('tr')].map(r => r.children[1].innerText)`)
+  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Import', { selector: 'nav button' })
+  await sleep(800)
+  const o1 = await order()
+  // Each drag event in its own task, as a real drag delivers them.
+  const rowsJs = `[...document.querySelector('tbody').querySelectorAll('tr')]`
+  await p.eval(`window.__dt = new DataTransfer(); ${rowsJs}[0].querySelector('[draggable=true]').dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: window.__dt }))`)
+  await sleep(150)
+  await p.eval(`${rowsJs}[2].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__dt }))`)
+  await sleep(150)
+  await p.eval(`${rowsJs}[2].dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__dt }))`)
+  await sleep(800)
+  const o2 = await order()
+  check('row moved by dragging', o2[2] === o1[0] && o2[0] === o1[1], `${o1.slice(0, 3).join(' | ')} -> ${o2.slice(0, 3).join(' | ')}`)
+  check('row order saved', JSON.parse((await p.engine('app.init')).settings['order.statements'] ?? '[]').length > 0)
 
   // ---- periods (the sketch)
   await p.clickText('Periods', { selector: 'nav button' })
@@ -140,6 +186,8 @@ try {
   await shot(p, '07-periods-top.png')
   const title = await p.eval(`document.querySelector('section h2').innerText`)
   check('month title as on the sketch', /^[A-Z][a-z]+, from [A-Z][a-z]+ \d+ to [A-Z][a-z]+ \d+, \d{4}$/.test(title), title)
+  const days = await p.eval(`document.querySelector('section [data-days]')?.innerText`)
+  check('days of the month shown', days === `${title.match(/to [A-Z][a-z]+ (\d+),/)[1]} days`, days)
   await p.eval(`(() => { const s = document.querySelector('section'); const t = [...s.querySelectorAll('p, span')].find(e => e.innerText === 'Expenses'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
   await sleep(800)
   await shot(p, '08-periods-totals-charts.png')
@@ -195,6 +243,76 @@ try {
   const rules = (await p.engine('brands.list')).rules
   check('correction learned', rules.some((r) => r.categoryId === 'entertainment'), `${before} -> Entertainment`)
 
+  // ---- categories: made, nested, coloured, and picked for an operation
+  await p.clickText('Categories', { selector: 'nav button' })
+  await p.waitFor(`document.querySelector('[data-categories]') !== null`, 10000, 'categories page')
+  const makeCategory = async (name, color, parentRow) => {
+    if (parentRow) {
+      await p.eval(`document.querySelector('[data-category="${parentRow}"] [aria-label="Add a subcategory"]').click()`)
+    } else {
+      await p.clickText('New category')
+    }
+    await p.waitFor(`document.querySelector('[data-category-dialog]') !== null`, 5000, 'category dialog')
+    await p.send('Input.insertText', { text: name })
+    if (color) await p.eval(`document.querySelector('[data-category-dialog] [data-color="${color}"]').click()`)
+    await sleep(200)
+    if (!parentRow) await shot(p, '12c-new-category.png')
+    await p.clickText('Create', { selector: '[role=dialog] button' })
+    await p.waitFor(`document.querySelector('[data-category="${name}"]') !== null`, 5000, 'category ' + name)
+  }
+  await makeCategory('Home projects', '#00897b')
+  await makeCategory('Paint', null, 'Home projects')
+  await makeCategory('Brushes', '#fb8c00', 'Paint')
+  await sleep(300)
+  await p.eval(`document.querySelector('[data-category="Brushes"]').scrollIntoView({ block: 'center' })`)
+  await shot(p, '12d-categories.png')
+  const cats = (await p.engine('app.init')).categories
+  const byName = (n) => cats.find((c) => c.name === n)
+  check('category nested twice', byName('Brushes')?.parentId === byName('Paint')?.id && byName('Paint')?.parentId === byName('Home projects')?.id)
+  check('category colours kept', byName('Home projects')?.color === '#00897b' && byName('Brushes')?.color === '#fb8c00')
+  // edit an existing one: rename it
+  await p.eval(`document.querySelector('[data-category="Paint"] [aria-label="Edit"]').click()`)
+  await p.waitFor(`document.querySelector('[data-category-dialog]') !== null`, 5000, 'edit dialog')
+  await p.eval(`document.querySelector('[data-category-dialog] input').select()`)
+  await p.send('Input.insertText', { text: 'Paint & tools' })
+  await p.clickText('Save', { selector: '[role=dialog] button' })
+  await p.waitFor(`document.querySelector('[data-category="Paint & tools"]') !== null`, 5000, 'renamed category')
+  check('category renamed', true)
+  // the picker shows it nested and coloured
+  await p.clickText('Periods', { selector: 'nav button' })
+  await p.waitFor(`document.querySelector('section tbody tr td:nth-child(2) button') !== null`, 20000, 'operations')
+  await p.click('section tbody tr td:nth-child(2) button', 0)
+  await sleep(300)
+  await p.eval(`[...document.querySelectorAll('[role=menuitem]')].find(e => e.innerText === 'Brushes').scrollIntoView({ block: 'center' })`)
+  await sleep(200)
+  await shot(p, '12e-picker-nested.png')
+  await p.clickText('Brushes', { selector: '[role=menuitem]' })
+  await p.waitFor(`document.querySelector('[data-scope-dialog]') !== null`, 5000, 'scope question')
+  await p.clickText('Only this one', { selector: '[role=dialog] button' })
+  await p.waitFor(`[...document.querySelectorAll('section tbody tr td:nth-child(2)')].some(td => td.innerText === 'Brushes')`, 10000, 'subcategory set')
+  await sleep(300)
+  await shot(p, '12f-colored-pill.png')
+  check('operation put in a subcategory', true)
+
+  // custom period
+  await p.scrollMain(0)
+  await p.clickText('Custom', { selector: 'button' })
+  await p.waitFor(`document.querySelector('section h2')?.innerText.startsWith('From')`, 20000, 'custom title')
+  await sleep(1000)
+  await shot(p, '12g-custom-period.png')
+  check('custom period with its days', /^\d+ days$/.test(await p.eval(`document.querySelector('section [data-days]')?.innerText ?? ''`)))
+
+  // Ctrl+F
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'f', code: 'KeyF', modifiers: 2, windowsVirtualKeyCode: 70 })
+  await p.waitFor(`document.querySelector('[data-findbar]') !== null`, 5000, 'find bar')
+  await p.send('Input.insertText', { text: 'Expenses' })
+  await sleep(400)
+  await shot(p, '12h-find.png')
+  check('Ctrl+F finds text in the window', await p.eval(`CSS.highlights.get('find')?.size ?? 0`) > 0)
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await p.clickText('Month', { selector: 'button' })
+  await sleep(600)
+
   // year and several years
   await p.clickText('Year', { selector: 'button' })
   await p.waitFor(`document.querySelector('section h2')?.innerText.startsWith('2025, from')`, 20000, 'year title')
@@ -222,26 +340,32 @@ try {
   await shot(p, '16-add-operation.png')
   await p.clickText('Cancel', { selector: '[role=dialog] button' })
 
-  // calendar, brands, settings
+  // calendar, settings
   await p.clickText('Calendar', { selector: 'nav button' })
   await sleep(1500)
   await shot(p, '17-calendar.png')
-  await p.clickText('Brands', { selector: 'nav button' })
-  await sleep(1200)
-  await shot(p, '18-brands.png')
   await p.clickText('Settings', { selector: 'nav button' })
   await sleep(800)
-  await p.mouseClick('[role=combobox]', 4)
-  await sleep(300)
-  await shot(p, '19-settings-bank-menu.png')
-  await p.clickText('Banque Nationale (BNC)', { selector: '[role=option]', partial: true })
-  await sleep(500)
-  check('bank focus saved', (await p.engine('app.init')).settings.bankFocus === 'bnc')
-  await shot(p, '19-settings.png')
-
-  // dark theme
-  await p.clickText('Dark', { selector: 'button' })
+  await shot(p, '19-settings-general.png')
+  await p.clickText('Bank Configuration', { selector: 'button' })
   await sleep(600)
+  await shot(p, '19b-settings-bank-configuration.png')
+  check('one tab per bank, accounts with type and currency', await p.eval(`document.querySelector('[data-accounts]')?.innerText.includes('Account Type')`))
+  await p.clickText('Definitions', { selector: 'button' })
+  await sleep(1000)
+  await shot(p, '18-brands.png')
+  const learnedText = await p.eval(`document.querySelector('[data-learned]')?.innerText ?? ''`)
+  const learnedBrands = await p.eval(`[...document.querySelectorAll('[data-learned] tbody tr')].map(r => r.children[2].innerText)`)
+  check('each learned brand listed once', !learnedText.includes('Every operation of this brand') && new Set(learnedBrands).size === learnedBrands.length, learnedBrands.join(', '))
+  await p.clickText('Bank', { selector: 'button' })
+  await sleep(600)
+  await shot(p, '19c-settings-banks.png')
+  check('banks table', await p.eval(`document.querySelector('[data-banks]')?.innerText.includes('Banking System')`))
+
+  // dark theme, from the icon above the settings
+  await p.click('nav [aria-label="Dark mode"]')
+  await sleep(600)
+  check('theme toggled from the side bar', (await p.engine('app.init')).settings.theme === 'dark')
   await p.clickText('Periods', { selector: 'nav button' })
   await sleep(1500)
   await shot(p, '20-dark-periods.png')
