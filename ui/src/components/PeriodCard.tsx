@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { startTransition, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Accordion, AccordionDetails, AccordionSummary, Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfOutlined'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
@@ -60,6 +60,7 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, 
   const theme = useTheme()
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
+  const [height, setHeight] = useState(560)
   const [summary, setSummary] = useState<PeriodSummary | null>(null)
   const [exporting, setExporting] = useState(false)
 
@@ -67,15 +68,21 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, 
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) setVisible(true) }, { rootMargin: '900px 0px' })
+    // Near the screen it loads; once far away again it lets go of its data (it keeps its height, so nothing moves).
+    const io = new IntersectionObserver((entries) => {
+      const near = entries.some((e) => e.isIntersecting)
+      if (!near && el.offsetHeight > 0) setHeight(el.offsetHeight)
+      setVisible(near)
+    }, { rootMargin: '900px 0px' })
     io.observe(el)
     return () => io.disconnect()
   }, [])
 
   useEffect(() => {
-    if (!visible) return
+    if (!visible) { setSummary(null); return }
     let live = true
-    api.periods.summary(from, to, granularity, currency).then((s) => { if (live) { setSummary(s); onLoaded?.(s) } }, fail)
+    // Drawn in the background, a little at a time, so scrolling stays smooth while periods come in.
+    api.periods.summary(from, to, granularity, currency).then((s) => { if (live) startTransition(() => { setSummary(s); onLoaded?.(s) }) }, fail)
     return () => { live = false }
   }, [visible, from, to, granularity, currency, dataVersion, fail, onLoaded])
 
@@ -121,7 +128,8 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, 
       ref={ref}
       component="section"
       data-period={from}
-      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: summary ? undefined : 560 }}
+      // Periods far from the screen are not laid out or painted (the browser skips them until they come near).
+      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: summary ? undefined : height, contentVisibility: 'auto', containIntrinsicSize: 'auto 2400px' }}
     >
       {!summary ? (
         <>

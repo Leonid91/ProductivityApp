@@ -96,7 +96,7 @@ try {
     const left = await p.eval(`document.querySelectorAll('[data-draft]').length`)
     if (left === 0) break
     const file = await p.eval(`(() => { const cards = [...document.querySelectorAll('[data-draft]')]; return (cards.find(c => !c.dataset.draft.endsWith('.csv')) ?? cards[0]).dataset.draft })()`)
-    const sel = `[data-draft="${file.replace(/"/g, '\\"')}"]`
+    const sel = `[data-draft="${file.replace(/"/g, '\\"').replace(/'/g, "\\'")}"]`
     const group = groupOf(file)
     await p.mouseClick(`${sel} [role=combobox]`, 0)
     if (created.has(group)) {
@@ -138,7 +138,7 @@ try {
   check('BNC CSVs after their PDFs bring nothing new', csvNothingNew === 3, `${csvNothingNew}/3`)
   await sleep(600)
   const accounts = await p.engine('accounts.list')
-  check('accounts created once per account', accounts.length === 8, accounts.map((a) => a.name).join(', '))
+  check('accounts created once per account', accounts.length === 9, accounts.map((a) => a.name).join(', '))
   check('BNC savings account recognised', accounts.some((a) => a.kind === 'savings' && a.name.startsWith('National Bank of Canada')))
   const banks = await p.engine('banks.list')
   check('every imported account has its bank', accounts.every((a) => a.bankId !== null), banks.map((b) => b.name).join(', '))

@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 6;
+    private const int SchemaVersion = 7;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -103,8 +103,16 @@ public sealed class Database : IDisposable
                 AddBank(new Bank { Name = name, System = system, Currency = currency });
             Exec("UPDATE accounts SET bank_id = (SELECT b.id FROM banks b WHERE b.name = accounts.bank); PRAGMA user_version = 6;");
         }
+        if (version < 7)
+        {
+            // Counting a statement's operations and deleting a statement or an account no longer read every operation.
+            Exec("""
+                CREATE INDEX IF NOT EXISTS ix_transactions_statement ON transactions(statement_id);
+                CREATE INDEX IF NOT EXISTS ix_transactions_account ON transactions(account_id, date);
+                PRAGMA user_version = 7;
+                """);
+        }
     }
-
 
     // ---------------------------------------------------------------- helpers
 
@@ -140,6 +148,15 @@ public sealed class Database : IDisposable
 
     private SqliteCommand Command(string sql, (string Name, object? Value)[] args)
     {
+        // A write that can reach operations (directly, or by deleting what they belong to) drops the ones kept in
+        // memory: they are read again on next use. Settings, rules, categories, banks and templates leave them alone.
+        if (!sql.AsSpan().TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+        {
+            Version++;
+            if (!_patching && (sql.Contains("transactions", StringComparison.OrdinalIgnoreCase) || sql.Contains("DELETE", StringComparison.OrdinalIgnoreCase)
+                || sql.Contains("PRAGMA", StringComparison.OrdinalIgnoreCase) || sql.Contains("ALTER", StringComparison.OrdinalIgnoreCase)))
+            { _all = null; _index = null; }
+        }
         var cmd = _cn.CreateCommand();
         cmd.CommandText = sql;
         cmd.Transaction = _tx;
@@ -148,6 +165,42 @@ public sealed class Database : IDisposable
     }
 
     private SqliteTransaction? _tx;
+
+    /// <summary>Every operation, by date then id, kept between writes (most screens read them all).</summary>
+    private List<Transaction>? _all;
+    private Dictionary<long, Transaction>? _index;
+
+    /// <summary>True while a write also updates the operations kept in memory, which then stay valid.</summary>
+    private bool _patching;
+
+    /// <summary>Runs a write on operations and applies the same change to the ones kept in memory.</summary>
+    private void Patch(Action write, Action<Dictionary<long, Transaction>> apply)
+    {
+        lock (_gate)
+        {
+            var (all, index) = (_all, _index);
+            _patching = true;
+            try { write(); }
+            finally { _patching = false; }
+            if (all is null || index is null) return;
+            apply(index);
+            (_all, _index) = (all, index);
+        }
+    }
+
+    /// <summary>Goes up with every write: lets the services keep results that only depend on the stored data.</summary>
+    public long Version { get; private set; }
+
+    /// <summary>The same texts (currencies, categories, brands, wordings) repeat across operations: kept once in memory.</summary>
+    private readonly Dictionary<string, string> _strings = new(StringComparer.Ordinal);
+
+    private string Shared(string s)
+    {
+        if (_strings.TryGetValue(s, out var known)) return known;
+        if (_strings.Count > 200_000) _strings.Clear();
+        _strings[s] = s;
+        return s;
+    }
 
     /// <summary>Runs several writes as one all-or-nothing unit.</summary>
     public void InTransaction(Action action)
@@ -324,12 +377,12 @@ public sealed class Database : IDisposable
 
     private const string TxColumns = "id, account_id, statement_id, date, amount, currency, raw_label, merchant_key, brand, brand_source, category_id, category_source, note, bank_category, linked_id, earned";
 
-    private static Transaction ReadTx(SqliteDataReader r) => new()
+    private Transaction ReadTx(SqliteDataReader r) => new()
     {
         Id = r.GetInt64(0), AccountId = r.GetInt64(1), StatementId = r.IsDBNull(2) ? null : r.GetInt64(2), Date = D(r.GetString(3)),
-        Amount = AmountParser.FromStorage(r.GetString(4)), Currency = r.GetString(5), RawLabel = r.GetString(6), MerchantKey = r.GetString(7),
-        Brand = r.GetString(8), BrandSource = (ValueSource)r.GetInt32(9), CategoryId = r.GetString(10), CategorySource = (ValueSource)r.GetInt32(11),
-        Note = r.GetString(12), BankCategory = r.GetString(13),
+        Amount = AmountParser.FromStorage(r.GetString(4)), Currency = Shared(r.GetString(5)), RawLabel = Shared(r.GetString(6)), MerchantKey = Shared(r.GetString(7)),
+        Brand = Shared(r.GetString(8)), BrandSource = (ValueSource)r.GetInt32(9), CategoryId = Shared(r.GetString(10)), CategorySource = (ValueSource)r.GetInt32(11),
+        Note = Shared(r.GetString(12)), BankCategory = Shared(r.GetString(13)),
         LinkedId = r.IsDBNull(14) ? null : r.GetInt64(14), Earned = M(r.GetValue(15)),
     };
 
@@ -341,36 +394,95 @@ public sealed class Database : IDisposable
         ("$r", t.RawLabel), ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId),
         ("$cs", (int)t.CategorySource), ("$n", t.Note))!;
 
-    public void UpdateTransaction(Transaction t) => Exec("""
-        UPDATE transactions SET account_id = $a, date = $d, amount = $m, currency = $c, raw_label = $r, merchant_key = $k, brand = $b, brand_source = $bs,
-            category_id = $cat, category_source = $cs, note = $n, earned = $e WHERE id = $id
-        """,
-        ("$a", t.AccountId), ("$d", D(t.Date)), ("$m", AmountParser.ToStorage(t.Amount)), ("$c", t.Currency), ("$r", t.RawLabel),
-        ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId), ("$cs", (int)t.CategorySource),
-        ("$n", t.Note), ("$e", M(t.Earned)), ("$id", t.Id));
+    public void UpdateTransaction(Transaction t)
+    {
+        var moved = false;
+        Patch(() => Exec("""
+            UPDATE transactions SET account_id = $a, date = $d, amount = $m, currency = $c, raw_label = $r, merchant_key = $k, brand = $b, brand_source = $bs,
+                category_id = $cat, category_source = $cs, note = $n, earned = $e WHERE id = $id
+            """,
+            ("$a", t.AccountId), ("$d", D(t.Date)), ("$m", AmountParser.ToStorage(t.Amount)), ("$c", t.Currency), ("$r", t.RawLabel),
+            ("$k", t.MerchantKey), ("$b", t.Brand), ("$bs", (int)t.BrandSource), ("$cat", t.CategoryId), ("$cs", (int)t.CategorySource),
+            ("$n", t.Note), ("$e", M(t.Earned)), ("$id", t.Id)),
+            index =>
+            {
+                if (!index.TryGetValue(t.Id, out var kept) || ReferenceEquals(kept, t)) return;
+                moved = kept.Date != t.Date;
+                (kept.AccountId, kept.Date, kept.Amount, kept.Currency, kept.RawLabel, kept.MerchantKey) = (t.AccountId, t.Date, t.Amount, t.Currency, t.RawLabel, t.MerchantKey);
+                (kept.Brand, kept.BrandSource, kept.CategoryId, kept.CategorySource, kept.Note, kept.Earned) = (t.Brand, t.BrandSource, t.CategoryId, t.CategorySource, t.Note, t.Earned);
+            });
+        // A new date changes the order: read again. (Operations kept in memory never get a new date in place:
+        // a date is only edited on a copy read with GetTransaction.)
+        if (moved) lock (_gate) { _all = null; _index = null; }
+    }
+
+    /// <summary>Gives many operations one category in a single write.</summary>
+    public void SetCategoryOf(IReadOnlyCollection<long> ids, string categoryId, ValueSource source)
+    {
+        if (ids.Count == 0) return;
+        Patch(() => Exec("UPDATE transactions SET category_id = $c, category_source = $s WHERE id IN (SELECT value FROM json_each($ids))",
+                ("$c", categoryId), ("$s", (int)source), ("$ids", JsonSerializer.Serialize(ids))),
+            index =>
+            {
+                foreach (var id in ids)
+                    if (index.TryGetValue(id, out var t)) (t.CategoryId, t.CategorySource) = (categoryId, source);
+            });
+    }
 
     public void DeleteTransaction(long id) => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id = $id; DELETE FROM transactions WHERE id = $id", ("$id", id));
 
     /// <summary>Forgets every pairing of movements between own accounts (they are found again right after).</summary>
-    public void ClearLinks() => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id IS NOT NULL");
+    public void ClearLinks() => Patch(() => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id IS NOT NULL"),
+        index => { foreach (var t in index.Values) t.LinkedId = null; });
 
     /// <summary>Records that two operations are the two halves of one movement between own accounts.</summary>
-    public void SetLink(long a, long b) => Exec("UPDATE transactions SET linked_id = $b WHERE id = $a; UPDATE transactions SET linked_id = $a WHERE id = $b", ("$a", a), ("$b", b));
+    public void SetLink(long a, long b) => Patch(
+        () => Exec("UPDATE transactions SET linked_id = $b WHERE id = $a; UPDATE transactions SET linked_id = $a WHERE id = $b", ("$a", a), ("$b", b)),
+        index =>
+        {
+            if (index.TryGetValue(a, out var ta)) ta.LinkedId = b;
+            if (index.TryGetValue(b, out var tb)) tb.LinkedId = a;
+        });
 
     public Transaction? GetTransaction(long id) => Query($"SELECT {TxColumns} FROM transactions WHERE id = $id", ReadTx, ("$id", id)).FirstOrDefault();
 
-    public List<Transaction> Transactions(DateOnly from, DateOnly to) =>
-        Query($"SELECT {TxColumns} FROM transactions WHERE date >= $f AND date <= $t ORDER BY date, id", ReadTx, ("$f", D(from)), ("$t", D(to)));
+    /// <summary>The operations from one day to another (both included), by date then id.</summary>
+    public List<Transaction> Transactions(DateOnly from, DateOnly to)
+    {
+        var all = Cached();
+        // First operation on or after "from": the list is in date order.
+        int lo = 0, hi = all.Count;
+        while (lo < hi) { var mid = (lo + hi) / 2; if (all[mid].Date < from) lo = mid + 1; else hi = mid; }
+        var list = new List<Transaction>();
+        for (var i = lo; i < all.Count && all[i].Date <= to; i++) list.Add(all[i]);
+        return list;
+    }
 
-    public List<Transaction> AllTransactions() => Query($"SELECT {TxColumns} FROM transactions ORDER BY date, id", ReadTx);
+    /// <summary>Every operation, by date then id. The list is the caller's; the operations are shared until the next write.</summary>
+    public List<Transaction> AllTransactions() => [.. Cached()];
+
+    private List<Transaction> Cached()
+    {
+        lock (_gate)
+        {
+            if (_all is null)
+            {
+                _all = Query($"SELECT {TxColumns} FROM transactions ORDER BY date, id", ReadTx);
+                _index = _all.ToDictionary(t => t.Id);
+            }
+            return _all;
+        }
+    }
 
     public List<Transaction> TransactionsForAccount(long accountId, DateOnly from, DateOnly to) =>
-        Query($"SELECT {TxColumns} FROM transactions WHERE account_id = $a AND date >= $f AND date <= $t", ReadTx, ("$a", accountId), ("$f", D(from)), ("$t", D(to)));
+        Transactions(from, to).Where(t => t.AccountId == accountId).ToList();
 
     /// <summary>Months (first day) that have at least one operation, with the currencies used.</summary>
-    public List<(int Year, int Month, string Currency, int Count)> MonthsWithData() => Query(
-        "SELECT CAST(substr(date, 1, 4) AS INTEGER), CAST(substr(date, 6, 2) AS INTEGER), currency, COUNT(*) FROM transactions GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC",
-        r => (r.GetInt32(0), r.GetInt32(1), r.GetString(2), r.GetInt32(3)));
+    public List<(int Year, int Month, string Currency, int Count)> MonthsWithData() => Cached()
+        .GroupBy(t => (t.Date.Year, t.Date.Month, t.Currency))
+        .OrderByDescending(g => g.Key.Year).ThenByDescending(g => g.Key.Month).ThenBy(g => g.Key.Currency, StringComparer.Ordinal)
+        .Select(g => (g.Key.Year, g.Key.Month, g.Key.Currency, g.Count()))
+        .ToList();
 
     // ---------------------------------------------------------------- brand rules
 

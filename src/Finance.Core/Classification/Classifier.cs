@@ -37,13 +37,45 @@ public sealed class Classifier
             .ToList();
     }
 
+    /// <summary>What a wording says by itself, worked out once per wording (statements repeat the same shops).</summary>
+    private sealed record LabelFacts(string Norm, string Key, string Padded, Movement Movement, BrandEntry? BuiltIn, string? KeywordOut, string? KeywordIn)
+    {
+        /// <summary>The keyword category for money going out (amount 0 or less) or coming in.</summary>
+        public string? Keyword(decimal amount) => amount > 0 ? KeywordIn : KeywordOut;
+        public string? Display { get; set; }
+    }
+
+    private readonly Dictionary<string, BrandRule?> _learned = [];
+
+    private readonly Dictionary<(string, string), LabelFacts> _facts = [];
+
+    private LabelFacts Facts(string rawLabel, string bankCategory)
+    {
+        if (_facts.TryGetValue((rawLabel, bankCategory), out var f)) return f;
+        var norm = Normalize(rawLabel);
+        var padded = " " + norm + " ";
+        // The brand named first in the label wins ("STM-METRO BERRI" is the transit company, not the grocer);
+        // at the same position the longer pattern wins ("UBER EATS" over "UBER").
+        BrandEntry? builtIn = null;
+        var bestAt = int.MaxValue;
+        foreach (var (pattern, entry) in _builtIn)
+        {
+            var at = padded.IndexOf(pattern, StringComparison.Ordinal);
+            if (at >= 0 && at < bestAt) { bestAt = at; builtIn = entry; }
+        }
+        f = new LabelFacts(norm, MerchantKey(norm), padded, MovementOf(padded, bankCategory, _system), builtIn, KeywordCategory(padded, 0), KeywordCategory(padded, 1));
+        if (_facts.Count < 100_000) _facts[(rawLabel, bankCategory)] = f;
+        return f;
+    }
+
     public Classification Classify(string rawLabel, decimal amount, string bankCategory = "", AccountKind account = AccountKind.Bank)
     {
-        var norm = Normalize(rawLabel);
-        var key = MerchantKey(norm);
-        var padded = " " + norm + " ";
-        var movement = MovementOf(padded, bankCategory, _system);
-        var salaryWords = KeywordCategory(padded, amount) == "salary";
+        var facts = Facts(rawLabel, bankCategory ?? "");
+        var norm = facts.Norm;
+        var key = facts.Key;
+        var padded = facts.Padded;
+        var movement = facts.Movement;
+        var salaryWords = facts.Keyword(amount) == "salary";
         if (salaryWords && movement is Movement.MoneyTransfer) movement = Movement.None;
 
         string? brand = null;
@@ -60,18 +92,7 @@ public sealed class Classifier
             if (rule.CategoryId is not null && Categories.Exists(rule.CategoryId)) { category = rule.CategoryId; categorySource = ValueSource.Learned; }
         }
 
-        BrandEntry? builtIn = null;
-        if (movement == Movement.None)
-        {
-            // The brand named first in the label wins ("STM-METRO BERRI" is the transit company, not the grocer);
-            // at the same position the longer pattern wins ("UBER EATS" over "UBER").
-            var bestAt = int.MaxValue;
-            foreach (var (pattern, entry) in _builtIn)
-            {
-                var at = padded.IndexOf(pattern, StringComparison.Ordinal);
-                if (at >= 0 && at < bestAt) { bestAt = at; builtIn = entry; }
-            }
-        }
+        var builtIn = movement == Movement.None ? facts.BuiltIn : null;
 
         brand ??= movement switch
         {
@@ -84,7 +105,7 @@ public sealed class Classifier
         if (brand is null && builtIn is not null) { brand = builtIn.Brand; brandSource = ValueSource.BuiltIn; }
         if (brand is null)
         {
-            brand = DisplayName(rawLabel, key);
+            brand = facts.Display ??= DisplayName(rawLabel, key);
             if (brand.Length == 0) brand = "Unknown";
         }
 
@@ -117,7 +138,7 @@ public sealed class Classifier
         // The bank's own category, when its export has one, is more reliable than any guess from the label.
         if (category is null && BankCategories.Map(bankCategory, amount) is { } fromBank) { category = fromBank; categorySource = ValueSource.Bank; }
 
-        var keyword = KeywordCategory(padded, amount);
+        var keyword = facts.Keyword(amount);
         // Bank movements have no shop behind them: give them a plain name rather than leftover label words.
         if (brandSource == ValueSource.Default && rule is null && builtIn is null && movement == Movement.None && keyword is "cash" or "fees")
             brand = keyword == "cash" ? "Cash withdrawal" : "Bank fees";
@@ -202,6 +223,12 @@ public sealed class Classifier
     private BrandRule? FindLearned(string key)
     {
         if (key.Length == 0) return null;
+        if (_learned.TryGetValue(key, out var known)) return known;
+        return _learned[key] = FindLearnedOnce(key);
+    }
+
+    private BrandRule? FindLearnedOnce(string key)
+    {
         if (_byKey.TryGetValue(key, out var exact)) return exact;
         // Same merchant, other branch or city: share the first two words (or one long distinctive word).
         var tokens = key.Split(' ');
@@ -305,13 +332,18 @@ public sealed class Classifier
         ("subscriptions", ["ABONNEMENT", "SUBSCRIPTION", "MEMBERSHIP"], -1),
     ];
 
+    /// <summary>The keyword rules with each word between spaces, ready to look for in a padded wording.</summary>
+    private static readonly (string Category, string[] Words, int Sign)[] PaddedKeywordRules =
+        KeywordRules.Select(r => (r.Category, r.Words.Select(w => " " + w + " ").ToArray(), r.Sign)).ToArray();
+
     private static string? KeywordCategory(string padded, decimal amount)
     {
-        foreach (var (category, words, sign) in KeywordRules)
+        foreach (var (category, words, sign) in PaddedKeywordRules)
         {
             if (sign > 0 && amount <= 0) continue;
             if (sign < 0 && amount > 0) continue;
-            if (words.Any(w => padded.Contains(" " + w + " ", StringComparison.Ordinal))) return category;
+            foreach (var w in words)
+                if (padded.Contains(w, StringComparison.Ordinal)) return category;
         }
         return null;
     }

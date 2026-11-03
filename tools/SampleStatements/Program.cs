@@ -21,6 +21,9 @@ if (args.Length == 2 && args[0] == "generate")
     Write(Path.Combine(dir, "Caisse Fictive 2025-10.pdf"), Render(Sample(Style.FrenchSignedAmount, 2025, 10, 26, seed++)));
     Write(Path.Combine(dir, "Mutuelle Imaginaire 2025-10.pdf"), Render(Sample(Style.Atypical, 2025, 10, 22, seed++)));
     Write(Path.Combine(dir, "Banque Exemple 2025-09 (scan).pdf"), AsScan(Render(Sample(Style.FrenchDebitCredit, 2025, 9, 20, seed++))));
+    // A Caisse d'Epargne-style current account (fictitious), three months.
+    for (var m = 9; m <= 11; m++)
+        Write(Path.Combine(dir, $"Caisse d'Epargne 2025-{m:D2}.pdf"), Render(Sample(Style.FrenchDebitCredit, 2025, m, 30, seed++) with { BankName = "Caisse d'Epargne" }));
     // A Banque Nationale-style month (fictitious): Mastercard, chequing and savings, as PDF and as CSV.
     var bnc = BncGenerator.Sample(2025, 8, seed++);
     foreach (var a in new[] { BncGenerator.BncAccount.Card, BncGenerator.BncAccount.Chequing, BncGenerator.BncAccount.Savings })
@@ -64,7 +67,21 @@ if (args.Length == 2 && args[0] == "words")
             Console.WriteLine($"p{line.Page} y={line.Top,6:0.0} | " + string.Join(" | ", line.Words.Select(w => $"{w.Text}@{w.Left:0}")));
     return 0;
 }
-Console.Error.WriteLine("usage: generate <folder> | parse <file.pdf> | words <file.pdf>");
+if (args.Length == 2 && args[0] == "big")
+{
+    // big <folder>: ten years of fictitious exports with a lot of operations, to measure the app on large data.
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    Write(Path.Combine(dir, "Caisse d'Epargne export 2016-2025.csv"), BigData.CaisseEpargneCsv(2016, 10, 170, 3));
+    Write(Path.Combine(dir, "Northwind Bank export 2016-2025.csv"), BigData.NorthwindCsv(2016, 10, 170, 5));
+    return 0;
+}
+if (args.Length == 2 && args[0] == "bench")
+{
+    // bench <folder made by "big">: imports the files into a throw-away database and measures the engine.
+    await Bench.Run(args[1]);
+    return 0;
+}
+Console.Error.WriteLine("usage: generate <folder> | big <folder> | bench <folder> | parse <file.pdf> | words <file.pdf>");
 return 2;
 
 static void Write(string path, byte[] bytes) { File.WriteAllBytes(path, bytes); Console.WriteLine(path); }

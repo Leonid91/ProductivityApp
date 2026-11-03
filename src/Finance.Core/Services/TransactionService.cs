@@ -45,13 +45,10 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         var key = Classifier.LearningKey(label, t.Amount, t.BankCategory, SystemOf(t.AccountId));
         if (key.Length > 0) db.UpsertKeyRule(key, t.Brand, categoryId);
         db.UpsertBrandCategory(t.Brand, categoryId);
-        foreach (var other in db.AllTransactions().Where(x => x.Id != t.Id && string.Equals(x.Brand, t.Brand, StringComparison.OrdinalIgnoreCase)))
-        {
-            if (other.CategoryId == categoryId && other.CategorySource == ValueSource.User) continue;
-            other.CategoryId = categoryId;
-            other.CategorySource = ValueSource.User;
-            db.UpdateTransaction(other);
-        }
+        db.SetCategoryOf(db.AllTransactions()
+            .Where(x => x.Id != t.Id && string.Equals(x.Brand, t.Brand, StringComparison.OrdinalIgnoreCase)
+                && !(x.CategoryId == categoryId && x.CategorySource == ValueSource.User))
+            .Select(x => x.Id).ToList(), categoryId, ValueSource.User);
     }
 
     /// <summary>Renames the brand of one operation and teaches it for the merchant. Returns how many other operations followed.</summary>
@@ -124,12 +121,9 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         {
             db.UpsertBrandCategory(brand, categoryId);
             db.SetBrandRulesCategory(brand, categoryId);
-            foreach (var t in db.AllTransactions().Where(x => string.Equals(x.Brand, brand, StringComparison.OrdinalIgnoreCase) && x.CategoryId != categoryId))
-            {
-                t.CategoryId = categoryId;
-                t.CategorySource = ValueSource.User;
-                db.UpdateTransaction(t);
-            }
+            db.SetCategoryOf(db.AllTransactions()
+                .Where(x => string.Equals(x.Brand, brand, StringComparison.OrdinalIgnoreCase) && x.CategoryId != categoryId)
+                .Select(x => x.Id).ToList(), categoryId, ValueSource.User);
         });
         ReapplyRules();
         return db.AllTransactions().Count(x => before.TryGetValue(x.Id, out var c) && c != x.CategoryId);

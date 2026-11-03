@@ -74,13 +74,32 @@ public sealed class SummaryService(Database db)
         return new PeriodIndex(mine, years, currencies, first, last);
     }
 
+    private (long Version, string Currency, Dictionary<long, string> Recurring, Dictionary<long, Transaction> ById)? _history;
+    private readonly Lock _gate = new();
+
+    /// <summary>
+    /// What is recurring is found over the whole history, the same for every period: worked out once, again only
+    /// after the data changes.
+    /// </summary>
+    private (Dictionary<long, string> Recurring, Dictionary<long, Transaction> ById) History(string currency)
+    {
+        lock (_gate)
+        {
+            if (_history is { } h && h.Version == db.Version && h.Currency == currency) return (h.Recurring, h.ById);
+            var version = db.Version;
+            var everything = db.AllTransactions().Where(t => t.Currency == currency).ToList();
+            var recurring = RecurringDetector.Detect(everything);
+            var byId = everything.ToDictionary(t => t.Id);
+            _history = (version, currency, recurring, byId);
+            return (recurring, byId);
+        }
+    }
+
     public PeriodSummary Summarize(DateOnly from, DateOnly to, Granularity g, string currency)
     {
         if (to < from) throw new ArgumentException("The period ends before it starts.");
         var txs = db.Transactions(from, to).Where(t => t.Currency == currency).ToList();
-        var everything = db.AllTransactions().Where(t => t.Currency == currency).ToList();
-        var recurring = RecurringDetector.Detect(everything);
-        var byId = everything.ToDictionary(t => t.Id);
+        var (recurring, byId) = History(currency);
         var accounts = db.Accounts().ToDictionary(a => a.Id);
         var movements = Movements.Build(txs, byId, accounts);
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

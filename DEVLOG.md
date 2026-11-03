@@ -210,3 +210,30 @@
   every operation and every learned wording of the brand now take it.
 - Tests: 113 unit and integration tests (categories made, nested twelve levels, edited, moved, deleted; banks and
   currencies) and 37 end-to-end checks.
+
+## November 3rd, 2026 - Faster and leaner on large data - Commit 9
+
+Measured on 41,520 fictitious operations (ten years, two accounts), with `SampleStatements big` and `bench`, and the
+real app with `tools/e2e/perf.mjs`.
+
+### Changed
+- Operations are kept in memory between writes, and writes update that copy instead of dropping it; texts that repeat
+  (currencies, categories, brands, wordings) are stored once.
+- The classifier works out what a wording says once per wording, not once per operation.
+- What is recurring is found once over the history and kept until the data changes, instead of for every period.
+- A brand's new category is written to all its operations at once.
+- Indexes for the operations of a statement and of an account.
+- Periods are drawn in the background a little at a time, periods far from the screen are not laid out or painted,
+  and they let go of their data once far away (their height is kept).
+
+### Results
+- Scrolling through the months: 80 fps before, 156 fps after. Category picker: 194 fps before, 240 fps after.
+- Month summary 6 per second before, about 2,470 after; year 5.7 -> 143; ten years 2.9 -> 31.
+- Category change for a whole brand 0.6 per second before, 17.6 after; brand rename 0.8 -> 13; import 7,830 -> 14,225
+  operations per second.
+- Engine memory once loaded: 33.6 MB -> 19.8 MB managed, peak 245 MB -> 134 MB. Interface heap after scrolling the
+  months: 64 MB -> 51 MB.
+
+### Added
+- Fictitious Caisse d'Epargne statements in the samples (three months), and `SampleStatements big` / `bench` for large
+  data (Caisse d'Epargne-style and English CSV exports).
