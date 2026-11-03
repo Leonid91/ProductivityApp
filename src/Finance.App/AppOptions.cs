@@ -43,7 +43,7 @@ internal sealed class AppOptions
                     var parts = Next().Split('x');
                     size = new Size(int.Parse(parts[0]), int.Parse(parts[1]));
                     break;
-#if DEBUG
+#if DEBUG || E2E
                 case "--cdp-port": port = int.Parse(Next()); break;
                 case "--dev-url": devUrl = Next(); break;
 #endif

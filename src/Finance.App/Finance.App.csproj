@@ -26,7 +26,34 @@
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
+    <!--
+      Smaller file: only the Windows API projection (used for the built-in text recognition) is trimmed to what the
+      app calls; every other assembly is kept whole, so the window, WebView2 (COM) and JSON keep working as before.
+    -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <CustomResourceTypesSupport>true</CustomResourceTypesSupport>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
   </PropertyGroup>
+  <!-- E2E=true: a published build the end-to-end check can drive (debugging port allowed), never shipped. -->
+  <PropertyGroup Condition="'$(E2E)' == 'true'">
+    <DefineConstants>$(DefineConstants);E2E</DefineConstants>
+  </PropertyGroup>
+  <Target Name="TrimOnlyWindowsProjection" AfterTargets="PrepareForILLink">
+    <ItemGroup>
+      <ManagedAssemblyToLink Condition="'%(Filename)' != 'Microsoft.Windows.SDK.NET'">
+        <IsTrimmable>false</IsTrimmable>
+        <TrimMode>copy</TrimMode>
+      </ManagedAssemblyToLink>
+      <ManagedAssemblyToLink Condition="'%(Filename)' == 'Microsoft.Windows.SDK.NET'">
+        <IsTrimmable>true</IsTrimmable>
+        <TrimMode>link</TrimMode>
+      </ManagedAssemblyToLink>
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />

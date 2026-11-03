@@ -237,3 +237,11 @@ real app with `tools/e2e/perf.mjs`.
 ### Added
 - Fictitious Caisse d'Epargne statements in the samples (three months), and `SampleStatements big` / `bench` for large
   data (Caisse d'Epargne-style and English CSV exports).
+
+## November 3rd, 2026 - Smaller app - Commit 10
+
+### Changed
+- The Windows API projection used for text recognition is trimmed to what the app calls (every other part is kept
+  whole): `ProductivityApp.exe` goes from 66.4 MB to 60.7 MB.
+- `-p:E2E=true` publishes a build the end-to-end check can drive, so the shipped configuration (trimmed) is checked
+  too; never shipped.

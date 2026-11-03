@@ -187,7 +187,7 @@ internal sealed class MainForm : Form
 
         var s = core.Settings;
         var debug = false;
-#if DEBUG
+#if DEBUG || E2E
         debug = true;
 #endif
         s.AreDevToolsEnabled = debug;
