@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import {
   Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
-  Typography, useTheme, type SxProps, type Theme,
+  Tooltip, Typography, useTheme, type SxProps, type Theme,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import Check from '@mui/icons-material/CheckRounded'
@@ -26,13 +26,21 @@ export function useCategoryColor(): (c: Category) => string | null {
   return (c) => c.color ?? (c.group === 'exceptional' ? theme.palette.gold.text : null)
 }
 
-/** The four sections of the category picker; a nested category shows under the section of its top category. */
-export const categorySections: [string, string, (root: Category) => boolean][] = [
-  ['expense', 'Expenses', (c) => c.kind === 'expense' && c.group !== 'exceptional'],
-  ['exceptional', 'Exceptional', (c) => c.group === 'exceptional'],
-  ['income', 'Income', (c) => c.kind === 'income'],
-  ['transfer', 'Between my accounts', (c) => c.kind === 'transfer'],
+const sections: [string, (root: Category) => boolean][] = [
+  ['expense', (c) => c.kind === 'expense' && c.group !== 'exceptional'],
+  ['exceptional', (c) => c.group === 'exceptional'],
+  ['income', (c) => c.kind === 'income'],
+  ['transfer', (c) => c.kind === 'transfer'],
 ]
+
+/**
+ * The four first-layer labels the categories sit under, with the names the person gave them (Categories);
+ * a nested category shows under the label of its top category.
+ */
+export function useCategorySections(): [string, string, (root: Category) => boolean][] {
+  const { settings } = useApp()
+  return sections.map(([kind, test]) => [kind, settings[`section.${kind}`] ?? kind, test])
+}
 
 /** Category picker grouped by kind, nested categories indented under theirs; used in tables, drafts and dialogs. */
 export function CategoryMenu({ anchor, value, onClose, onPick }: {
@@ -44,6 +52,7 @@ export function CategoryMenu({ anchor, value, onClose, onPick }: {
   const { tree } = useApp()
   const theme = useTheme()
   const colorOf = useCategoryColor()
+  const categorySections = useCategorySections()
   return (
     <Menu anchorEl={anchor} open={anchor !== null} onClose={onClose} slotProps={{ paper: { sx: { maxHeight: 480, minWidth: 260 } } }}>
       {categorySections.flatMap(([kind, label, test]) => [
@@ -66,6 +75,19 @@ export function CategoryMenu({ anchor, value, onClose, onPick }: {
 }
 
 /** Category shown as a soft pill; clicking it opens the picker. */
+/** "Expenses › Food › Snacks": the label and every category a category is in. */
+export function useCategoryPath(): (c: Category) => string {
+  const { category } = useApp()
+  const sections = useCategorySections()
+  return (c) => {
+    const names = [c.name]
+    let root = c
+    while (root.parentId) { root = category(root.parentId); names.unshift(root.name) }
+    const label = sections.find(([, , test]) => test(root))?.[1]
+    return (label ? [label, ...names] : names).join(' › ')
+  }
+}
+
 export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?: (id: string) => void; disabled?: boolean }) {
   const { category } = useApp()
   const theme = useTheme()
@@ -73,36 +95,41 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
   const c = category(id)
   const dark = theme.palette.mode === 'dark'
   const color = useCategoryColor()(c)
+  const path = useCategoryPath()
   return (
     <>
-      <Box
-        component="button"
-        disabled={disabled || !onChange}
-        onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget) }}
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 0.75,
-          border: 0,
-          borderRadius: 999,
-          py: 0.4,
-          pl: 0.9,
-          pr: 1.25,
-          maxWidth: '100%',
-          font: 'inherit',
-          fontSize: 13,
-          fontWeight: color ? 620 : 520,
-          color: color ?? (c.kind === 'transfer' ? 'text.secondary' : 'text.primary'),
-          bgcolor: color ? alpha(color, dark ? 0.2 : 0.13) : dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)',
-          cursor: onChange ? 'pointer' : 'default',
-          transition: 'background-color 120ms',
-          '&:hover:not(:disabled)': { bgcolor: color ? alpha(color, dark ? 0.28 : 0.2) : dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.075)' },
-          '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}` },
-        }}
-      >
-        <CategoryIcon name={c.icon} sx={{ fontSize: 16, color: color ?? 'text.secondary' }} />
-        <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</Box>
-      </Box>
+      <Tooltip title={path(c)} placement="top-start" enterDelay={400}>
+        <Box component="span" data-path={path(c)} sx={{ display: 'inline-flex', maxWidth: '100%' }}>
+          <Box
+            component="button"
+            disabled={disabled || !onChange}
+            onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget) }}
+            sx={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 0.75,
+              border: 0,
+              borderRadius: 999,
+              py: 0.4,
+              pl: 0.9,
+              pr: 1.25,
+              maxWidth: '100%',
+              font: 'inherit',
+              fontSize: 13,
+              fontWeight: color ? 620 : 520,
+              color: color ?? (c.kind === 'transfer' ? 'text.secondary' : 'text.primary'),
+              bgcolor: color ? alpha(color, dark ? 0.2 : 0.13) : dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)',
+              cursor: onChange ? 'pointer' : 'default',
+              transition: 'background-color 120ms',
+              '&:hover:not(:disabled)': { bgcolor: color ? alpha(color, dark ? 0.28 : 0.2) : dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.075)' },
+              '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}` },
+            }}
+          >
+            <CategoryIcon name={c.icon} sx={{ fontSize: 16, color: color ?? 'text.secondary' }} />
+            <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</Box>
+          </Box>
+        </Box>
+      </Tooltip>
       {onChange && <CategoryMenu anchor={anchor} value={id} onClose={() => setAnchor(null)} onPick={onChange} />}
     </>
   )
@@ -134,7 +161,7 @@ export function SectionCard({ title, action, children, sx }: { title?: ReactNode
     <Box sx={{ border: 1, borderColor: 'divider', borderRadius: '20px', bgcolor: 'background.paper', p: { xs: 2, md: 3 }, ...sx as object }}>
       {(title || action) && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-          {title && <Typography variant="h6" sx={{ flex: 1 }}>{title}</Typography>}
+          {title ? <Typography variant="h6" sx={{ flex: 1 }}>{title}</Typography> : <Box sx={{ flex: 1 }} />}
           {action}
         </Box>
       )}

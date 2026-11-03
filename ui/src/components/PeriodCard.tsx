@@ -46,15 +46,13 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
  * One period: title, operations, recurring payments, regular income, transfers (From / To),
  * Expenses / Earnings / Balance, the pies, expenses per day, the money moved, and the PDF export.
  */
-export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, showDays }: {
+export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }: {
   from: string
   to: string
   granularity: Granularity
   currency: string
   onEdit: (tx: TransactionView) => void
   onLoaded?: (s: PeriodSummary) => void
-  /** Shows how many days the period has, next to its title (months differ in length). */
-  showDays?: boolean
 }) {
   const { dataVersion, fail, category, settings } = useApp()
   const theme = useTheme()
@@ -129,7 +127,8 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, 
       component="section"
       data-period={from}
       // Periods far from the screen are not laid out or painted (the browser skips them until they come near).
-      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: summary ? undefined : height, contentVisibility: 'auto', containIntrinsicSize: 'auto 2400px' }}
+      // Only their height is guessed meanwhile: a guessed width would stretch every period wider than the window.
+      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: summary ? undefined : height, contentVisibility: 'auto', minWidth: 0, containIntrinsicHeight: 'auto 2400px' }}
     >
       {!summary ? (
         <>
@@ -141,28 +140,26 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, 
         <>
           <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 2.5 }}>
             <Typography variant="h5" component="h2" sx={{ flex: 1 }}>{summary.title}</Typography>
-            {showDays && (
-              <Typography data-days color="text.secondary" className="tnum" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
-                {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
-              </Typography>
-            )}
+            <Typography data-days color="text.secondary" className="tnum" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+              {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
+            </Typography>
           </Box>
-          <TransactionTable transactions={main} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} empty="No other spending in this period" />
+          <TransactionTable transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
 
           {recurringOut.length > 0 && (
             <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
-              <TransactionTable transactions={recurringOut} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} frequency />
+              <TransactionTable transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency />
             </Section>
           )}
           {income.length > 0 && (
             <Section id="income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Income" total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
-              <TransactionTable transactions={income} currency={currency} paged={granularity !== 'month'} onEdit={editOriginal} frequency />
+              <TransactionTable transactions={income} currency={currency} paged onEdit={editOriginal} frequency />
             </Section>
           )}
 
           {mode === 'table' && summary.movements.length > 0 && (
             <Section id="movements" icon={<SwapHoriz />} title="Transfers, card payments & investments" note={String(summary.movements.length)}>
-              <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
+              <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
             </Section>
           )}
           {mode === 'separate' && summary.movements.length > 0 && (
@@ -171,7 +168,7 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, 
               disableGutters
               elevation={0}
               slotProps={{ transition: { unmountOnExit: true } }}
-              sx={{ mt: 3, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '&::before': { display: 'none' } }}
+              sx={{ mt: 3, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '& th': { bgcolor: 'surface.sunken' }, '&::before': { display: 'none' } }}
             >
               <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2.5, minHeight: 52 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
@@ -181,7 +178,7 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded, 
                 </Box>
               </AccordionSummary>
               <AccordionDetails sx={{ px: 2.5, pt: 0, pb: 2 }}>
-                <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged={granularity !== 'month'} onEdit={onEdit} />
+                <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
               </AccordionDetails>
             </Accordion>
           )}

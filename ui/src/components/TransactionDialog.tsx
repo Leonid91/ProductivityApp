@@ -9,7 +9,7 @@ import { api, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { today } from '../format'
 import { CategoryIcon } from './CategoryIcon'
-import { ConfirmDialog, categorySections, useCategoryColor } from './common'
+import { ConfirmDialog, useCategoryColor, useCategorySections } from './common'
 
 export const pickerFormats: Record<string, string> = {
   'DD month YYYY': 'DD MMMM YYYY', 'YYYY-MM-DD': 'YYYY-MM-DD', 'DD-MM-YYYY': 'DD-MM-YYYY', 'DD/MM/YYYY': 'DD/MM/YYYY', 'MM/DD/YYYY': 'MM/DD/YYYY',
@@ -23,8 +23,9 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   defaultDate?: string
   onClose: () => void
 }) {
-  const { tree, accounts, settings, notify, fail, dataChanged, refreshAccounts, askScope, category } = useApp()
+  const { tree, accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
   const colorOf = useCategoryColor()
+  const categorySections = useCategorySections()
   const theme = useTheme()
   const gold = theme.palette.gold.text
   const [date, setDate] = useState<Dayjs | null>(dayjs())
@@ -32,7 +33,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   const [amount, setAmount] = useState('')
   const [brand, setBrand] = useState('')
   const [categoryId, setCategoryId] = useState('other')
-  const [accountId, setAccountId] = useState<number | 'manual'>('manual')
+  const [accountId, setAccountId] = useState<number | ''>('')
   const [note, setNote] = useState('')
   const [earned, setEarned] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -40,6 +41,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   useEffect(() => {
     if (!open) return
     void refreshAccounts()
+    void refreshBanks()
     if (tx) {
       setDate(dayjs(tx.date))
       setDirection(tx.amount < 0 ? 'out' : 'in')
@@ -55,14 +57,16 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
       setAmount('')
       setBrand('')
       setCategoryId('other')
-      setAccountId('manual')
+      setAccountId('')
       setNote('')
       setEarned('')
     }
-  }, [open, tx, defaultDate, refreshAccounts])
+  }, [open, tx, defaultDate, refreshAccounts, refreshBanks])
+  // A new operation goes in the first account unless another is chosen.
+  useEffect(() => { if (open && !tx && accountId === '' && accounts.length) setAccountId(accounts[0].id) }, [open, tx, accountId, accounts])
 
   const value = Number(amount.replace(',', '.'))
-  const valid = date?.isValid() && Number.isFinite(value) && value > 0 && brand.trim().length > 0
+  const valid = date?.isValid() && Number.isFinite(value) && value > 0 && brand.trim().length > 0 && accountId !== ''
 
 
   // Money coming back from an investment (or a transfer in): the person may say how much of it was gain.
@@ -78,7 +82,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
       amount: Math.round(value * 100) / 100 * (direction === 'out' ? -1 : 1),
       brand: brand.trim(),
       categoryId,
-      accountId: accountId === 'manual' ? null : accountId,
+      accountId,
       note: note.trim() || null,
       earned: canEarn && earnedValue ? Math.round(earnedValue * 100) / 100 : null,
     }
@@ -159,9 +163,8 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
             }),
           ])}
         </TextField>
-        <TextField select label="Account" value={accountId} onChange={(e) => setAccountId(e.target.value === 'manual' ? 'manual' : Number(e.target.value))}>
-          {!tx && !accounts.some((a) => a.name === 'Cash & manual entries') && <MenuItem value="manual">Cash & manual entries</MenuItem>}
-          {accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name}</MenuItem>)}
+        <TextField select label="Account" value={accountId} error={accountId === ''} onChange={(e) => setAccountId(Number(e.target.value))}>
+          {accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name} · {banks.find((b) => b.id === a.bankId)?.name}</MenuItem>)}
         </TextField>
         {canEarn && (
           <TextField

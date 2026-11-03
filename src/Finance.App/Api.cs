@@ -94,7 +94,14 @@ internal static class Api
             if (before is not null && before.System != bank.System) s.Transactions.ReapplyRules();
             return s.Db.Banks();
         });
-        b.Register("banks.delete", p => { s.Db.DeleteBank(p.Get<long>("id")); s.Transactions.ReapplyRules(); return s.Db.Banks(); });
+        b.Register("banks.delete", p =>
+        {
+            // An account is always at a bank: a bank with accounts stays until they are deleted.
+            var id = p.Get<long>("id");
+            if (s.Db.Accounts().Any(a => a.BankId == id)) throw new ArgumentException("This bank still has accounts: delete them first (Bank Configuration).");
+            s.Db.DeleteBank(id);
+            return s.Db.Banks();
+        });
 
         // ------------------------------------------------------------ accounts & statements
         b.Register("accounts.list", _ => s.Db.Accounts());
@@ -111,8 +118,12 @@ internal static class Api
                 if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper)) throw new ArgumentException("A currency is a three-letter code such as CAD.");
                 a.Currency = currency;
             }
-            // 0: no bank (cash and manual entries).
-            if (p.Opt<long?>("bankId") is { } bankId && bankId != (a.BankId ?? 0)) { a.BankId = bankId == 0 ? null : bankId; reread = true; }
+            if (p.Opt<long?>("bankId") is { } bankId && bankId != a.BankId)
+            {
+                if (!s.Db.Banks().Any(x => x.Id == bankId)) throw new ArgumentException("Unknown bank.");
+                a.BankId = bankId;
+                reread = true;
+            }
             s.Db.UpdateAccount(a);
             if (reread) s.Transactions.ReapplyRules();
             return a;
@@ -343,6 +354,8 @@ internal static class Api
                 learned = brandCats.ContainsKey(g.Key) || rules.Any(x => x.MerchantKey.Length > 0 && string.Equals(x.Brand, g.Key, StringComparison.OrdinalIgnoreCase)),
                 currency = g.First().Currency,
                 lastDate = g.Max(t => t.Date).ToString("yyyy-MM-dd"),
+                // How the brand is written on the statements (operations entered by hand have no wording).
+                wordings = g.Select(t => t.RawLabel).Where(l => l.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToList(),
             };
         }).OrderByDescending(x => x.count).ToList();
         return new

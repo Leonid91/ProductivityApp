@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Button, MenuItem, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { type Dayjs } from 'dayjs'
 import Add from '@mui/icons-material/AddRounded'
 import UploadFile from '@mui/icons-material/UploadFileRounded'
-import { api, type Granularity, type PeriodIndex, type TransactionView } from '../api'
+import { api, type PeriodIndex, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, iso } from '../format'
 import { PeriodCard } from '../components/PeriodCard'
@@ -16,13 +16,11 @@ interface Period { from: string; to: string; key: string }
 export function PeriodsPage() {
   const { settings, dataVersion, fail, go } = useApp()
   const [index, setIndex] = useState<PeriodIndex | null>(null)
-  const [mode, setMode] = useState<Granularity | 'custom'>('month')
+  const [mode, setMode] = useState<'month' | 'year' | 'all' | 'custom'>('month')
   // Custom period: any two days, picked on the calendar or typed.
   const [customFrom, setCustomFrom] = useState<Dayjs | null>(null)
   const [customTo, setCustomTo] = useState<Dayjs | null>(null)
   const [currency, setCurrency] = useState(settings.currency)
-  const [fromYear, setFromYear] = useState<number | null>(null)
-  const [toYear, setToYear] = useState<number | null>(null)
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
   const [brands, setBrands] = useState<string[]>([])
@@ -38,10 +36,6 @@ export function PeriodsPage() {
         const last = dayjs(ix.last + '-01')
         setCustomFrom((d) => d ?? last)
         setCustomTo((d) => d ?? last.endOf('month'))
-      }
-      if (ix.years.length) {
-        setFromYear((y) => y ?? ix.years[ix.years.length - 1])
-        setToYear((y) => y ?? ix.years[0])
       }
     }, fail)
   }, [currency, dataVersion, fail])
@@ -60,19 +54,31 @@ export function PeriodsPage() {
       const to = customTo.format('YYYY-MM-DD')
       return [{ from, to, key: `${from}_${to}` }]
     }
-    if (fromYear === null || toYear === null) return []
-    const a = Math.min(fromYear, toYear)
-    const b = Math.max(fromYear, toYear)
-    return [{ from: iso(a, 1, 1), to: iso(b, 12, 31), key: `${a}-${b}` }]
-  }, [index, mode, fromYear, toYear, customFrom, customTo])
+    // All time: from the first operation to today, found by itself.
+    if (!index.first) return []
+    const today = dayjs().format('YYYY-MM-DD')
+    return [{ from: index.first, to: today < index.first ? index.first : today, key: `${index.first}_${today}` }]
+  }, [index, mode, customFrom, customTo])
 
   const onEdit = useCallback((tx: TransactionView) => setEditing(tx), [])
+
+  // Table headers stick just under the bar of tabs, whatever its height.
+  const bar = useRef<HTMLDivElement>(null)
+  const [barHeight, setBarHeight] = useState(0)
+  useEffect(() => {
+    const el = bar.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setBarHeight(el.offsetHeight))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const empty = index !== null && index.months.length === 0
 
   return (
-    <Box sx={{ maxWidth: 1180, mx: 'auto' }}>
+    <Box sx={{ maxWidth: 1180, mx: 'auto', '--sticky-top': `${barHeight}px` }}>
       <Box
+        ref={bar}
         sx={{
           position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
           py: 2, mb: 1, bgcolor: 'background.default',
@@ -81,23 +87,13 @@ export function PeriodsPage() {
         <ToggleButtonGroup exclusive value={mode} onChange={(_, v) => v && setMode(v)}>
           <ToggleButton value="month">Month</ToggleButton>
           <ToggleButton value="year">Year</ToggleButton>
-          <ToggleButton value="range">Several years</ToggleButton>
+          <ToggleButton value="all">All time</ToggleButton>
           <ToggleButton value="custom">Custom</ToggleButton>
         </ToggleButtonGroup>
         {mode === 'custom' && (
           <>
             <DatePicker label="From" value={customFrom} onChange={setCustomFrom} format={pickerFormats[settings.dateFormat] ?? 'DD MMMM YYYY'} slotProps={{ textField: { size: 'small', sx: { width: 230 } } }} />
             <DatePicker label="To" value={customTo} onChange={setCustomTo} minDate={customFrom ?? undefined} format={pickerFormats[settings.dateFormat] ?? 'DD MMMM YYYY'} slotProps={{ textField: { size: 'small', sx: { width: 230 } } }} />
-          </>
-        )}
-        {mode === 'range' && index && index.years.length > 0 && (
-          <>
-            <TextField select size="small" label="From" value={fromYear ?? ''} onChange={(e) => setFromYear(Number(e.target.value))} sx={{ width: 110 }}>
-              {[...index.years].reverse().map((y) => <MenuItem key={y} value={y}>{y}</MenuItem>)}
-            </TextField>
-            <TextField select size="small" label="To" value={toYear ?? ''} onChange={(e) => setToYear(Number(e.target.value))} sx={{ width: 110 }}>
-              {index.years.map((y) => <MenuItem key={y} value={y}>{y}</MenuItem>)}
-            </TextField>
           </>
         )}
         <Box sx={{ flex: 1 }} />
@@ -116,16 +112,15 @@ export function PeriodsPage() {
           action={<Button variant="contained" onClick={() => go('import')}>Import a statement</Button>}
         />
       ) : (
-        <Box sx={{ display: 'grid', gap: 3, pb: 6 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 3, pb: 6 }}>
           {periods.map((p) => (
             <PeriodCard
               key={`${mode}:${p.key}:${currency}`}
               from={p.from}
               to={p.to}
-              granularity={mode === 'custom' ? 'range' : mode}
+              granularity={mode === 'month' || mode === 'year' ? mode : 'range'}
               currency={currency}
               onEdit={onEdit}
-              showDays={mode === 'month' || mode === 'custom'}
             />
           ))}
         </Box>

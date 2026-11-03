@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 7;
+    private const int SchemaVersion = 8;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -111,6 +111,19 @@ public sealed class Database : IDisposable
                 CREATE INDEX IF NOT EXISTS ix_transactions_account ON transactions(account_id, date);
                 PRAGMA user_version = 7;
                 """);
+        }
+        if (version < 8)
+        {
+            // An account is always at a bank. Accounts without one (the former "Cash & manual entries") are removed
+            // when empty; with operations, they go to the bank of the first account that has one (National Bank if none).
+            Exec("""
+                DELETE FROM accounts WHERE bank_id IS NULL AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.account_id = accounts.id);
+                UPDATE accounts SET bank_id = COALESCE(
+                    (SELECT bank_id FROM accounts a WHERE a.bank_id IS NOT NULL ORDER BY a.id LIMIT 1),
+                    (SELECT id FROM banks WHERE name = $n ORDER BY id LIMIT 1))
+                WHERE bank_id IS NULL;
+                PRAGMA user_version = 8;
+                """, ("$n", KnownBanks.National));
         }
     }
 

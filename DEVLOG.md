@@ -245,3 +245,30 @@ real app with `tools/e2e/perf.mjs`.
   whole): `ProductivityApp.exe` goes from 66.4 MB to 60.7 MB.
 - `-p:E2E=true` publishes a build the end-to-end check can drive, so the shipped configuration (trimmed) is checked
   too; never shipped.
+
+## November 3rd, 2026 - Period layout fixed, labels renameable, every account at a bank - Commit 11
+
+### Fixed
+- The month view could stretch far wider than the window: periods not drawn yet were given a guessed width as well as
+  a guessed height (2400 px), and with many months that width won. Only the height is guessed now, and the column of
+  periods can never grow past the window.
+- Month, Year, All time and Custom share the same period card with the same settings: tables in pages of 25 and the
+  number of days next to every title.
+- A correction learned for a whole brand showed "—" as its statement wording: it now shows the brand's wordings on the
+  statements ("Entered by hand" or "No operation yet" when there are none).
+
+### Changed
+- "Several years" is replaced by "All time": from the first operation to today, found by itself.
+- Settings: Periods and Calendar are groups inside Display; Definitions has a Categories tab (same as the side bar).
+- Expenses, Exceptional, Income and Transfers (was "Between my accounts") are the first-layer labels of the
+  categories, shown as chips and renamed in place.
+- Banking systems are named by how cards work: "Credit card system" and "Deferred debit system".
+- An account is always at a bank: an import without a bank, an operation without an account and deleting a bank that
+  still has accounts are refused; the "Cash & manual entries" account and the "No bank" tab are gone. Database v8
+  removes empty accounts without a bank and moves the others to the bank of the first account.
+- CSV, OFX, QFX and QIF files are ignored by git and refused by the pre-commit check, like PDFs and databases.
+
+### Added
+- The full path of a category on hover ("Expenses › Food › Snacks").
+- Table headers stay visible while a long table scrolls, under the bar of tabs.
+- A warning on the Import page while PDF statements are imported: only PDFs downloaded from the bank.

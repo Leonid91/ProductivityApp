@@ -35,12 +35,22 @@ public class BankTests
     }
 
     [Fact]
+    public async Task An_account_is_never_opened_without_a_bank()
+    {
+        using var s = new TempStore();
+        var draft = await s.Imports.ParseAsync("a.pdf", Render(Sample(Style.FrenchDebitCredit, 2025, 10, 20, 9)));
+        Assert.Throws<ArgumentException>(() => s.Imports.Commit(new CommitRequest(draft.Id, null, null, "CAD", AccountKind.Bank, [])));
+        Assert.Empty(s.Db.Accounts());
+        Assert.Empty(s.Db.AllTransactions());
+    }
+
+    [Fact]
     public async Task A_brand_category_set_from_the_brand_list_wins_over_its_learned_wordings()
     {
         using var s = new TempStore();
         var spec = Sample(Style.EnglishWithdrawalsDeposits, 2025, 10, 30, 4);
         var draft = await s.Imports.ParseAsync("october.pdf", Render(spec));
-        s.Imports.Commit(new CommitRequest(draft.Id, null, null, "CAD", AccountKind.Bank, []));
+        s.Imports.Commit(new CommitRequest(draft.Id, null, null, "CAD", AccountKind.Bank, [], BankId: s.Bank));
         var t = s.Db.AllTransactions().First(x => x.Amount < 0 && x.RawLabel.Length > 0);
         // Learned for its wording and its brand.
         s.Transactions.SetCategory(t.Id, "entertainment");

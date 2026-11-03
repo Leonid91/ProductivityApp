@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
-  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, MenuItem, Table, TableBody, TableCell, TableRow, TextField, Tooltip,
-  Typography, useTheme, type Theme,
+  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Table, TableBody, TableCell, TableRow, TextField,
+  Tooltip, Typography, useTheme, type Theme,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
 import EditOutlined from '@mui/icons-material/EditOutlined'
@@ -10,22 +10,18 @@ import Block from '@mui/icons-material/BlockRounded'
 import { api, type Category, type CategoryKind } from '../api'
 import { useApp } from '../AppContext'
 import { CategoryIcon } from '../components/CategoryIcon'
-import { ConfirmDialog, PageHeader, SectionCard, categorySections, useCategoryColor } from '../components/common'
+import { ConfirmDialog, PageHeader, SectionCard, useCategoryColor, useCategorySections } from '../components/common'
 import { useRowOrder, type TreeEntry } from '../components/order'
 
 const palette = ['#e53935', '#d81b60', '#8e24aa', '#5e35b1', '#3949ab', '#1e88e5', '#0288d1', '#00897b', '#43a047', '#689f38', '#afb42b', '#f9a825', '#fb8c00', '#f4511e', '#6d4c41', '#757575']
-
-const kinds: { value: CategoryKind; label: string }[] = [
-  { value: 'expense', label: 'Expenses' },
-  { value: 'income', label: 'Income' },
-  { value: 'transfer', label: 'Between my accounts' },
-]
 
 type Editing = { id: string | null; name: string; parentId: string | null; kind: CategoryKind; color: string | null }
 
 /** Create or edit a category: its name, the category it is in, its colour. */
 function CategoryDialog({ editing, onClose }: { editing: Editing; onClose: () => void }) {
   const { tree, setCategories, notify, fail } = useApp()
+  const sections = useCategorySections()
+  const kinds = sections.filter(([k]) => k !== 'exceptional').map(([value, label]) => ({ value: value as CategoryKind, label }))
   const [v, setV] = useState<Editing>(editing)
 
   // A category goes in one of the same kind, never in itself or one of its own subcategories.
@@ -93,11 +89,45 @@ const swatch = (selected: boolean, color: string) => (t: Theme) => ({
   boxShadow: selected ? `0 0 0 2px ${t.palette.background.paper}, 0 0 0 4px ${t.palette.primary.main}` : `inset 0 0 0 1px ${t.palette.divider}`,
 })
 
-/** Every category, nested at any depth: create, rename, colour, move, reorder and delete. */
-export function CategoriesPage() {
-  const { tree, setCategories, notify, fail } = useApp()
+/** A first-layer label (Expenses, Exceptional, Income, Transfers): a chip like the categories, renamed in place. */
+function SectionChip({ kind, label }: { kind: string; label: string }) {
+  const { setSetting } = useApp()
   const theme = useTheme()
+  const gold = kind === 'exceptional' ? theme.palette.gold.text : undefined
+  return (
+    <InputBase
+      key={label}
+      defaultValue={label}
+      inputProps={{ 'aria-label': 'Label name', maxLength: 40, size: Math.max(label.length, 4) }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur() }}
+      onBlur={(e) => {
+        const v = e.target.value.trim()
+        if (!v || v === label) { e.target.value = label; return }
+        void setSetting(`section.${kind}`, v)
+      }}
+      sx={{
+        fontSize: 13, fontWeight: 650, color: gold ?? 'text.primary', borderRadius: 999, px: 1.25, py: 0.1,
+        bgcolor: gold ? `${gold}22` : 'action.hover', '&:hover, &.Mui-focused': { bgcolor: gold ? `${gold}33` : 'action.selected' },
+        '& input': { p: '3px 0', cursor: 'text' },
+      }}
+    />
+  )
+}
+
+/** Every category, nested at any depth, under its first-layer label: create, rename, colour, move, reorder and delete. */
+export function CategoriesPage() {
+  return (
+    <Box sx={{ maxWidth: 980, mx: 'auto', pt: 3, pb: 6 }}>
+      <PageHeader title="Categories" />
+      <CategoriesPanel />
+    </Box>
+  )
+}
+
+export function CategoriesPanel() {
+  const { tree, setCategories, notify, fail } = useApp()
   const colorOf = useCategoryColor()
+  const categorySections = useCategorySections()
   const [editing, setEditing] = useState<Editing | null>(null)
   const [confirm, setConfirm] = useState<Category | null>(null)
 
@@ -116,17 +146,14 @@ export function CategoriesPage() {
   }
 
   return (
-    <Box sx={{ maxWidth: 980, mx: 'auto', pt: 3, pb: 6 }}>
-      <PageHeader title="Categories">
-        <Button variant="contained" startIcon={<Add />} onClick={() => setEditing({ id: null, name: '', parentId: null, kind: 'expense', color: null })}>New category</Button>
-      </PageHeader>
-      <SectionCard>
+    <>
+      <SectionCard action={<Button variant="contained" startIcon={<Add />} onClick={() => setEditing({ id: null, name: '', parentId: null, kind: 'expense', color: null })}>New category</Button>}>
         <Table size="small" data-categories>
           <TableBody>
             {categorySections.flatMap(([kind, label, test]) => [
               <TableRow key={'h' + kind}>
-                <TableCell colSpan={4} sx={{ pt: 2.5, fontSize: 11.5, fontWeight: 650, letterSpacing: '.04em', textTransform: 'uppercase', color: kind === 'exceptional' ? theme.palette.gold.text : 'text.secondary' }}>
-                  {label}
+                <TableCell colSpan={4} data-section-label={kind} sx={{ pt: 2.5 }}>
+                  <SectionChip kind={kind} label={label} />
                 </TableCell>
               </TableRow>,
               ...order.rows.filter((e) => test(e.root)).map((e) => {
@@ -178,6 +205,6 @@ export function CategoriesPage() {
         onClose={() => setConfirm(null)}
         onConfirm={() => { if (confirm) void remove(confirm) }}
       />
-    </Box>
+    </>
   )
 }

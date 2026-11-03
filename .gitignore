@@ -15,6 +15,10 @@ ui/node_modules/.tmp/
 *.db-journal
 *.sqlite
 *.pdf
+*.csv
+*.ofx
+*.qfx
+*.qif
 *.log
 data/
 

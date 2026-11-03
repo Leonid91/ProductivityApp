@@ -62,7 +62,7 @@ public class InsightsTests
     {
         var draft = await s.Imports.ParseAsync(name, csv);
         s.Imports.Choose(draft.Id, account, account is null ? kind : null);
-        return s.Imports.Commit(new CommitRequest(draft.Id, account, null, "CAD", account is null ? kind : null, []));
+        return s.Imports.Commit(new CommitRequest(draft.Id, account, null, "CAD", account is null ? kind : null, [], BankId: s.Bank));
     }
 
     [Fact]

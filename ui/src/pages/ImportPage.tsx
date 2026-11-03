@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box, Button, IconButton, LinearProgress, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
+  Alert, Box, Button, IconButton, LinearProgress, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import CloudUpload from '@mui/icons-material/CloudUploadRounded'
@@ -57,6 +57,9 @@ export function ImportPage() {
     for (const s of statements) if (s.bankId !== null) by.set(s.bankId, (by.get(s.bankId) ?? new Set()).add(s.currency))
     return new Set([...by].filter(([, c]) => c.size > 1).map(([id]) => id))
   }, [statements])
+  // PDFs are read by the app: one made to harm (not from the bank) could slow it down, so the person is warned.
+  const isPdf = (name: string) => name.toLowerCase().endsWith('.pdf')
+  const readingPdf = queue.some((j) => isPdf(j.name)) || drafts.some((d) => isPdf(d.fileName))
   const statementKey = useCallback((s: StatementInfo) => String(s.id), [])
   const templateKey = useCallback((t: BankTemplate) => String(t.id), [])
   const statementOrder = useRowOrder('statements', statements, statementKey)
@@ -130,6 +133,11 @@ export function ImportPage() {
         )}
       </Box>
 
+      {readingPdf && (
+        <Alert data-pdf-warning severity="warning" sx={{ mt: 3 }}>
+          Import only PDF statements downloaded from your bank: a PDF from anywhere else can be made to slow the app down or stop it.
+        </Alert>
+      )}
       <Box sx={{ display: 'grid', gap: 3, mt: 3 }}>
         {drafts.map((d) => (
           <DraftCard key={d.id} draft={d} onDone={() => { setDrafts((list) => list.filter((x) => x.id !== d.id)); reloadLists() }} />

@@ -15,7 +15,6 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
 
     private BankingSystem SystemOf(long accountId) => db.Accounts().FirstOrDefault(a => a.Id == accountId)?.System ?? BankingSystem.NorthAmerica;
 
-    public const string ManualAccountName = "Cash & manual entries";
 
     /// <summary>
     /// Sets the category of one operation. With <paramref name="allOfBrand"/>, every operation of the same brand, past and
@@ -78,7 +77,8 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
     {
         var t = new Transaction();
         Apply(t, input);
-        t.AccountId = input.AccountId ?? ManualAccountId();
+        // Every operation is in an account, and every account is at a bank.
+        t.AccountId = input.AccountId is { } id && db.Accounts().Any(a => a.Id == id) ? id : throw new ArgumentException("Choose the account of the operation.");
         t.Currency = db.Accounts().First(a => a.Id == t.AccountId).Currency;
         t.Id = db.AddTransaction(t);
         return SummaryService.View(t);
@@ -171,12 +171,6 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
             t.CategorySource = ValueSource.User;
             t.MerchantKey = Classifier.MerchantKey(Classifier.Normalize(brand));
         }
-    }
-
-    private long ManualAccountId()
-    {
-        var existing = db.Accounts().FirstOrDefault(a => a.Name == ManualAccountName);
-        return existing?.Id ?? db.AddAccount(new Account { Name = ManualAccountName, Currency = defaultCurrency(), Kind = AccountKind.Bank });
     }
 
     /// <summary>

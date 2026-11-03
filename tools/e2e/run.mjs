@@ -46,6 +46,7 @@ try {
   check('statements read and balanced to the cent', verified === files.length - 3, `${verified}/${files.length}`)
   check('BNC card exports read without balances', statuses.filter((s) => s[0].startsWith('BNC 2025-10-01-120000') && s[1] === 'other').length === 2)
   check('unusual layout asks for columns', statuses.some((s) => s[0].startsWith('Mutuelle') && s[1] === 'none'))
+  check('PDF statements come with a warning', await p.eval(`document.querySelector('[data-pdf-warning]') !== null`))
   await p.scrollMain(0)
   await shot(p, '03-import-drafts.png')
 
@@ -208,6 +209,16 @@ try {
   const newest = await p.eval(`(() => { const d = [...document.querySelector('section[data-period="2025-08-01"] table').querySelectorAll('tbody tr td:first-child')].map(x => x.innerText); return d.length > 1 && new Date(d[0]) >= new Date(d[d.length - 1]) })()`)
   check('newest first by default', newest)
 
+  // Every period fits the window, however many months there are (periods not drawn yet included).
+  await p.scrollMain(0)
+  check('periods never wider than the window', await p.eval(`(() => { const m = document.querySelector('main'); return m.scrollWidth <= m.clientWidth && [...document.querySelectorAll('section[data-period]')].every(s => s.getBoundingClientRect().right <= m.getBoundingClientRect().right) })()`))
+  // Table headers stay under the bar of tabs while the table scrolls.
+  await p.eval(`(() => { const t = document.querySelector('section tbody tr:nth-child(12)'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 200 }) })()`)
+  await sleep(300)
+  const sticky = await p.eval(`(() => { const th = document.querySelector('section thead th').getBoundingClientRect(); const bar = document.querySelector('main [class*=MuiToggleButtonGroup]').parentElement.getBoundingClientRect(); return [Math.round(th.top), Math.round(bar.bottom)] })()`)
+  await shot(p, '09c-sticky-header.png')
+  check('table headers stay visible while scrolling', Math.abs(sticky[0] - sticky[1]) <= 2, sticky.join(' / '))
+
   // date format menu
   await p.scrollMain(0)
   await p.clickText('Date', { selector: 'section th button' })
@@ -293,6 +304,8 @@ try {
   await sleep(300)
   await shot(p, '12f-colored-pill.png')
   check('operation put in a subcategory', true)
+  const path = await p.eval(`[...document.querySelectorAll('section [data-path]')].map(e => e.dataset.path).find(x => x.endsWith('Brushes')) ?? ''`)
+  check('full path of a category on hover', path === 'Expenses › Home projects › Paint & tools › Brushes', path)
 
   // custom period
   await p.scrollMain(0)
@@ -313,14 +326,17 @@ try {
   await p.clickText('Month', { selector: 'button' })
   await sleep(600)
 
-  // year and several years
+  // year and all time
   await p.clickText('Year', { selector: 'button' })
   await p.waitFor(`document.querySelector('section h2')?.innerText.startsWith('2025, from')`, 20000, 'year title')
   await sleep(1200)
   await shot(p, '13-year.png')
-  await p.clickText('Several years', { selector: 'button' })
+  await p.clickText('All time', { selector: 'button' })
   await sleep(1500)
-  await shot(p, '14-several-years.png')
+  await shot(p, '14-all-time.png')
+  const today = new Date()
+  const allTime = await p.eval(`document.querySelector('section h2')?.innerText ?? ''`)
+  check('all time runs from the first operation to today', allTime.startsWith('From') && allTime.endsWith(`${today.getDate()}, ${today.getFullYear()}`) && !(await text(p)).includes('Several years'), allTime)
   await p.clickText('Month', { selector: 'button' })
   await sleep(800)
 
@@ -338,6 +354,7 @@ try {
   await p.clickText('Add operation')
   await sleep(500)
   await shot(p, '16-add-operation.png')
+  check('a new operation goes in an account of a bank', await p.eval(`(() => { const d = document.querySelector('[role=dialog]'); return !d.innerText.includes('Cash & manual') && [...d.querySelectorAll('[role=combobox]')].some(c => c.innerText.includes(' · ')) })()`))
   await p.clickText('Cancel', { selector: '[role=dialog] button' })
 
   // calendar, settings
@@ -347,6 +364,7 @@ try {
   await p.clickText('Settings', { selector: 'nav button' })
   await sleep(800)
   await shot(p, '19-settings-general.png')
+  check('Periods and Calendar inside Display', await p.eval(`(() => { const g = document.querySelector('[data-group="Periods"]'); const c = document.querySelector('[data-group="Calendar"]'); return !!g && !!c && g.parentElement === c.parentElement && g.parentElement.querySelector('h6')?.innerText === 'Display' })()`))
   await p.clickText('Bank Configuration', { selector: 'button' })
   await sleep(600)
   await shot(p, '19b-settings-bank-configuration.png')
@@ -357,10 +375,25 @@ try {
   const learnedText = await p.eval(`document.querySelector('[data-learned]')?.innerText ?? ''`)
   const learnedBrands = await p.eval(`[...document.querySelectorAll('[data-learned] tbody tr')].map(r => r.children[2].innerText)`)
   check('each learned brand listed once', !learnedText.includes('Every operation of this brand') && new Set(learnedBrands).size === learnedBrands.length, learnedBrands.join(', '))
+  const wordings = await p.eval(`[...document.querySelectorAll('[data-learned] tbody tr')].map(r => r.children[1].innerText.trim())`)
+  check('every learned correction shows its statement wordings', wordings.every((w) => w.length > 1 && w !== '—'), wordings.join(' | '))
   await p.clickText('Bank', { selector: 'button' })
   await sleep(600)
   await shot(p, '19c-settings-banks.png')
   check('banks table', await p.eval(`document.querySelector('[data-banks]')?.innerText.includes('Banking System')`))
+  check('banking systems named by how cards work', await p.eval(`document.querySelector('[data-banks]').innerText.includes('Credit card system') && !/North America|France/.test([...document.querySelectorAll('[data-banks] [role=combobox]')].map(c => c.innerText).join())`))
+  await p.clickText('Categories', { selector: 'main button' })
+  await p.waitFor(`document.querySelector('[data-categories]') !== null`, 5000, 'categories in settings')
+  const labels = await p.eval(`[...document.querySelectorAll('[data-section-label] input')].map(i => i.value)`)
+  check('categories in settings, under four labels', labels.join() === 'Expenses,Exceptional,Income,Transfers', labels.join(', '))
+  // A label is renamed in place, like a category.
+  await p.eval(`(() => { const i = document.querySelector('[data-section-label="transfer"] input'); i.focus(); i.select() })()`)
+  await p.send('Input.insertText', { text: 'Between accounts' })
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+  await sleep(400)
+  await shot(p, '19d-settings-categories.png')
+  check('label renamed', (await p.engine('app.init')).settings['section.transfer'] === 'Between accounts')
+  await p.engine('settings.set', { key: 'section.transfer', value: 'Transfers' })
 
   // dark theme, from the icon above the settings
   await p.click('nav [aria-label="Dark mode"]')

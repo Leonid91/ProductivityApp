@@ -15,6 +15,8 @@ public sealed class TempStore : IDisposable
     public TransactionService Transactions { get; }
     public ImportService Imports { get; }
     public SummaryService Summaries { get; }
+    /// <summary>The bank new accounts are opened at (the one every new database has).</summary>
+    public long Bank => Db.Banks()[0].Id;
 
     public TempStore()
     {
@@ -38,7 +40,7 @@ public class ServiceTests
     {
         var draft = await s.Imports.ParseAsync(name, Render(spec));
         var kind = spec.Style == Style.EnglishCard ? AccountKind.CreditCard : AccountKind.Bank;
-        return s.Imports.Commit(new CommitRequest(draft.Id, account, null, spec.Currency, account is null ? kind : null, []));
+        return s.Imports.Commit(new CommitRequest(draft.Id, account, null, spec.Currency, account is null ? kind : null, [], BankId: s.Bank));
     }
 
     [Fact]
@@ -119,14 +121,18 @@ public class ServiceTests
     public void Manual_operations_and_decimal_sums()
     {
         using var s = new TempStore();
+        // An operation entered by hand goes in one of the accounts, and every account is at a bank.
+        Assert.Throws<ArgumentException>(() => s.Transactions.Create(new TransactionInput("2025-06-15", -1m, "Candy shop", "groceries", null, null)));
+        var bank = s.Db.AddBank(new Bank { Name = "Banque Exemple", System = BankingSystem.NorthAmerica, Currency = "CAD" });
+        var account = s.Db.AddAccount(new Account { Name = "Chequing", Currency = "CAD", Kind = AccountKind.Bank, BankId = bank });
         for (var i = 0; i < 10; i++)
-            s.Transactions.Create(new TransactionInput("2025-06-15", -0.10m, "Candy shop", "groceries", null, null));
-        s.Transactions.Create(new TransactionInput("2025-06-16", 0.30m, "Found money", "otherincome", null, "pocket"));
+            s.Transactions.Create(new TransactionInput("2025-06-15", -0.10m, "Candy shop", "groceries", account, null));
+        s.Transactions.Create(new TransactionInput("2025-06-16", 0.30m, "Found money", "otherincome", account, "pocket"));
         var sum = s.Summaries.Summarize(new DateOnly(2025, 6, 1), new DateOnly(2025, 6, 30), Granularity.Month, "CAD");
         Assert.Equal(1.00m, sum.Expenses);
         Assert.Equal(0.30m, sum.Earnings);
         Assert.Equal(-0.70m, sum.Balance);
-        Assert.Contains(s.Db.Accounts(), a => a.Name == TransactionService.ManualAccountName);
+        Assert.Single(s.Db.Accounts());
     }
 
     [Fact]

@@ -69,7 +69,7 @@ public class BncAndCsvTests
         {
             var d = await s.Imports.ParseAsync(FileName(a, "pdf"), BncGenerator.Pdf(Sept, a));
             Assert.Null(d.AccountId);
-            ids[a] = s.Imports.Commit(new CommitRequest(d.Id, null, null, "CAD", kinds[a], [])).AccountId;
+            ids[a] = s.Imports.Commit(new CommitRequest(d.Id, null, null, "CAD", kinds[a], [], BankId: s.Bank)).AccountId;
         }
         foreach (var a in kinds.Keys)
         {
@@ -111,7 +111,7 @@ public class BncAndCsvTests
         var savings = Csv(Sept, BncAccount.Savings);
         var chequing = Csv(Sept, BncAccount.Chequing);
         var d1 = await s.Imports.ParseAsync("a.csv", savings);
-        var id = s.Imports.Commit(new CommitRequest(d1.Id, null, null, "CAD", AccountKind.Bank, [])).AccountId;
+        var id = s.Imports.Commit(new CommitRequest(d1.Id, null, null, "CAD", AccountKind.Bank, [], BankId: s.Bank)).AccountId;
         var d2 = await s.Imports.ParseAsync("b.csv", chequing);
         var r = s.Imports.Commit(new CommitRequest(d2.Id, id, null, "CAD", null, []));
         Assert.Equal(Sept.Chequing.Count(l => l.Amount != 0), r.Added);

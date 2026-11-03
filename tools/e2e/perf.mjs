@@ -44,7 +44,7 @@ try {
   await sleep(300)
   note('switching to year fps', await fps('() => {}', 3))
   note('scrolling years fps', await fps(`() => document.querySelector('main').scrollBy(0, 60)`, 5))
-  await p.clickText('Several years', { selector: 'button' })
+  await p.clickText('All time', { selector: 'button' })
   note('ten years view fps', await fps('() => {}', 3))
   await p.clickText('Month', { selector: 'button' })
   await sleep(500)

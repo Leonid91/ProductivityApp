@@ -204,7 +204,7 @@ export interface Place { name: string; path: string; icon: string }
 export interface FsEntry { name: string; path: string; isFolder: boolean; size: number; modified: string }
 export interface FolderListing { path: string; parent: string | null; entries: FsEntry[] }
 
-export interface BrandInfo { brand: string; count: number; spent: number; received: number; categoryId: string; learned: boolean; currency: string; lastDate: string }
+export interface BrandInfo { brand: string; count: number; spent: number; received: number; categoryId: string; learned: boolean; currency: string; lastDate: string; wordings: string[] }
 export interface BrandRule { id: number; merchantKey: string; brand: string; categoryId: string | null; updatedAt: string }
 
 export interface TransactionInput { date: string; amount: number; brand: string; categoryId: string; accountId: number | null; note: string | null; earned?: number | null }

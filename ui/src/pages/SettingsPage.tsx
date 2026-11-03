@@ -14,10 +14,13 @@ import { FileBrowser } from '../components/FileBrowser'
 import { ConfirmDialog, EmptyState, PageHeader, SectionCard } from '../components/common'
 import { useRowOrder } from '../components/order'
 import { BrandsPanel } from './BrandsPage'
+import { CategoriesPanel } from './CategoriesPage'
 
 const systems: { value: BankingSystem; label: string }[] = [
-  { value: 'northAmerica', label: 'North America' },
-  { value: 'france', label: 'France' },
+  // Credit cards are accounts of their own, paid from the current account; or cards are debited once a month
+  // straight from the current account.
+  { value: 'northAmerica', label: 'Credit card system' },
+  { value: 'france', label: 'Deferred debit system' },
 ]
 
 type Confirm = { title: string; body?: string; confirm?: string; run: () => Promise<void> } | null
@@ -26,6 +29,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
       <Typography sx={{ flex: 1, fontWeight: 520 }}>{label}</Typography>
+      {children}
+    </Box>
+  )
+}
+
+/** A group of settings inside a card, under its own small heading (Periods and Calendar inside Display). */
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Box data-group={title} sx={{ mt: 2, border: 1, borderColor: 'divider', borderRadius: '14px', bgcolor: 'surface.sunken', px: 2, pt: 1.5, pb: 0.5 }}>
+      <Typography variant="subtitle2" color="text.secondary">{title}</Typography>
       {children}
     </Box>
   )
@@ -80,24 +93,22 @@ function General({ confirm }: { confirm: (c: Confirm) => void }) {
             {info.dateFormats.map((f) => <MenuItem key={f} value={f}>{formatExample(f)}</MenuItem>)}
           </TextField>
         </Row>
-      </SectionCard>
-
-      <SectionCard title="Periods">
-        <Row label="Transfers, card payments and investments">
-          <TextField select size="small" value={settings.periodTransfers} onChange={(e) => void setSetting('periodTransfers', e.target.value)} sx={{ width: 260 }}>
-            <MenuItem value="separate">In a separate folded table</MenuItem>
-            <MenuItem value="table">In a separate table</MenuItem>
-            <MenuItem value="hidden">Hidden</MenuItem>
-            <MenuItem value="inline">With the other operations</MenuItem>
-          </TextField>
-        </Row>
-        <Toggle label="Show all data in pie charts" setting="pieShowAll" />
-      </SectionCard>
-
-      <SectionCard title="Calendar">
-        <Toggle label="Hide transfers" setting="calendarHideTransfers" />
-        <Toggle label="Hide credit card payments" setting="calendarHideCardPayments" />
-        <Toggle label="Hide investments" setting="calendarHideInvestments" />
+        <Group title="Periods">
+          <Row label="Transfers, card payments and investments">
+            <TextField select size="small" value={settings.periodTransfers} onChange={(e) => void setSetting('periodTransfers', e.target.value)} sx={{ width: 260 }}>
+              <MenuItem value="separate">In a separate folded table</MenuItem>
+              <MenuItem value="table">In a separate table</MenuItem>
+              <MenuItem value="hidden">Hidden</MenuItem>
+              <MenuItem value="inline">With the other operations</MenuItem>
+            </TextField>
+          </Row>
+          <Toggle label="Show all data in pie charts" setting="pieShowAll" />
+        </Group>
+        <Group title="Calendar">
+          <Toggle label="Hide transfers" setting="calendarHideTransfers" />
+          <Toggle label="Hide credit card payments" setting="calendarHideCardPayments" />
+          <Toggle label="Hide investments" setting="calendarHideInvestments" />
+        </Group>
       </SectionCard>
 
       <SectionCard title="Data">
@@ -203,7 +214,6 @@ function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
   const first = (bankId: number | null) => Math.min(...accounts.filter((a) => a.bankId === bankId).map((a) => a.id))
   const tabs = banks.filter((b) => accounts.some((a) => a.bankId === b.id)).sort((a, b) => first(a.id) - first(b.id))
     .map((b) => ({ value: String(b.id), label: b.name }))
-  if (accounts.some((a) => a.bankId === null)) tabs.push({ value: 'none', label: 'No bank' })
   const [tab, setTab] = useState('')
   const current = tabs.find((t) => t.value === tab)?.value ?? tabs[0]?.value
   if (!current) return <EmptyState icon={<AccountBalance />} title="No accounts yet" />
@@ -211,7 +221,7 @@ function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
   return (
     <>
       <Tabs size="small" value={current} onChange={setTab} tabs={tabs} />
-      <AccountsTable accounts={accounts.filter((a) => (a.bankId === null ? 'none' : String(a.bankId)) === current)} system={bank?.system ?? 'northAmerica'} confirm={confirm} />
+      <AccountsTable accounts={accounts.filter((a) => String(a.bankId) === current)} system={bank?.system ?? 'northAmerica'} confirm={confirm} />
     </>
   )
 }
@@ -299,7 +309,7 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
 export function SettingsPage() {
   const { refreshAccounts, refreshBanks, fail } = useApp()
   const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>('general')
-  const [definition, setDefinition] = useState<'brands' | 'bank'>('brands')
+  const [definition, setDefinition] = useState<'brands' | 'bank' | 'categories'>('brands')
   const [confirm, setConfirm] = useState<Confirm>(null)
 
   useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
@@ -314,8 +324,10 @@ export function SettingsPage() {
       {tab === 'banks' && <BankConfiguration confirm={setConfirm} />}
       {tab === 'definitions' && (
         <>
-          <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'brands', label: 'Brands' }, { value: 'bank', label: 'Bank' }]} />
-          {definition === 'brands' ? <BrandsPanel /> : <BanksTable confirm={setConfirm} />}
+          <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'brands', label: 'Brands' }, { value: 'bank', label: 'Bank' }, { value: 'categories', label: 'Categories' }]} />
+          {definition === 'brands' && <BrandsPanel />}
+          {definition === 'bank' && <BanksTable confirm={setConfirm} />}
+          {definition === 'categories' && <CategoriesPanel />}
         </>
       )}
       <ConfirmDialog

@@ -38,8 +38,15 @@ export function BrandsPanel() {
       if (r.categoryId && (!r.merchantKey || !l.categoryId)) l.categoryId = r.categoryId
       by.set(key, l)
     }
+    // A correction made for a whole brand has no wording of its own: the brand's wordings on the statements are shown.
+    const byBrand = new Map(brands.map((b) => [b.brand.toLowerCase(), b]))
+    for (const [key, l] of by) {
+      if (l.wordings.length) continue
+      const b = byBrand.get(key)
+      l.wordings = b === undefined ? ['No operation yet'] : b.wordings.length ? b.wordings : ['Entered by hand']
+    }
     return [...by.values()]
-  }, [rules])
+  }, [rules, brands])
 
   const brandKey = useCallback((b: BrandInfo) => b.brand.toLowerCase(), [])
   const learnedKey = useCallback((l: Learned) => l.brand.toLowerCase(), [])
@@ -128,7 +135,8 @@ export function BrandsPanel() {
                 <TableRow key={l.brand} hover {...learnedOrder.rowProps(l)}>
                   {learnedOrder.handle(l)}
                   <TableCell sx={{ color: 'text.secondary', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12.5 }}>
-                    {l.wordings.length ? l.wordings.map((w) => <div key={w}>{w.replace(/^#(.*)\|.*$/, '$1')}</div>) : '—'}
+                    {l.wordings.slice(0, 3).map((w) => <div key={w}>{w.replace(/^#(.*)\|.*$/, '$1')}</div>)}
+                    {l.wordings.length > 3 && <div>+{l.wordings.length - 3} more</div>}
                   </TableCell>
                   <TableCell>{l.brand}</TableCell>
                   <TableCell>

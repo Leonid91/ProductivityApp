@@ -97,7 +97,7 @@ public class CategoryTests
         var cats = new CategoryService(s.Db);
         var spec = Sample(Style.EnglishWithdrawalsDeposits, 2025, 10, 30, 4);
         var draft = await s.Imports.ParseAsync("october.pdf", Render(spec));
-        s.Imports.Commit(new CommitRequest(draft.Id, null, null, "CAD", AccountKind.Bank, []));
+        s.Imports.Commit(new CommitRequest(draft.Id, null, null, "CAD", AccountKind.Bank, [], BankId: s.Bank));
 
         var food = cats.Create("Food", null, CategoryKind.Expense, "#2e7d32");
         var snacks = cats.Create("Snacks", food.Id, CategoryKind.Expense, null);

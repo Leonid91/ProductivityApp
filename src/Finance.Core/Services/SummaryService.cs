@@ -69,7 +69,8 @@ public sealed class SummaryService(Database db)
         var currencies = months.Select(m => m.Currency).Distinct().OrderBy(c => c == currency ? 0 : 1).ThenBy(c => c).ToList();
         var mine = months.Where(m => m.Currency == currency).Select(m => new MonthEntry(m.Year, m.Month, m.Count)).ToList();
         var years = mine.Select(m => m.Year).Distinct().OrderByDescending(y => y).ToList();
-        string? first = mine.Count == 0 ? null : $"{mine[^1].Year:D4}-{mine[^1].Month:D2}";
+        // The day of the first operation: "All time" runs from it to today.
+        var first = db.AllTransactions().FirstOrDefault(t => t.Currency == currency)?.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         string? last = mine.Count == 0 ? null : $"{mine[0].Year:D4}-{mine[0].Month:D2}";
         return new PeriodIndex(mine, years, currencies, first, last);
     }

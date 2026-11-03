@@ -245,6 +245,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             var bankId = request.BankId;
             if (existing is null && bankId is null && request.NewBankName?.Trim() is { Length: > 0 } bankName)
                 bankId = db.AddBank(new Bank { Name = bankName, Currency = currency, System = draft.System });
+            if (request.AccountId is null && bankId is null) throw new ArgumentException("Choose the bank of the new account.");
             accountId = request.AccountId ?? db.AddAccount(new Account
             {
                 Name = string.IsNullOrWhiteSpace(request.NewAccountName) ? DefaultAccountName(draft.Parse) : request.NewAccountName.Trim(),
