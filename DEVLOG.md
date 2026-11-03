@@ -272,3 +272,14 @@ real app with `tools/e2e/perf.mjs`.
 - The full path of a category on hover ("Expenses › Food › Snacks").
 - Table headers stay visible while a long table scrolls, under the bar of tabs.
 - A warning on the Import page while PDF statements are imported: only PDFs downloaded from the bank.
+
+## November 3rd, 2026 - Categories only in Settings, three kinds of operation - Commit 12
+
+### Changed
+- Categories are only in Settings > Definitions, whose tabs now go Bank, Brands, Categories; the side bar item is gone.
+- Expenses, Income and Transfers are kinds of operation, not categories: plain headings (renamed in place), each with
+  its own button to add a category of that kind, so a transfer category is added like any other.
+- "Exceptional" is gone: Flights, Trips & holidays and the others are ordinary expenses, without the gold colour (in
+  the app and in the PDF reports); "Other exceptional" joins "Other expenses" (database v9 moves its operations and
+  rules, and the categories nested in it move to the top).
+- No line under the last row before a group in Settings (Date format above Periods).

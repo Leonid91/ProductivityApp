@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 8;
+    private const int SchemaVersion = 9;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -124,6 +124,18 @@ public sealed class Database : IDisposable
                 WHERE bank_id IS NULL;
                 PRAGMA user_version = 8;
                 """, ("$n", KnownBanks.National));
+        }
+        if (version < 9)
+        {
+            // "Exceptional" is gone: its categories are ordinary expenses, and "Other exceptional" joins "Other expenses".
+            Exec("""
+                UPDATE transactions SET category_id = 'other' WHERE category_id = 'exceptional';
+                UPDATE brand_rules SET category_id = 'other' WHERE category_id = 'exceptional';
+                UPDATE categories SET parent_id = NULL WHERE parent_id = 'exceptional';
+                DELETE FROM categories WHERE id = 'exceptional';
+                DELETE FROM settings WHERE key = 'section.exceptional';
+                PRAGMA user_version = 9;
+                """);
         }
     }
 
@@ -301,8 +313,8 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Every category, built-in ones first. A category the person made takes its icon and group (exceptional) from the
-    /// nearest built-in category it is nested in.
+    /// Every category, built-in ones first. A category the person made takes its icon from the nearest built-in
+    /// category it is nested in.
     /// </summary>
     public List<Category> LoadCategories()
     {
@@ -325,7 +337,7 @@ public sealed class Database : IDisposable
         {
             var origin = Origin(r.Id);
             var parent = r.Parent is not null && byId.ContainsKey(r.Parent) ? r.Parent : null;
-            return new Category(r.Id, r.Name, r.Kind, origin?.Icon ?? "Category", origin?.Group, parent, r.Color, builtIn.ContainsKey(r.Id));
+            return new Category(r.Id, r.Name, r.Kind, origin?.Icon ?? "Category", parent, r.Color, builtIn.ContainsKey(r.Id));
         }).ToList();
     }
 

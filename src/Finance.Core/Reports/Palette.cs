@@ -13,7 +13,6 @@ public static class Palette
     public const string Positive = "#006300";
     public const string Negative = "#d03b3b";
     public const string Accent = "#2a78d6";
-    public const string Gold = "#9a6a00";
     /// <summary>Money going to or coming from outside the imported accounts.</summary>
     public const string OutsideInk = "#c4551f";
     public const string OutsideSoft = "#fdf1ea";

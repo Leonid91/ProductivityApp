@@ -9,8 +9,6 @@ import CalendarMonth from '@mui/icons-material/CalendarMonthRounded'
 import CalendarMonthOutlined from '@mui/icons-material/CalendarMonthOutlined'
 import UploadFile from '@mui/icons-material/UploadFileRounded'
 import UploadFileOutlined from '@mui/icons-material/UploadFileOutlined'
-import CategoryRounded from '@mui/icons-material/CategoryRounded'
-import CategoryOutlined from '@mui/icons-material/CategoryOutlined'
 import LightMode from '@mui/icons-material/LightModeOutlined'
 import DarkMode from '@mui/icons-material/DarkModeOutlined'
 import Settings from '@mui/icons-material/SettingsRounded'
@@ -22,7 +20,6 @@ import { ResizeEdges, TitleBar, useMaximized } from './components/WindowChrome'
 import { PeriodsPage } from './pages/PeriodsPage'
 import { CalendarPage } from './pages/CalendarPage'
 import { ImportPage } from './pages/ImportPage'
-import { CategoriesPage } from './pages/CategoriesPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { FindBar } from './components/FindBar'
 
@@ -30,7 +27,6 @@ const nav: { page: Page; label: string; icon: React.ReactNode; active: React.Rea
   { page: 'periods', label: 'Periods', icon: <DonutLargeOutlined />, active: <DonutLarge /> },
   { page: 'calendar', label: 'Calendar', icon: <CalendarMonthOutlined />, active: <CalendarMonth /> },
   { page: 'import', label: 'Import', icon: <UploadFileOutlined />, active: <UploadFile /> },
-  { page: 'categories', label: 'Categories', icon: <CategoryOutlined />, active: <CategoryRounded /> },
 ]
 
 function RailItem({ label, icon, selected, onClick }: { label: string; icon: React.ReactNode; selected: boolean; onClick: () => void }) {
@@ -100,7 +96,6 @@ function Shell() {
           {page === 'periods' && <PeriodsPage />}
           {page === 'calendar' && <CalendarPage />}
           {page === 'import' && <ImportPage />}
-          {page === 'categories' && <CategoriesPage />}
           {page === 'settings' && <SettingsPage />}
         </Box>
       </Box>

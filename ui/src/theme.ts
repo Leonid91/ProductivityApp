@@ -12,7 +12,6 @@ declare module '@mui/material/styles' {
     surface: { base: string; raised: string; sunken: string; hover: string }
     chart: { series: string[]; other: string; grid: string; axis: string }
     money: { positive: string; negative: string; zero: string; expenseSoft: string; incomeSoft: string; positiveStrong: string; negativeStrong: string }
-    gold: { text: string; soft: string }
     /** Money going to or coming from outside the imported accounts. */
     outside: string
   }
@@ -20,7 +19,6 @@ declare module '@mui/material/styles' {
     surface?: { base: string; raised: string; sunken: string; hover: string }
     chart?: { series: string[]; other: string; grid: string; axis: string }
     money?: { positive: string; negative: string; zero: string; expenseSoft: string; incomeSoft: string; positiveStrong: string; negativeStrong: string }
-    gold?: { text: string; soft: string }
     outside?: string
   }
 }
@@ -58,8 +56,6 @@ export function makeTheme(mode: 'light' | 'dark'): Theme {
         ? { positive: '#4cc26a', negative: '#ef6b6b', zero: text.primary, expenseSoft: 'rgba(239,107,107,.07)', incomeSoft: 'rgba(76,194,106,.07)', positiveStrong: 'rgba(76,194,106,.2)', negativeStrong: 'rgba(239,107,107,.2)' }
         : { positive: '#006300', negative: '#d03b3b', zero: '#000000', expenseSoft: '#fcf3f2', incomeSoft: '#f1f8f1', positiveStrong: '#d5ead5', negativeStrong: '#f6d9d6' },
       outside: dark ? '#e8834f' : '#c4551f',
-      // Exceptional expenses: a warm gold that stays readable on both themes.
-      gold: dark ? { text: '#e8c25a', soft: 'rgba(232,194,90,.14)' } : { text: '#9a6a00', soft: 'rgba(201,150,30,.13)' },
     },
     shape: { borderRadius: 12 },
     typography: {

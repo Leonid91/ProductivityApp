@@ -9,7 +9,7 @@ export type AccountKind = 'bank' | 'creditCard' | 'savings'
 export type Verification = 'verified' | 'mismatch' | 'noBalances' | 'noTransactions'
 
 /** parentId: the category it is nested in (null at the top); color: '#rrggbb' or null; builtIn: comes with the app (cannot be deleted). */
-export interface Category { id: string; name: string; kind: CategoryKind; icon: string; group: string | null; parentId: string | null; color: string | null; builtIn: boolean }
+export interface Category { id: string; name: string; kind: CategoryKind; icon: string; parentId: string | null; color: string | null; builtIn: boolean }
 
 export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'periodTransfers' | 'calendarHideCardPayments' | 'calendarHideTransfers' | 'calendarHideInvestments' | 'pieShowAll', string> & Record<string, string>
 

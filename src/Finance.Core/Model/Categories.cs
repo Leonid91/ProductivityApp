@@ -3,11 +3,11 @@ namespace ProductivityApp.Finance.Model;
 public enum CategoryKind { Expense, Income, Transfer }
 
 /// <summary>
-/// A category. Icon is a Material icon name used by the interface. Group "exceptional" marks the exceptional expenses
-/// (shown in gold). Parent is the category it is nested in (null at the top); Color is "#rrggbb" or null.
+/// A category. Icon is a Material icon name used by the interface. Parent is the category it is nested in (null at the
+/// top); Color is "#rrggbb" or null.
 /// Built-in categories have fixed ids the engine relies on; the ones the person makes have ids "u1", "u2"...
 /// </summary>
-public sealed record Category(string Id, string Name, CategoryKind Kind, string Icon, string? Group = null, string? Parent = null, string? Color = null, bool BuiltIn = true);
+public sealed record Category(string Id, string Name, CategoryKind Kind, string Icon, string? Parent = null, string? Color = null, bool BuiltIn = true);
 
 public static class Categories
 {
@@ -21,7 +21,6 @@ public static class Categories
     public const string CardSpending = "cardspending";
     public const string Investments = "investments";
     public const string Bills = "bills";
-    public const string Exceptional = "exceptional";
 
     /// <summary>The categories the app comes with, as they are before the person renames, nests or colours them.</summary>
     public static readonly IReadOnlyList<Category> BuiltIn =
@@ -49,14 +48,13 @@ public static class Categories
         new(CardSpending, "Credit card spending", CategoryKind.Expense, "CreditCard"),
         new(OtherExpense, "Other expenses", CategoryKind.Expense, "MoreHoriz"),
 
-        new("exc-flights", "Flights", CategoryKind.Expense, "FlightTakeoff", Exceptional),
-        new("exc-trips", "Trips & holidays", CategoryKind.Expense, "Luggage", Exceptional),
-        new("exc-gifts", "Special gifts", CategoryKind.Expense, "Redeem", Exceptional),
-        new("exc-events", "Celebrations & events", CategoryKind.Expense, "Celebration", Exceptional),
-        new("exc-purchases", "Big purchases", CategoryKind.Expense, "Chair", Exceptional),
-        new("exc-repairs", "Unexpected repairs", CategoryKind.Expense, "Build", Exceptional),
-        new("exc-medical", "Medical emergencies", CategoryKind.Expense, "MedicalServices", Exceptional),
-        new(Exceptional, "Other exceptional", CategoryKind.Expense, "AutoAwesome", Exceptional),
+        new("exc-flights", "Flights", CategoryKind.Expense, "FlightTakeoff"),
+        new("exc-trips", "Trips & holidays", CategoryKind.Expense, "Luggage"),
+        new("exc-gifts", "Special gifts", CategoryKind.Expense, "Redeem"),
+        new("exc-events", "Celebrations & events", CategoryKind.Expense, "Celebration"),
+        new("exc-purchases", "Big purchases", CategoryKind.Expense, "Chair"),
+        new("exc-repairs", "Unexpected repairs", CategoryKind.Expense, "Build"),
+        new("exc-medical", "Medical emergencies", CategoryKind.Expense, "MedicalServices"),
 
         new("salary", "Salary", CategoryKind.Income, "Work"),
         new("refunds", "Refunds", CategoryKind.Income, "Replay"),

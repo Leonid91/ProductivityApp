@@ -34,10 +34,9 @@ public class CategoryTests
                 deepest = parent.Id;
                 // A nested category takes the kind of the category it is in, whatever was asked.
                 Assert.Equal(CategoryKind.Expense, parent.Kind);
-                // Inside a built-in category it also takes its icon and its group.
+                // Inside a built-in category it also takes its icon.
                 var gift = cats.Create("Wedding gift", "exc-gifts", CategoryKind.Expense, null);
                 Assert.Equal("exc-gifts", gift.Parent);
-                Assert.Equal(Categories.Exceptional, gift.Group);
                 Assert.Equal(Categories.Get("exc-gifts").Icon, gift.Icon);
             }
             Categories.Use(Categories.BuiltIn);

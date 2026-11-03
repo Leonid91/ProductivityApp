@@ -169,9 +169,8 @@ public static class ReportBuilder
                 IContainer Cell(IContainer c) => c.BorderBottom(0.5f).BorderColor(Palette.Hairline).PaddingVertical(4).PaddingHorizontal(4);
                 var cat = Categories.Get(t.CategoryId);
                 var transfer = cat.Kind == CategoryKind.Transfer;
-                var gold = cat.Group == Categories.Exceptional;
                 table.Cell().Element(Cell).Text(Day(t.Date, dateFormat)).EnableFontFeature("tnum");
-                table.Cell().Element(Cell).Text(cat.Name).FontColor(gold ? Palette.Gold : transfer ? Palette.InkMuted : Palette.Ink);
+                table.Cell().Element(Cell).Text(cat.Name).FontColor(transfer ? Palette.InkMuted : Palette.Ink);
                 table.Cell().Element(Cell).Text(t.Brand).ClampLines(1);
                 if (frequency) table.Cell().Element(Cell).Text(t.Recurring ?? "").FontColor(Palette.InkSecondary);
                 table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(t.Amount, currency, sign: true)).EnableFontFeature("tnum")

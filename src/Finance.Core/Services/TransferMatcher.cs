@@ -83,7 +83,7 @@ public static class TransferMatcher
         if (a == AccountKind.CreditCard && !IsMovement(o)) return false;
         if (b == AccountKind.CreditCard && !IsMovement(i)) return false;
         if (IsMovement(o) || IsMovement(i)) return true;
-        return (a == AccountKind.Savings || b == AccountKind.Savings) && Categories.Get(o.CategoryId).Group is null && !IsSpendingOrIncome(o) && !IsSpendingOrIncome(i);
+        return (a == AccountKind.Savings || b == AccountKind.Savings) && !IsSpendingOrIncome(o) && !IsSpendingOrIncome(i);
     }
 
     private static bool IsMovement(Transaction t) => Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;

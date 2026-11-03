@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Autocomplete, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment, ListItemIcon, ListItemText, ListSubheader,
-  MenuItem, TextField, ToggleButton, ToggleButtonGroup, useTheme,
+  MenuItem, TextField, ToggleButton, ToggleButtonGroup,
 } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -26,8 +26,6 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   const { tree, accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
   const colorOf = useCategoryColor()
   const categorySections = useCategorySections()
-  const theme = useTheme()
-  const gold = theme.palette.gold.text
   const [date, setDate] = useState<Dayjs | null>(dayjs())
   const [direction, setDirection] = useState<'out' | 'in'>('out')
   const [amount, setAmount] = useState('')
@@ -145,15 +143,15 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
           label="Category"
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
-          // A category's colour (gold for exceptional expenses) shows everywhere, here too: the chosen value and every item.
+          // A category's colour shows everywhere, here too: the chosen value and every item.
           slotProps={{ select: { sx: colorOf(category(categoryId)) ? { color: colorOf(category(categoryId)), fontWeight: 600, '& .MuiListItemIcon-root': { color: colorOf(category(categoryId)) } } : undefined } }}
         >
-          {categorySections.flatMap(([kind, label, test]) => [
-            <ListSubheader key={label} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em', color: kind === 'exceptional' ? gold : undefined }}>{label}</ListSubheader>,
+          {categorySections.flatMap(([, label, test]) => [
+            <ListSubheader key={label} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</ListSubheader>,
             ...tree.filter((e) => test(e.root)).map(({ c, depth }) => {
               const color = colorOf(c)
               return (
-                <MenuItem key={c.id} value={c.id} data-exceptional={c.group === 'exceptional' || undefined} sx={{ pl: 2 + depth * 2.25, ...(color ? { color, fontWeight: 600 } : {}) }}>
+                <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + depth * 2.25, ...(color ? { color, fontWeight: 600 } : {}) }}>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
                     <ListItemIcon sx={{ minWidth: 32, color: color ?? undefined }}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
                     <ListItemText slotProps={{ primary: { sx: color ? { color, fontWeight: 600 } : undefined } }}>{c.name}</ListItemText>

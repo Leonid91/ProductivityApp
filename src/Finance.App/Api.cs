@@ -334,7 +334,7 @@ internal static class Api
     }
 
     private static object CategoryList() =>
-        Categories.All.Select(c => new { c.Id, c.Name, kind = c.Kind, c.Icon, c.Group, parentId = c.Parent, c.Color, c.BuiltIn });
+        Categories.All.Select(c => new { c.Id, c.Name, kind = c.Kind, c.Icon, parentId = c.Parent, c.Color, c.BuiltIn });
 
     private static object Brands(AppServices s)
     {

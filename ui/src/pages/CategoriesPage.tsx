@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
   Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Table, TableBody, TableCell, TableRow, TextField,
-  Tooltip, Typography, useTheme, type Theme,
+  Tooltip, Typography, type Theme,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
 import EditOutlined from '@mui/icons-material/EditOutlined'
@@ -10,7 +10,7 @@ import Block from '@mui/icons-material/BlockRounded'
 import { api, type Category, type CategoryKind } from '../api'
 import { useApp } from '../AppContext'
 import { CategoryIcon } from '../components/CategoryIcon'
-import { ConfirmDialog, PageHeader, SectionCard, useCategoryColor, useCategorySections } from '../components/common'
+import { ConfirmDialog, SectionCard, useCategoryColor, useCategorySections } from '../components/common'
 import { useRowOrder, type TreeEntry } from '../components/order'
 
 const palette = ['#e53935', '#d81b60', '#8e24aa', '#5e35b1', '#3949ab', '#1e88e5', '#0288d1', '#00897b', '#43a047', '#689f38', '#afb42b', '#f9a825', '#fb8c00', '#f4511e', '#6d4c41', '#757575']
@@ -20,8 +20,6 @@ type Editing = { id: string | null; name: string; parentId: string | null; kind:
 /** Create or edit a category: its name, the category it is in, its colour. */
 function CategoryDialog({ editing, onClose }: { editing: Editing; onClose: () => void }) {
   const { tree, setCategories, notify, fail } = useApp()
-  const sections = useCategorySections()
-  const kinds = sections.filter(([k]) => k !== 'exceptional').map(([value, label]) => ({ value: value as CategoryKind, label }))
   const [v, setV] = useState<Editing>(editing)
 
   // A category goes in one of the same kind, never in itself or one of its own subcategories.
@@ -48,11 +46,6 @@ function CategoryDialog({ editing, onClose }: { editing: Editing; onClose: () =>
       <DialogTitle>{v.id === null ? 'New category' : 'Edit category'}</DialogTitle>
       <DialogContent sx={{ display: 'grid', gap: 2.5, pt: '8px !important' }}>
         <TextField label="Name" value={v.name} autoFocus onChange={(e) => setV({ ...v, name: e.target.value })} slotProps={{ htmlInput: { maxLength: 60 } }} />
-        {v.id === null && v.parentId === null && (
-          <TextField select label="Kind" value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as CategoryKind })}>
-            {kinds.map((k) => <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>)}
-          </TextField>
-        )}
         <TextField select label="Inside" value={v.parentId ?? ''} onChange={(e) => setV({ ...v, parentId: e.target.value || null })}>
           <MenuItem value="">Top level</MenuItem>
           {parents.map(({ c, depth }) => (
@@ -89,11 +82,9 @@ const swatch = (selected: boolean, color: string) => (t: Theme) => ({
   boxShadow: selected ? `0 0 0 2px ${t.palette.background.paper}, 0 0 0 4px ${t.palette.primary.main}` : `inset 0 0 0 1px ${t.palette.divider}`,
 })
 
-/** A first-layer label (Expenses, Exceptional, Income, Transfers): a chip like the categories, renamed in place. */
-function SectionChip({ kind, label }: { kind: string; label: string }) {
+/** A kind of operation (Expenses, Income, Transfers): a heading over its categories, renamed in place. */
+function KindHeading({ kind, label }: { kind: string; label: string }) {
   const { setSetting } = useApp()
-  const theme = useTheme()
-  const gold = kind === 'exceptional' ? theme.palette.gold.text : undefined
   return (
     <InputBase
       key={label}
@@ -106,24 +97,14 @@ function SectionChip({ kind, label }: { kind: string; label: string }) {
         void setSetting(`section.${kind}`, v)
       }}
       sx={{
-        fontSize: 13, fontWeight: 650, color: gold ?? 'text.primary', borderRadius: 999, px: 1.25, py: 0.1,
-        bgcolor: gold ? `${gold}22` : 'action.hover', '&:hover, &.Mui-focused': { bgcolor: gold ? `${gold}33` : 'action.selected' },
-        '& input': { p: '3px 0', cursor: 'text' },
+        fontSize: 11.5, fontWeight: 650, letterSpacing: '.04em', textTransform: 'uppercase', color: 'text.secondary', borderRadius: 1.5,
+        px: 0.75, mx: -0.75, '&:hover, &.Mui-focused': { bgcolor: 'action.hover' }, '& input': { p: '2px 0', cursor: 'text' },
       }}
     />
   )
 }
 
-/** Every category, nested at any depth, under its first-layer label: create, rename, colour, move, reorder and delete. */
-export function CategoriesPage() {
-  return (
-    <Box sx={{ maxWidth: 980, mx: 'auto', pt: 3, pb: 6 }}>
-      <PageHeader title="Categories" />
-      <CategoriesPanel />
-    </Box>
-  )
-}
-
+/** Every category, nested at any depth, under its kind of operation: create, rename, colour, move, reorder and delete. */
 export function CategoriesPanel() {
   const { tree, setCategories, notify, fail } = useApp()
   const colorOf = useCategoryColor()
@@ -147,13 +128,20 @@ export function CategoriesPanel() {
 
   return (
     <>
-      <SectionCard action={<Button variant="contained" startIcon={<Add />} onClick={() => setEditing({ id: null, name: '', parentId: null, kind: 'expense', color: null })}>New category</Button>}>
+      <SectionCard>
         <Table size="small" data-categories>
           <TableBody>
             {categorySections.flatMap(([kind, label, test]) => [
               <TableRow key={'h' + kind}>
-                <TableCell colSpan={4} data-section-label={kind} sx={{ pt: 2.5 }}>
-                  <SectionChip kind={kind} label={label} />
+                <TableCell colSpan={2} data-section-label={kind} sx={{ pt: 2.5 }}>
+                  <KindHeading kind={kind} label={label} />
+                </TableCell>
+                <TableCell padding="none" align="right" sx={{ pt: 2.5, pr: 1 }}>
+                  <Tooltip title={`New category in ${label}`}>
+                    <IconButton size="small" aria-label={`New category in ${label}`} data-add-kind={kind} onClick={() => setEditing({ id: null, name: '', parentId: null, kind, color: null })}>
+                      <Add fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </TableCell>
               </TableRow>,
               ...order.rows.filter((e) => test(e.root)).map((e) => {

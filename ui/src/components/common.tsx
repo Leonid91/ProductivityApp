@@ -5,7 +5,7 @@ import {
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import Check from '@mui/icons-material/CheckRounded'
-import type { Category } from '../api'
+import type { Category, CategoryKind } from '../api'
 import { useApp } from '../AppContext'
 import { money } from '../format'
 import { CategoryIcon } from './CategoryIcon'
@@ -20,26 +20,20 @@ export function Money({ value, currency, sign, sx, muted }: { value: number; cur
   )
 }
 
-/** The colour a category is shown in: its own, gold for exceptional expenses, or none. */
+/** The colour a category is shown in: its own, or none. */
 export function useCategoryColor(): (c: Category) => string | null {
-  const theme = useTheme()
-  return (c) => c.color ?? (c.group === 'exceptional' ? theme.palette.gold.text : null)
+  return (c) => c.color
 }
 
-const sections: [string, (root: Category) => boolean][] = [
-  ['expense', (c) => c.kind === 'expense' && c.group !== 'exceptional'],
-  ['exceptional', (c) => c.group === 'exceptional'],
-  ['income', (c) => c.kind === 'income'],
-  ['transfer', (c) => c.kind === 'transfer'],
-]
+const kinds: CategoryKind[] = ['expense', 'income', 'transfer']
 
 /**
- * The four first-layer labels the categories sit under, with the names the person gave them (Categories);
- * a nested category shows under the label of its top category.
+ * The three kinds of operation the categories sit under, with the names the person gave them (Categories);
+ * a nested category shows under the kind of its top category.
  */
-export function useCategorySections(): [string, string, (root: Category) => boolean][] {
+export function useCategorySections(): [CategoryKind, string, (root: Category) => boolean][] {
   const { settings } = useApp()
-  return sections.map(([kind, test]) => [kind, settings[`section.${kind}`] ?? kind, test])
+  return kinds.map((kind) => [kind, settings[`section.${kind}`] ?? kind, (c: Category) => c.kind === kind])
 }
 
 /** Category picker grouped by kind, nested categories indented under theirs; used in tables, drafts and dialogs. */
@@ -50,13 +44,12 @@ export function CategoryMenu({ anchor, value, onClose, onPick }: {
   onPick: (id: string) => void
 }) {
   const { tree } = useApp()
-  const theme = useTheme()
   const colorOf = useCategoryColor()
   const categorySections = useCategorySections()
   return (
     <Menu anchorEl={anchor} open={anchor !== null} onClose={onClose} slotProps={{ paper: { sx: { maxHeight: 480, minWidth: 260 } } }}>
       {categorySections.flatMap(([kind, label, test]) => [
-        <ListSubheader key={'h' + kind} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, letterSpacing: '.04em', textTransform: 'uppercase', bgcolor: 'background.paper', color: kind === 'exceptional' ? theme.palette.gold.text : undefined }}>
+        <ListSubheader key={'h' + kind} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, letterSpacing: '.04em', textTransform: 'uppercase', bgcolor: 'background.paper' }}>
           {label}
         </ListSubheader>,
         ...tree.filter((e) => test(e.root)).map(({ c, depth }) => {

@@ -31,7 +31,7 @@ public static class RecurringDetector
     public static Dictionary<long, string> Detect(IReadOnlyList<Transaction> all)
     {
         var result = new Dictionary<long, string>();
-        var counted = all.Where(t => Categories.Get(t.CategoryId).Kind != CategoryKind.Transfer && Categories.Get(t.CategoryId).Group is null).ToList();
+        var counted = all.Where(t => Categories.Get(t.CategoryId).Kind != CategoryKind.Transfer).ToList();
 
         // A bill category is enough on its own, except for a known shop the bank filed under a bill heading
         // (an Amazon purchase under "Internet"): that one must come back like anything else.

@@ -3,7 +3,7 @@ import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, 
 import { api, type Account, type Bank, type Category, type InitInfo, type Settings } from './api'
 import { categoryTree, savedOrder, type TreeEntry } from './components/order'
 
-export type Page = 'periods' | 'calendar' | 'import' | 'categories' | 'settings'
+export type Page = 'periods' | 'calendar' | 'import' | 'settings'
 
 interface Toast {
   key: number

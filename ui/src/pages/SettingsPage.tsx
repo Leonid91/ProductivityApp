@@ -27,7 +27,8 @@ type Confirm = { title: string; body?: string; confirm?: string; run: () => Prom
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+    // No line under the last row, nor above a group (the group has its own border).
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type, &:has(+ [data-group])': { borderBottom: 0 } }}>
       <Typography sx={{ flex: 1, fontWeight: 520 }}>{label}</Typography>
       {children}
     </Box>
@@ -309,7 +310,7 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
 export function SettingsPage() {
   const { refreshAccounts, refreshBanks, fail } = useApp()
   const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>('general')
-  const [definition, setDefinition] = useState<'brands' | 'bank' | 'categories'>('brands')
+  const [definition, setDefinition] = useState<'bank' | 'brands' | 'categories'>('bank')
   const [confirm, setConfirm] = useState<Confirm>(null)
 
   useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
@@ -324,9 +325,9 @@ export function SettingsPage() {
       {tab === 'banks' && <BankConfiguration confirm={setConfirm} />}
       {tab === 'definitions' && (
         <>
-          <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'brands', label: 'Brands' }, { value: 'bank', label: 'Bank' }, { value: 'categories', label: 'Categories' }]} />
-          {definition === 'brands' && <BrandsPanel />}
+          <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }]} />
           {definition === 'bank' && <BanksTable confirm={setConfirm} />}
+          {definition === 'brands' && <BrandsPanel />}
           {definition === 'categories' && <CategoriesPanel />}
         </>
       )}

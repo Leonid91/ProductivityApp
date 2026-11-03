@@ -241,7 +241,7 @@ try {
   const before = await p.eval(`document.querySelector('section tbody tr td:nth-child(3)').innerText`)
   await p.click('section tbody tr td:nth-child(2) button', 0)
   await sleep(300)
-  await p.eval(`[...document.querySelectorAll('.MuiListSubheader-root')].find(e => /exceptional/i.test(e.innerText)).scrollIntoView({ block: 'start' })`)
+  await p.eval(`[...document.querySelectorAll('.MuiListSubheader-root')].find(e => /income/i.test(e.innerText)).scrollIntoView({ block: 'start' })`)
   await sleep(300)
   await shot(p, '12a-category-picker.png')
   await p.clickText('Entertainment', { selector: '[role=menuitem]' })
@@ -255,13 +255,17 @@ try {
   check('correction learned', rules.some((r) => r.categoryId === 'entertainment'), `${before} -> Entertainment`)
 
   // ---- categories: made, nested, coloured, and picked for an operation
-  await p.clickText('Categories', { selector: 'nav button' })
-  await p.waitFor(`document.querySelector('[data-categories]') !== null`, 10000, 'categories page')
-  const makeCategory = async (name, color, parentRow) => {
+  // Categories are only in Settings, under Definitions.
+  check('categories not in the side bar', !(await p.eval(`[...document.querySelectorAll('nav button')].some(b => b.innerText.includes('Categories'))`)))
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('Definitions', { selector: 'button' })
+  await p.clickText('Categories', { selector: 'main button' })
+  await p.waitFor(`document.querySelector('[data-categories]') !== null`, 10000, 'categories in settings')
+  const makeCategory = async (name, color, parentRow, kind = 'expense') => {
     if (parentRow) {
       await p.eval(`document.querySelector('[data-category="${parentRow}"] [aria-label="Add a subcategory"]').click()`)
     } else {
-      await p.clickText('New category')
+      await p.click(`[data-add-kind="${kind}"]`)
     }
     await p.waitFor(`document.querySelector('[data-category-dialog]') !== null`, 5000, 'category dialog')
     await p.send('Input.insertText', { text: name })
@@ -274,6 +278,8 @@ try {
   await makeCategory('Home projects', '#00897b')
   await makeCategory('Paint', null, 'Home projects')
   await makeCategory('Brushes', '#fb8c00', 'Paint')
+  await makeCategory('To my sister', null, null, 'transfer')
+  check('a category added under Transfers', (await p.engine('app.init')).categories.find((c) => c.name === 'To my sister')?.kind === 'transfer')
   await sleep(300)
   await p.eval(`document.querySelector('[data-category="Brushes"]').scrollIntoView({ block: 'center' })`)
   await shot(p, '12d-categories.png')
@@ -364,12 +370,14 @@ try {
   await p.clickText('Settings', { selector: 'nav button' })
   await sleep(800)
   await shot(p, '19-settings-general.png')
-  check('Periods and Calendar inside Display', await p.eval(`(() => { const g = document.querySelector('[data-group="Periods"]'); const c = document.querySelector('[data-group="Calendar"]'); return !!g && !!c && g.parentElement === c.parentElement && g.parentElement.querySelector('h6')?.innerText === 'Display' })()`))
+  check('Periods and Calendar inside Display', await p.eval(`(() => { const g = document.querySelector('[data-group="Periods"]'); const c = document.querySelector('[data-group="Calendar"]'); return !!g && !!c && g.parentElement === c.parentElement && g.parentElement.querySelector('h6')?.innerText === 'Display' && getComputedStyle(g.previousElementSibling).borderBottomWidth === '0px' })()`))
   await p.clickText('Bank Configuration', { selector: 'button' })
   await sleep(600)
   await shot(p, '19b-settings-bank-configuration.png')
   check('one tab per bank, accounts with type and currency', await p.eval(`document.querySelector('[data-accounts]')?.innerText.includes('Account Type')`))
   await p.clickText('Definitions', { selector: 'button' })
+  check('definitions in order Bank, Brands, Categories', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Brands Categories')
+  await p.clickText('Brands', { selector: 'main button' })
   await sleep(1000)
   await shot(p, '18-brands.png')
   const learnedText = await p.eval(`document.querySelector('[data-learned]')?.innerText ?? ''`)
@@ -385,7 +393,7 @@ try {
   await p.clickText('Categories', { selector: 'main button' })
   await p.waitFor(`document.querySelector('[data-categories]') !== null`, 5000, 'categories in settings')
   const labels = await p.eval(`[...document.querySelectorAll('[data-section-label] input')].map(i => i.value)`)
-  check('categories in settings, under four labels', labels.join() === 'Expenses,Exceptional,Income,Transfers', labels.join(', '))
+  check('categories under the three kinds of operation, no Exceptional', labels.join() === 'Expenses,Income,Transfers' && !(await text(p)).includes('xceptional'), labels.join(', '))
   // A label is renamed in place, like a category.
   await p.eval(`(() => { const i = document.querySelector('[data-section-label="transfer"] input'); i.focus(); i.select() })()`)
   await p.send('Input.insertText', { text: 'Between accounts' })
