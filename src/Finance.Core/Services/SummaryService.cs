@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Storage;
 
@@ -10,11 +11,17 @@ public sealed record Slice(string Key, string Label, decimal Amount, double Shar
 public sealed record Bar(string Key, string Label, decimal Expenses, decimal Earnings, decimal Moved = 0, decimal CardPaid = 0, decimal Invested = 0);
 
 /// <param name="Recurring">How often it comes back ("monthly", "twice a month", "yearly"), or null when it is not recurring.</param>
+/// <remarks>Empty fields are left out of what the interface receives (a period of ten years holds tens of thousands of operations).</remarks>
 public sealed record TransactionView(
     long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, string CategorySource,
-    string BrandSource, string RawLabel, string Note, long AccountId, long? StatementId,
-    string? Recurring = null, long? LinkedId = null, decimal? Earned = null, long[]? OwnTags = null, long[]? Tags = null,
-    decimal? Original = null, string? OriginalCurrency = null, decimal? Rate = null, string? RateDay = null);
+    string BrandSource, string RawLabel, string Note, long AccountId, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? StatementId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Recurring = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? LinkedId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? Earned = null, long[]? OwnTags = null, long[]? Tags = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? Original = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OriginalCurrency = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? Rate = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RateDay = null);
 
 /// <summary>
 /// One part of a period at the best resolution (years for more than a year, months otherwise) and its balance:
@@ -95,7 +102,7 @@ public sealed record ConversionLine(
 
 /// <summary>The conversions behind a period's global figures, and where the rates come from.</summary>
 /// <param name="Base">The currency the bank quotes every rate against (two other currencies are converted through it).</param>
-public sealed record Conversion(string To, string Source, string Base, string PageUrl, string DataUrl, string? UpdatedAt, string? Latest, List<ConversionLine> Lines);
+public sealed record Conversion(string To, string Source, string Base, string Url, string? UpdatedAt, string? Latest, List<ConversionLine> Lines);
 
 /// <summary>A period bank by bank (each in its own currency), then every bank together in the global currency.</summary>
 public sealed class PeriodReport
@@ -120,7 +127,7 @@ public sealed class PeriodReport
 }
 
 /// <param name="Earned">The earned part of an investment coming back, converted the same way.</param>
-public sealed record ConvertedView(decimal Amount, decimal Rate, string RateDay, decimal? Earned);
+public sealed record ConvertedView(decimal Amount, decimal Rate, string RateDay, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? Earned);
 
 public sealed class SummaryService(Database db)
 {
@@ -171,7 +178,7 @@ public sealed class SummaryService(Database db)
     {
         if (to < from) throw new ArgumentException("The period ends before it starts.");
         var txs = db.Transactions(from, to).Where(t => t.Currency == currency).ToList();
-        return Build(txs, from, to, g, currency, null);
+        return Build(txs, from, to, g, currency, null, db.Accounts().ToDictionary(a => a.Id));
     }
 
     /// <summary>
@@ -190,6 +197,8 @@ public sealed class SummaryService(Database db)
             .OrderBy(x => x.Key is { } id ? firstAccount.GetValueOrDefault(id, long.MaxValue - 1) : long.MaxValue).ThenBy(x => x.Key)
             .ToList();
 
+        // The source of the rates is read once for the whole period.
+        var source = rates.Source;
         var parts = new List<BankPart>();
         var lines = new List<ConversionLine>();
         var everything = new List<Transaction>();
@@ -201,21 +210,20 @@ public sealed class SummaryService(Database db)
             var currency = bank?.Currency ?? global;
             var txs = group.ToList();
 
-            var (mine, conversions, own) = ConvertAll(txs, currency, rates, name);
+            var (mine, conversions, own) = ConvertAll(txs, currency, rates, source, name);
             lines.AddRange(own);
-            parts.Add(new BankPart(group.Key is { } k ? k.ToString(CultureInfo.InvariantCulture) : "other", name, currency, bank?.System, Build(mine, from, to, g, currency, conversions)));
+            parts.Add(new BankPart(group.Key is { } k ? k.ToString(CultureInfo.InvariantCulture) : "other", name, currency, bank?.System, Build(mine, from, to, g, currency, conversions, accounts)));
 
-            var (converted, toGlobal, globalLines) = ConvertAll(txs, global, rates, name);
+            var (converted, toGlobal, globalLines) = ConvertAll(txs, global, rates, source, name);
             lines.AddRange(globalLines);
             everything.AddRange(converted);
             foreach (var (txId, c) in toGlobal) everyConversion[txId] = c;
         }
         everything.Sort((a, b) => a.Date != b.Date ? a.Date.CompareTo(b.Date) : a.Id.CompareTo(b.Id));
-        var status = rates.Status();
+        var status = rates.Status(source);
         var copies = everything.ToDictionary(t => t.Id);
-        var globalSummary = Build(everything, from, to, g, global, everyConversion);
-        // The operations are in the banks' parts already (the interface converts them with Converted).
-        globalSummary.Transactions.Clear();
+        // The operations are in the banks' parts already (the interface converts them with Converted): not listed again.
+        var globalSummary = Build(everything, from, to, g, global, everyConversion, accounts, listOperations: false);
         return new PeriodReport
         {
             From = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
@@ -225,7 +233,7 @@ public sealed class SummaryService(Database db)
             Currency = global,
             Banks = parts,
             Global = globalSummary,
-            Conversion = new Conversion(global, status.Source, status.Base, status.PageUrl, status.DataUrl, status.UpdatedAt, status.Latest, lines),
+            Conversion = new Conversion(global, status.Source, status.Base, status.Url, status.UpdatedAt, status.Latest, lines),
             Converted = everyConversion.ToDictionary(kv => kv.Key, kv => new ConvertedView(kv.Value.Rate.Amount, kv.Value.Rate.Rate,
                 kv.Value.Rate.RateDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), copies.GetValueOrDefault(kv.Key)?.Earned)),
             Unconverted = [.. all.Where(t => t.Currency != global && !everyConversion.ContainsKey(t.Id)).Select(t => t.Id)],
@@ -237,7 +245,7 @@ public sealed class SummaryService(Database db)
     /// without a known rate left out. Gives, per currency converted, how it was done.
     /// </summary>
     private static (List<Transaction> Converted, Dictionary<long, (Transaction Original, Converted Rate)> Conversions, List<ConversionLine> Lines)
-        ConvertAll(List<Transaction> txs, string to, ExchangeRates rates, string group)
+        ConvertAll(List<Transaction> txs, string to, ExchangeRates rates, RateSource source, string group)
     {
         var result = new List<Transaction>(txs.Count);
         var conversions = new Dictionary<long, (Transaction, Converted)>();
@@ -249,8 +257,8 @@ public sealed class SummaryService(Database db)
             var missing = new List<Transaction>();
             foreach (var t in byCurrency)
             {
-                if (rates.Convert(t.Amount, t.Currency, to, t.Date) is not { } c) { missing.Add(t); continue; }
-                var copy = Copy(t, c.Amount, to, t.Earned is { } e ? rates.Convert(e, t.Currency, to, t.Date)?.Amount : null);
+                if (rates.Convert(source, t.Amount, t.Currency, to, t.Date) is not { } c) { missing.Add(t); continue; }
+                var copy = Copy(t, c.Amount, to, t.Earned is { } e ? rates.Convert(source, e, t.Currency, to, t.Date)?.Amount : null);
                 done.Add((t, copy, c));
                 conversions[t.Id] = (t, c);
                 result.Add(copy);
@@ -279,11 +287,10 @@ public sealed class SummaryService(Database db)
     };
 
     private PeriodSummary Build(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g, string currency,
-        Dictionary<long, (Transaction Original, Converted Rate)>? converted)
+        Dictionary<long, (Transaction Original, Converted Rate)>? converted, Dictionary<long, Account> accounts, bool listOperations = true)
     {
         var (recurring, byId) = History();
         var tags = db.TagIndex();
-        var accounts = db.Accounts().ToDictionary(a => a.Id);
         var movements = Movements.Build(txs, byId, accounts);
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var toIso = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -362,7 +369,7 @@ public sealed class SummaryService(Database db)
             Balance = earnings - expenses,
             TransfersOut = transfersOut,
             TransfersIn = transfersIn,
-            Transactions = txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => converted is not null && converted.TryGetValue(t.Id, out var c)
+            Transactions = !listOperations ? [] : txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => converted is not null && converted.TryGetValue(t.Id, out var c)
                 ? View(t, recurring.GetValueOrDefault(t.Id), tags) with
                 {
                     Original = c.Original.Amount, OriginalCurrency = c.Original.Currency, Rate = c.Rate.Rate,

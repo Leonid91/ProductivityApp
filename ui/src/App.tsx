@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, ButtonBase, CssBaseline, IconButton, ThemeProvider, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
@@ -18,9 +18,10 @@ import { AppProvider, useApp, type Page } from './AppContext'
 import { makeTheme } from './theme'
 import { ResizeEdges, TitleBar, useMaximized } from './components/WindowChrome'
 import { PeriodsPage } from './pages/PeriodsPage'
-import { CalendarPage } from './pages/CalendarPage'
-import { ImportPage } from './pages/ImportPage'
-import { SettingsPage } from './pages/SettingsPage'
+// The pages other than the periods are loaded when first opened: the app starts with less to read.
+const CalendarPage = lazy(() => import('./pages/CalendarPage').then((m) => ({ default: m.CalendarPage })))
+const ImportPage = lazy(() => import('./pages/ImportPage').then((m) => ({ default: m.ImportPage })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 import { FindBar } from './components/FindBar'
 
 const nav: { page: Page; label: string; icon: React.ReactNode; active: React.ReactNode }[] = [
@@ -94,9 +95,11 @@ function Shell() {
           sx={{ flex: 1, minWidth: 0, overflow: 'auto', px: { xs: 2, md: 4 }, borderTopLeftRadius: 20, bgcolor: 'background.default' }}
         >
           {page === 'periods' && <PeriodsPage />}
-          {page === 'calendar' && <CalendarPage />}
-          {page === 'import' && <ImportPage />}
-          {page === 'settings' && <SettingsPage />}
+          <Suspense fallback={null}>
+            {page === 'calendar' && <CalendarPage />}
+            {page === 'import' && <ImportPage />}
+            {page === 'settings' && <SettingsPage />}
+          </Suspense>
         </Box>
       </Box>
       <FindBar />

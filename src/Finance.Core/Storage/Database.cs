@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 12;
+    private const int SchemaVersion = 13;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -170,6 +170,15 @@ public sealed class Database : IDisposable
                 PRAGMA user_version = 12;
                 """);
         }
+        if (version < 13)
+        {
+            // The places the exchange rates are downloaded from, defined by the person; the two central banks to start with.
+            Exec("CREATE TABLE rate_sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, base TEXT, position INTEGER NOT NULL);");
+            var position = 0;
+            foreach (var s in RateSource.Defaults)
+                Exec("INSERT INTO rate_sources(id, name, url, base, position) VALUES($i, $n, $u, $b, $p)", ("$i", s.Id), ("$n", s.Name), ("$u", s.Url), ("$b", s.Base), ("$p", position++));
+            Exec("PRAGMA user_version = 13;");
+        }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -181,6 +190,17 @@ public sealed class Database : IDisposable
             using var cmd = Command(sql, args);
             cmd.ExecuteNonQuery();
         }
+    }
+
+    /// <summary>A single write to the settings or the exchange rates only.</summary>
+    private static bool IsBookkeeping(string sql)
+    {
+        var s = sql.AsSpan().Trim();
+        if (s.IndexOf(';') is var end and >= 0 && end < s.Length - 1) return false;
+        foreach (var prefix in (ReadOnlySpan<string>)["INSERT INTO settings", "UPDATE settings", "DELETE FROM settings", "INSERT INTO rate_sets", "UPDATE rate_sets",
+            "DELETE FROM rate_sets", "INSERT INTO rate_sources", "UPDATE rate_sources", "DELETE FROM rate_sources"])
+            if (s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     private object? Scalar(string sql, params (string Name, object? Value)[] args)
@@ -208,7 +228,9 @@ public sealed class Database : IDisposable
     {
         // A write that can reach operations (directly, or by deleting what they belong to) drops the ones kept in
         // memory: they are read again on next use. Settings, rules, categories, banks and templates leave them alone.
-        if (!sql.AsSpan().TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+        // Settings and exchange rates are bookkeeping: writing them (the window's place, a row order, a download of
+        // rates) changes no operation, so what is kept in memory about the operations stays valid.
+        if (!sql.AsSpan().TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) && !IsBookkeeping(sql))
         {
             Version++;
             if (!_patching && (sql.Contains("transactions", StringComparison.OrdinalIgnoreCase) || sql.Contains("DELETE", StringComparison.OrdinalIgnoreCase)
@@ -289,10 +311,29 @@ public sealed class Database : IDisposable
 
     // ---------------------------------------------------------------- settings
 
-    public string? GetSetting(string key) => Scalar("SELECT value FROM settings WHERE key = $k", ("$k", key)) as string;
+    /// <summary>Every setting, read once and kept in memory (they are read for every operation converted).</summary>
+    private Dictionary<string, string>? _settings;
 
-    public void SetSetting(string key, string value) =>
-        Exec("INSERT INTO settings(key, value) VALUES($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ("$k", key), ("$v", value));
+    private Dictionary<string, string> SettingsCache()
+    {
+        lock (_gate)
+            return _settings ??= Query("SELECT key, value FROM settings", r => (r.GetString(0), r.GetString(1))).ToDictionary(x => x.Item1, x => x.Item2, StringComparer.Ordinal);
+    }
+
+    public string? GetSetting(string key)
+    {
+        var all = SettingsCache();
+        lock (_gate) return all.GetValueOrDefault(key);
+    }
+
+    public void SetSetting(string key, string value)
+    {
+        lock (_gate)
+        {
+            Exec("INSERT INTO settings(key, value) VALUES($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ("$k", key), ("$v", value));
+            if (_settings is not null) _settings[key] = value;
+        }
+    }
 
     /// <summary>One copy of a bank's exchange rates per currency: slot 0 the latest download, slot 1 the one before.</summary>
     public Dictionary<string, string> LoadRateSet(string source, int slot) =>
@@ -308,8 +349,39 @@ public sealed class Database : IDisposable
             Exec("INSERT INTO rate_sets(source, slot, currency, data) VALUES($s, 0, $c, $d)", ("$s", source), ("$c", currency), ("$d", data));
     });
 
-    public Dictionary<string, string> AllSettings() =>
-        Query("SELECT key, value FROM settings", r => (r.GetString(0), r.GetString(1))).ToDictionary(x => x.Item1, x => x.Item2);
+    /// <summary>The newest day of the latest copy of a source's rates (every currency's text starts with its newest day).</summary>
+    public string? RateSetLatest(string source) =>
+        Scalar("SELECT MAX(substr(data, 1, 10)) FROM rate_sets WHERE source = $s AND slot = 0", ("$s", source)) as string;
+
+    public List<RateSource> RateSources() =>
+        Query("SELECT id, name, url, base FROM rate_sources ORDER BY position, rowid",
+            r => new RateSource(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3)));
+
+    /// <summary>Adds the source (at the end) or saves its name, address and currency.</summary>
+    public void SaveRateSource(RateSource s) => Exec("""
+        INSERT INTO rate_sources(id, name, url, base, position) VALUES($i, $n, $u, $b, (SELECT COALESCE(MAX(position), -1) + 1 FROM rate_sources))
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, url = excluded.url, base = excluded.base
+        """, ("$i", s.Id), ("$n", s.Name), ("$u", s.Url), ("$b", s.Base));
+
+    /// <summary>Forgets the rates downloaded from a source, with the day and the error of its last download.</summary>
+    public void ClearRates(string source) => InTransaction(() =>
+    {
+        Exec("DELETE FROM rate_sets WHERE source = $s", ("$s", source));
+        Exec("DELETE FROM settings WHERE key IN ($u, $e)", ("$u", $"rates.{source}.updatedAt"), ("$e", $"rates.{source}.error"));
+        _settings = null;
+    });
+
+    public void RemoveRateSource(string source) => InTransaction(() =>
+    {
+        ClearRates(source);
+        Exec("DELETE FROM rate_sources WHERE id = $s", ("$s", source));
+    });
+
+    public Dictionary<string, string> AllSettings()
+    {
+        var all = SettingsCache();
+        lock (_gate) return new Dictionary<string, string>(all);
+    }
 
     // ---------------------------------------------------------------- accounts
 

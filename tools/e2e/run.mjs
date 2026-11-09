@@ -522,7 +522,7 @@ try {
   // Four operations of August go to the four nested levels (put back at the end).
   const augBefore = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
   const isMoveCat = (id) => nestedCats.find((c) => c.id === id)?.kind === 'transfer'
-  const moved = augBefore.transactions.filter((t) => t.amount < 0 && !isMoveCat(t.categoryId) && t.recurring === null && !['groceries', 'restaurants'].includes(t.categoryId)).slice(0, 4)
+  const moved = augBefore.transactions.filter((t) => t.amount < 0 && !isMoveCat(t.categoryId) && t.recurring == null && !['groceries', 'restaurants'].includes(t.categoryId)).slice(0, 4)
   for (let i = 0; i < 4; i++) await p.engine('tx.setCategory', { id: moved[i].id, categoryId: catId(`Nested ${i + 1}`), allOfBrand: false })
   const augNested = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
   const rootOf = (id) => { let c = nestedCats.find((x) => x.id === id); while (c?.parentId) c = nestedCats.find((x) => x.id === c.parentId); return c?.id }
@@ -776,6 +776,11 @@ try {
   await p.waitFor(`document.querySelector('${octSec} [data-summary]') !== null`, 20000, 'October summary')
   check('the Summary is the global balance', (await p.eval(`document.querySelector('${octSec} [data-summary]').innerText`)).includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })))
   await p.clickText('Statements', { selector: '[data-period-view] button' })
+  const typeInto = async (selector, value) => {
+    await p.eval(`(() => { const i = document.querySelector('${selector}'); i.focus(); i.select() })()`)
+    await p.send('Input.insertText', { text: value })
+    await sleep(150)
+  }
   // Settings > Display: the global display currency and the bank of the exchange rates are rows like the date format,
   // their values in the same column; the European Central Bank by default, the Bank of Canada as another choice.
   await p.clickText('Settings', { selector: 'nav button' })
@@ -796,6 +801,49 @@ try {
     && octBoc.conversion.lines.length > 0 && octBoc.conversion.lines.every((l) => l.unconverted === 0) && Math.abs(octBoc.global.balance - oct.global.balance) < Math.abs(oct.global.balance) * 0.02,
     `${octBoc.global.balance} with the Bank of Canada, ${oct.global.balance} with the ECB`)
   await p.engine('settings.set', { key: 'ratesSource', value: 'ecb' })
+  // Definitions > Exchange rates: a table of sources (name, address of the file) filling the choice of Settings, the two
+  // central banks to start with. A wrong address is checked in the background and the reason shown cleanly.
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('General', { selector: 'button' })
+  await sleep(500)
+  await p.mouseClick('[data-rates-link]')
+  await p.waitFor(`document.querySelector('[data-rate-sources]') !== null`, 10000, 'sources table')
+  const sourcesUi = await p.eval(`(() => ({
+    tab: [...document.querySelectorAll('main [role=group] button[aria-pressed=true]')].map(b => b.innerText),
+    rows: [...document.querySelectorAll('[data-rate-source]')].map(r => [r.querySelector('[data-field=name]').value, r.querySelector('[data-field=url]').value, r.cells[2].innerText, r.cells[3].innerText, !!r.querySelector('[data-in-use]')]),
+    help: document.querySelector('[data-rates-help]').innerText,
+    tabs: [...document.querySelectorAll('main [role=group]')].at(-1).innerText.replace(/\\s+/g, ' '),
+  }))()`)
+  check('Definitions: Exchange rates after Bank, opened from the Settings row', sourcesUi.tab.includes('Exchange rates') && /^Bank Exchange rates Brands/.test(sourcesUi.tabs), sourcesUi.tabs)
+  check('the two central banks to start with, with their address, currency and last day', sourcesUi.rows.length === 2
+    && sourcesUi.rows[0][0] === 'European Central Bank' && sourcesUi.rows[0][1].startsWith('https://www.ecb.europa.eu/') && sourcesUi.rows[0][2] === 'EUR' && sourcesUi.rows[0][3] !== '—' && sourcesUi.rows[0][4]
+    && sourcesUi.rows[1][0] === 'Bank of Canada' && sourcesUi.rows[1][1].startsWith('https://www.bankofcanada.ca/') && sourcesUi.rows[1][2] === 'CAD', JSON.stringify(sourcesUi.rows))
+  check('where to find the address: two sentences at most', (sourcesUi.help.match(/[.!?](\s|$)/g) ?? []).length <= 2 && /link of its download/.test(sourcesUi.help), sourcesUi.help)
+  // A source whose address is the bank's web page instead of its file.
+  await p.clickText('Add source', { selector: 'main button' })
+  await p.waitFor(`document.querySelector('[data-rate-source-dialog] [data-field="url"]') !== null`, 5000, 'add source dialog')
+  await typeInto('[data-rate-source-dialog] [data-field="name"]', 'Test web page')
+  await typeInto('[data-rate-source-dialog] [data-field="url"]', 'https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html')
+  await p.clickText('Add', { selector: '[data-rate-source-dialog] button' })
+  await p.waitFor(`[...document.querySelectorAll('[data-rate-source]')].some(r => r.querySelector('[data-rates-error]'))`, 60000, 'the wrong address checked')
+  const wrong = await p.eval(`[...document.querySelectorAll('[data-rate-source]')].map(r => r.querySelector('[data-rates-error]')?.innerText).find(Boolean)`)
+  check('a wrong address: checked in the background, the reason shown under it', /web page, not a file of rates/.test(wrong) && !(await p.eval(`!!document.querySelector('.MuiSnackbar-root .MuiAlert-standardError, .MuiSnackbar-root .MuiAlert-filledError')`)), wrong)
+  await shot(p, '24c-exchange-rate-sources.png')
+  // Chosen in Settings: the same reason under the choice; nothing said when a good one is chosen again.
+  await p.clickText('General', { selector: 'button' })
+  await sleep(500)
+  await p.mouseClick('[data-rates-source-select]')
+  await p.clickText('Test web page', { selector: '[role=option]' })
+  await p.waitFor(`document.querySelector('main [data-rates-error]') !== null`, 60000, 'the error under the choice')
+  check('the chosen source checked at once, its error under the choice', /web page/.test(await p.eval(`document.querySelector('main [data-rates-error]').innerText`)))
+  await shot(p, '24d-wrong-source-chosen.png')
+  await p.mouseClick('[data-rates-source-select]')
+  await p.clickText('European Central Bank', { selector: '[role=option]' })
+  await p.waitFor(`document.querySelector('main [data-rates-error]') === null && document.querySelector('[aria-label="Download the exchange rates again"]') !== null`, 90000, 'the good source checked')
+  check('a good source: checked silently', !(await p.eval(`[...document.querySelectorAll('.MuiSnackbar-root')].some(x => /rates/i.test(x.innerText))`)) && (await p.engine('rates.status')).error === null)
+  const extra = (await p.engine('rates.sources')).find((x) => x.name === 'Test web page')
+  await p.engine('rates.removeSource', { id: extra.id })
+  check('a source not in use can be deleted', (await p.engine('rates.sources')).length === 2)
   await p.engine('settings.set', { key: 'currency', value: 'EUR' })
   const octEur = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
   check('in euros, the Canadian banks are the ones converted', octEur.currency === 'EUR' && octEur.conversion.lines.length > 0 && octEur.conversion.lines.every((l) => l.from === 'CAD' && l.to === 'EUR')
@@ -899,11 +947,6 @@ try {
   check('one tab per bank, accounts with type and currency', await p.eval(`document.querySelector('[data-accounts]')?.innerText.includes('Account Type')`))
   // Banks are added in Definitions > Bank only; accounts with the button of Bank Configuration and a dialog, not typed
   // into the tables.
-  const typeInto = async (selector, value) => {
-    await p.eval(`(() => { const i = document.querySelector('${selector}'); i.focus(); i.select() })()`)
-    await p.send('Input.insertText', { text: value })
-    await sleep(150)
-  }
   const mainButtons = () => p.eval(`[...document.querySelectorAll('main button')].map(b => b.innerText.trim())`)
   check('Bank Configuration: Add account, no Add bank', (await mainButtons()).includes('Add account') && !(await mainButtons()).includes('Add bank'))
   await p.clickText('Definitions', { selector: 'button' })
@@ -933,7 +976,7 @@ try {
   check('account added at its bank', added?.bankId === contoso?.id && added?.kind === 'bank' && added?.currency === 'CAD', JSON.stringify(added))
   await shot(p, '19f-account-added.png')
   await p.clickText('Definitions', { selector: 'button' })
-  check('definitions in order Bank, Brands, Categories, Tags', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Brands Categories Tags')
+  check('definitions in order Bank, Exchange rates, Brands, Categories, Tags', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Exchange rates Brands Categories Tags')
   await p.clickText('Brands', { selector: 'main button' })
   await sleep(1000)
   await shot(p, '18-brands.png')

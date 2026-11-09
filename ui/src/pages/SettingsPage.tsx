@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
+  Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
   Tooltip, Typography,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
@@ -8,7 +8,8 @@ import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
 import Refresh from '@mui/icons-material/RefreshRounded'
-import OpenInNew from '@mui/icons-material/OpenInNewRounded'
+import EditOutlined from '@mui/icons-material/EditOutlined'
+import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
 import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem, type RateSource, type RatesStatus } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample } from '../format'
@@ -28,13 +29,25 @@ const systems: { value: BankingSystem; label: string }[] = [
 
 type Confirm = { title: string; body?: string; confirm?: string; run: () => Promise<void> } | null
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+/** A setting: its label on the left, its value on the right; note: a line under the value (an error). */
+function Row({ label, children, note }: { label: string; children: React.ReactNode; note?: React.ReactNode }) {
   return (
     // No line under the last row, nor above a group (the group has its own border).
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type, &:has(+ [data-group])': { borderBottom: 0 } }}>
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 2, rowGap: 0.75, py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type, &:has(+ [data-group])': { borderBottom: 0 } }}>
       <Typography sx={{ flex: 1, fontWeight: 520 }}>{label}</Typography>
       {children}
+      {note && <Box sx={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end' }}>{note}</Box>}
     </Box>
+  )
+}
+
+/** Why a source of exchange rates gives no rates, in red under its address or its choice. */
+function RatesError({ message }: { message: string }) {
+  return (
+    <Typography variant="body2" role="alert" data-rates-error sx={{ color: 'error.main', display: 'flex', alignItems: 'flex-start', gap: 0.75, maxWidth: 560 }}>
+      <ErrorOutline sx={{ fontSize: 18, mt: '1px', flexShrink: 0 }} />
+      {message}
+    </Typography>
   )
 }
 
@@ -76,43 +89,174 @@ function CurrencySelect({ value, onChange, label, width = 110 }: { value: string
 }
 
 /**
- * The central bank whose daily exchange rates convert the other currencies (European Central Bank by default), with
- * its page and a new download beside the choice.
+ * The source whose daily exchange rates convert the other currencies (European Central Bank by default), chosen among
+ * the sources of Definitions > Exchange rates. Choosing one downloads its rates in the background, which checks its
+ * address: nothing is said when it works, the reason is written under the choice when it does not.
  */
-function RatesSourceSelect() {
+function RatesSourceRow({ onEdit }: { onEdit: () => void }) {
   const { settings, setSetting, fail, notify, dataChanged } = useApp()
   const [sources, setSources] = useState<RateSource[]>([])
   const [status, setStatus] = useState<RatesStatus | null>(null)
-  const [updating, setUpdating] = useState(false)
+  const [checking, setChecking] = useState(false)
   useEffect(() => { api.rates.sources().then(setSources, () => setSources([])) }, [])
   useEffect(() => { api.rates.status().then(setStatus, () => setStatus(null)) }, [settings.ratesSource])
-  const update = () => {
-    setUpdating(true)
-    api.rates.update().then((s) => {
+  const download = (id: string | undefined, announce: boolean) => {
+    setChecking(true)
+    return api.rates.update(id).then((s) => {
       setStatus(s)
-      if (s.error) fail(new Error(s.error))
-      else { notify('Exchange rates updated'); dataChanged() }
-    }, fail).finally(() => setUpdating(false))
+      if (!s.error) { dataChanged(); if (announce) notify('Exchange rates updated') }
+    }, fail).finally(() => setChecking(false))
   }
+  const choose = async (id: string) => {
+    await setSetting('ratesSource', id)
+    void download(id, false)
+  }
+  const current = settings.ratesSource || 'ecb'
   return (
-    <>
-      <Tooltip title="Open the bank's page of exchange rates">
-        <IconButton size="small" aria-label="Open the bank's page of exchange rates" data-rates-link onClick={() => void api.shell.openRatesPage().catch(fail)}><OpenInNew fontSize="small" /></IconButton>
+    <Row label="Exchange rates" note={!checking && status?.sourceId === current && status.error ? <RatesError message={status.error} /> : undefined}>
+      <Tooltip title="Edit the sources">
+        <IconButton size="small" aria-label="Edit the sources of exchange rates" data-rates-link onClick={onEdit}><EditOutlined fontSize="small" /></IconButton>
       </Tooltip>
-      <Tooltip title={status?.latest ? `Rates up to ${formatDate(status.latest, settings.dateFormat)}. Download again` : 'Download the rates'}>
-        <span>
-          <IconButton size="small" aria-label="Download the exchange rates again" disabled={updating} onClick={update}><Refresh fontSize="small" /></IconButton>
-        </span>
+      <Tooltip title={checking ? 'Downloading' : status?.latest ? `Rates up to ${formatDate(status.latest, settings.dateFormat)}. Download again` : 'Download the rates'}>
+        <Box component="span" sx={{ width: 30, display: 'inline-grid', placeItems: 'center' }}>
+          {checking ? <CircularProgress size={16} aria-label="Downloading the exchange rates" />
+            : <IconButton size="small" aria-label="Download the exchange rates again" onClick={() => void download(undefined, true)}><Refresh fontSize="small" /></IconButton>}
+        </Box>
       </Tooltip>
-      <TextField select size="small" value={settings.ratesSource || 'ecb'} onChange={(e) => void setSetting('ratesSource', e.target.value)} sx={{ width: 220 }}
+      <TextField select size="small" value={sources.some((s) => s.id === current) ? current : ''} onChange={(e) => void choose(e.target.value)} sx={{ width: 220 }}
         slotProps={{ htmlInput: { 'data-rates-source-select': '' } }}>
         {sources.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
       </TextField>
+    </Row>
+  )
+}
+
+/** Where to find the address of a source's file, in two sentences at most. */
+const ratesHelp = 'Each address must lead to the file of rates itself: on the bank’s exchange-rate page, copy the link of its download (CSV, ZIP or JSON), not the address of the page. '
+  + 'The app reads tables in the European Central Bank’s layout (Date, then one column per currency, against the euro) and Valet JSON files like the Bank of Canada’s.'
+
+/**
+ * The places the exchange rates can come from: a name and the address of a file of daily rates. A new or changed
+ * address is checked at once by downloading it, in the background; what is wrong shows under the address.
+ */
+function RatesSourcesTable({ adding, onAdded, confirm }: { adding: boolean; onAdded: () => void; confirm: (c: Confirm) => void }) {
+  const { settings, notify, fail, dataChanged } = useApp()
+  const [sources, setSources] = useState<RateSource[] | null>(null)
+  const [checking, setChecking] = useState<Set<string>>(new Set())
+  /** Addresses or names refused before being saved, by source ("" for the new one). */
+  const [refused, setRefused] = useState<Record<string, string>>({})
+  useEffect(() => { api.rates.sources().then(setSources, fail) }, [fail])
+
+  const check = (id: string) => {
+    setChecking((c) => new Set(c).add(id))
+    api.rates.update(id).then(() => api.rates.sources()).then((list) => {
+      setSources(list)
+      if (list.find((s) => s.id === id)?.inUse) dataChanged()
+    }, fail).finally(() => setChecking((c) => { const n = new Set(c); n.delete(id); return n }))
+  }
+  const save = (s: { id?: string; name: string; url: string }, addressChanged: boolean) =>
+    api.rates.saveSource(s).then((r) => {
+      setSources(r.sources)
+      setRefused(({ [s.id ?? '']: _, ...rest }) => rest)
+      if (addressChanged) check(r.id)
+      return true
+    }, (e: unknown) => {
+      setRefused((x) => ({ ...x, [s.id ?? '']: e instanceof Error ? e.message : String(e) }))
+      return false
+    })
+
+  if (!sources) return null
+  return (
+    <>
+      <Typography variant="body2" color="text.secondary" data-rates-help sx={{ maxWidth: 820, mt: -1 }}>{ratesHelp}</Typography>
+      <SectionCard>
+        <Table size="small" data-rate-sources sx={{ tableLayout: 'fixed' }}>
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ width: '26%' }}>Name</TableCell>
+              <TableCell>Address of the rates file</TableCell>
+              <TableCell sx={{ width: 90 }}>Against</TableCell>
+              <TableCell sx={{ width: 170 }}>Rates up to</TableCell>
+              <TableCell padding="checkbox" sx={{ width: 48 }} />
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {sources.map((s) => {
+              const busy = checking.has(s.id)
+              const error = refused[s.id] ?? (busy ? null : s.error)
+              return (
+                <TableRow key={s.id} hover data-rate-source={s.id} sx={{ verticalAlign: 'top', '& td': { py: 1.25 } }}>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <InputBase
+                        defaultValue={s.name}
+                        inputProps={{ 'aria-label': 'Name', 'data-field': 'name' }}
+                        onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== s.name) void save({ id: s.id, name: v, url: s.url }, false).then((ok) => ok && notify('Source renamed')) }}
+                        sx={{ ...inlineInput, minWidth: 0 }}
+                      />
+                      {s.inUse && <Chip size="small" label="In use" data-in-use sx={{ flexShrink: 0, height: 22, fontSize: 12 }} />}
+                    </Box>
+                  </TableCell>
+                  <TableCell>
+                    <InputBase
+                      defaultValue={s.url}
+                      fullWidth
+                      inputProps={{ 'aria-label': 'Address of the rates file', 'data-field': 'url', spellCheck: false }}
+                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== s.url) void save({ id: s.id, name: s.name, url: v }, true) }}
+                      sx={{ ...inlineInput, fontSize: 13, fontWeight: 450, width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', '& input': { textOverflow: 'ellipsis' } }}
+                    />
+                    {busy && <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}><CircularProgress size={12} />Checking the address</Typography>}
+                    {error && <Box sx={{ mt: 0.5 }}><RatesError message={error} /></Box>}
+                  </TableCell>
+                  <TableCell sx={{ pt: '14px !important' }}>{s.base ?? '—'}</TableCell>
+                  <TableCell sx={{ pt: '14px !important', whiteSpace: 'nowrap' }} className="tnum">{s.latest ? formatDate(s.latest, settings.dateFormat) : '—'}</TableCell>
+                  <TableCell padding="checkbox" sx={{ pt: '6px !important' }}>
+                    <Tooltip title={s.inUse ? 'In use: choose another source in General first' : 'Delete'}>
+                      <span>
+                        <IconButton size="small" aria-label="Delete" disabled={s.inUse} onClick={() => confirm({
+                          title: `Delete ${s.name}?`,
+                          body: 'The rates downloaded from it are deleted too.',
+                          run: async () => { setSources(await api.rates.removeSource(s.id)); notify('Source deleted') },
+                        })}>
+                          <DeleteOutline fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      </SectionCard>
+      <AddRateSourceDialog open={adding} error={refused[''] ?? null} onClose={() => { onAdded(); setRefused(({ '': _, ...rest }) => rest) }}
+        onAdd={(name, url) => void save({ name, url }, true).then((ok) => { if (ok) { notify('Source added'); onAdded() } })} />
     </>
   )
 }
 
-function General({ confirm }: { confirm: (c: Confirm) => void }) {
+/** A new source of exchange rates: its name and the address of its file of rates. */
+function AddRateSourceDialog({ open, error, onClose, onAdd }: { open: boolean; error: string | null; onClose: () => void; onAdd: (name: string, url: string) => void }) {
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+  useEffect(() => { if (open) { setName(''); setUrl('') } }, [open])
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth data-rate-source-dialog>
+      <DialogTitle>Add a source of exchange rates</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <TextField autoFocus label="Name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
+        <TextField label="Address of the rates file" placeholder="https://" value={url} onChange={(e) => setUrl(e.target.value)} error={error !== null} helperText={error ?? ratesHelp.split(': ')[0] + '.'}
+          slotProps={{ htmlInput: { 'data-field': 'url', spellCheck: false } }} />
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={name.trim() === '' || url.trim() === ''} onClick={() => onAdd(name, url)}>Add</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEditRates: () => void }) {
   const { settings, setSetting, info, dataFolder, setDataFolder, dataChanged, notify, fail } = useApp()
   const [browsing, setBrowsing] = useState<'reports' | 'database' | null>(null)
 
@@ -135,9 +279,7 @@ function General({ confirm }: { confirm: (c: Confirm) => void }) {
             <CurrencySelect width={220} value={settings.currency} onChange={(c) => void setSetting('currency', c)} />
           </Box>
         </Row>
-        <Row label="Exchange rates">
-          <RatesSourceSelect />
-        </Row>
+        <RatesSourceRow onEdit={onEditRates} />
         <Row label="Date format">
           <TextField select size="small" value={settings.dateFormat} onChange={(e) => void setSetting('dateFormat', e.target.value)} sx={{ width: 220 }}>
             {info.dateFormats.map((f) => <MenuItem key={f} value={f}>{formatExample(f)}</MenuItem>)}
@@ -428,9 +570,13 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
 }
 
 export function SettingsPage() {
-  const { refreshAccounts, refreshBanks, fail } = useApp()
-  const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>('general')
-  const [definition, setDefinition] = useState<'bank' | 'brands' | 'categories' | 'tags'>('bank')
+  const { refreshAccounts, refreshBanks, fail, view, takeView } = useApp()
+  const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>(view === 'rates' ? 'definitions' : 'general')
+  const [definition, setDefinition] = useState<'bank' | 'rates' | 'brands' | 'categories' | 'tags'>(view === 'rates' ? 'rates' : 'bank')
+  const [addingSource, setAddingSource] = useState(false)
+  const editRates = useCallback(() => { setTab('definitions'); setDefinition('rates') }, [])
+  // Opened from elsewhere on its sources of exchange rates (the conversion panel of the periods).
+  useEffect(() => { if (view === 'rates') { editRates(); takeView() } }, [view, editRates, takeView])
   const [addingTag, setAddingTag] = useState(false)
   const [confirm, setConfirm] = useState<Confirm>(null)
   const [addingBank, setAddingBank] = useState(false)
@@ -443,18 +589,20 @@ export function SettingsPage() {
       <Box sx={{ mt: -1.5 }}>
         <Tabs value={tab} onChange={setTab} tabs={[{ value: 'general', label: 'General' }, { value: 'banks', label: 'Bank Configuration' }, { value: 'definitions', label: 'Definitions' }]} />
       </Box>
-      {tab === 'general' && <General confirm={setConfirm} />}
+      {tab === 'general' && <General confirm={setConfirm} onEditRates={editRates} />}
       {tab === 'banks' && <BankConfiguration confirm={setConfirm} />}
       {tab === 'definitions' && (
         <>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-            <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }, { value: 'tags', label: 'Tags' }]} />
+            <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'rates', label: 'Exchange rates' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }, { value: 'tags', label: 'Tags' }]} />
             <Box sx={{ flex: 1 }} />
             {definition === 'bank' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingBank(true)}>Add bank</Button>}
+            {definition === 'rates' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingSource(true)}>Add source</Button>}
             {definition === 'tags' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingTag(true)}>Add tag</Button>}
           </Box>
           <AddBankDialog open={addingBank} onClose={() => setAddingBank(false)} />
           {definition === 'bank' && <BanksTable confirm={setConfirm} />}
+          {definition === 'rates' && <RatesSourcesTable adding={addingSource} onAdded={() => setAddingSource(false)} confirm={setConfirm} />}
           {definition === 'brands' && <BrandsPanel />}
           {definition === 'categories' && <CategoriesPanel />}
           {definition === 'tags' && <TagsPanel adding={addingTag} onAdded={() => setAddingTag(false)} />}

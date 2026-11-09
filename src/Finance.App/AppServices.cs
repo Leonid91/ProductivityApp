@@ -30,7 +30,7 @@ internal sealed class AppServices : IDisposable
     {
         // Global display currency: every bank together is converted to it and shown in it.
         ["currency"] = "CAD",
-        // Central bank whose daily exchange rates convert the other currencies ("ecb" or "boc").
+        // Source of the daily exchange rates converting the other currencies (one of Definitions > Exchange rates).
         ["ratesSource"] = "ecb",
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
@@ -118,7 +118,7 @@ internal sealed class AppServices : IDisposable
         {
             case "currency" when value.Length != 3 || !value.All(char.IsAsciiLetterUpper):
                 throw new ArgumentException("A currency is a three-letter code such as CAD.");
-            case "ratesSource" when RateSource.All.All(r => r.Id != value):
+            case "ratesSource" when Rates.Find(value) is null:
                 throw new ArgumentException("Unknown source of exchange rates.");
             case "dateFormat" when !Formatting.DateFormats.Contains(value):
                 throw new ArgumentException("Unknown date format.");

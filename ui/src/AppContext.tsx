@@ -40,7 +40,11 @@ interface AppState {
   notify: (message: string, severity?: Toast['severity'], actions?: Toast['actions']) => void
   fail: (error: unknown) => void
   page: Page
-  go: (page: Page) => void
+  /** Opens a page; view: a part of it to show ("rates": Settings > Definitions > Exchange rates). */
+  go: (page: Page, view?: string) => void
+  /** The part of the page asked for with go(), taken by the page once. */
+  view: string | null
+  takeView: () => void
   /**
    * Asks whether a new category is for this operation only (false) or for every operation of the brand, past and
    * future (true). Null when the person cancels.
@@ -65,6 +69,9 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const [dataFolder, setDataFolder] = useState(info.dataFolder)
   const [dataVersion, setDataVersion] = useState(0)
   const [page, setPage] = useState<Page>('periods')
+  const [view, setView] = useState<string | null>(null)
+  const go = useCallback((p: Page, v?: string) => { setPage(p); setView(v ?? null) }, [])
+  const takeView = useCallback(() => setView(null), [])
   const [toast, setToast] = useState<Toast | null>(null)
   const counter = useRef(0)
   const [scope, setScope] = useState<{ brand: string; category: string; resolve: (v: boolean | null) => void } | null>(null)
@@ -111,30 +118,35 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     void refreshBanks()
   }, [refreshAccounts, refreshBanks])
 
-  // Exchange rates of the chosen bank: downloaded again every day (checked at start, every hour, and when the bank is
-  // changed); the periods are drawn again with them. Another bank converts at once with the copy it already has.
+  // Exchange rates of the chosen source: downloaded again every day (checked at start and every hour; a source chosen
+  // in Settings is downloaded there at once, which checks it); the periods are drawn again with them.
   const lastSource = useRef(settings.ratesSource)
   useEffect(() => {
     const changed = lastSource.current !== settings.ratesSource
     lastSource.current = settings.ratesSource
     const check = () => api.rates.ensure().then((r) => { if (r.updated) setDataVersion((v) => v + 1) }, () => undefined)
     if (changed) setDataVersion((v) => v + 1)
-    void check()
+    else void check()
     const hourly = setInterval(() => void check(), 3600_000)
     return () => clearInterval(hourly)
   }, [settings.ratesSource])
 
-  const value: AppState = {
+  const category = useCallback((id: string) => byId.get(id) ?? byId.get('other') ?? categories[0], [byId, categories])
+  const tag = useCallback((id: number) => tagById.get(id), [tagById])
+
+  // One value for every view, made again only when something in it changes: a message shown or closed, or a dialog
+  // opened, no longer draws every period and table again.
+  const value = useMemo<AppState>(() => ({
     info,
     settings,
     setSetting,
     categories,
     setCategories,
     tree,
-    category: (id) => byId.get(id) ?? byId.get('other') ?? categories[0],
+    category,
     tags: tagData.tags,
     categoryTags: tagData.categoryTags,
-    tag: (id) => tagById.get(id),
+    tag,
     setTagData,
     accounts,
     refreshAccounts,
@@ -147,9 +159,12 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     notify,
     fail,
     page,
-    go: setPage,
+    go,
+    view,
+    takeView,
     askScope,
-  }
+  }), [info, settings, setSetting, categories, tree, category, tagData, tag, setTagData, accounts, refreshAccounts, banks, refreshBanks, dataFolder,
+    dataVersion, dataChanged, notify, fail, page, go, view, takeView, askScope])
 
   return (
     <Ctx.Provider value={value}>

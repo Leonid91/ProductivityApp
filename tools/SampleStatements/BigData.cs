@@ -92,7 +92,8 @@ internal static class Bench
                 foreach (var f in Directory.GetFiles(folder, "*.csv"))
                 {
                     var draft = imports.ParseAsync(Path.GetFileName(f), File.ReadAllBytes(f)).GetAwaiter().GetResult();
-                    rows += imports.Commit(new CommitRequest(draft.Id, null, null, f.Contains("Caisse") ? "EUR" : "CAD", AccountKind.Bank, [])).Added;
+                    rows += imports.Commit(new CommitRequest(draft.Id, null, null, f.Contains("Caisse") ? "EUR" : "CAD", AccountKind.Bank, [],
+                        NewBankName: Path.GetFileName(f).Split(' ')[0])).Added;
                 }
             });
             Console.WriteLine($"operations stored: {rows}");
@@ -103,6 +104,36 @@ internal static class Bench
             Report("year summary", Rate(5, () => summaries.Summarize(new DateOnly(last.Year, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Year, "CAD")));
             Report("ten years summary", Rate(3, () => summaries.Summarize(new DateOnly(last.Year - 9, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Range, "CAD")));
             Report("periods index", Rate(20, () => summaries.Index("CAD")));
+            // The periods as the app shows them: each bank in its currency, then all banks in CAD at the rate of each
+            // day (invented daily rates against the euro, the source of exchange rates read from the settings as the
+            // app does).
+            db.SetSetting("ratesSource", "ecb");
+            var rates = new ExchangeRates(db, () => db.GetSetting("ratesSource"));
+            var csv = new StringBuilder("Date,CAD,USD,\n");
+            for (var d = new DateOnly(last.Year, 12, 31); d >= new DateOnly(last.Year - 10, 1, 1); d = d.AddDays(-1))
+                if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+                    csv.Append(CultureInfo.InvariantCulture, $"{d:yyyy-MM-dd},{1.45m + d.DayNumber % 97 / 1000m},{1.10m + d.DayNumber % 53 / 1000m},\n");
+            rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv(csv.ToString()));
+            Cost("month report (2 banks, converted)", 30, () => summaries.Report(month, month.AddMonths(1).AddDays(-1), Granularity.Month, "CAD", rates));
+            Cost("year report (2 banks, converted)", 10, () => summaries.Report(new DateOnly(last.Year, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Year, "CAD", rates));
+            Cost("ten years report (2 banks, converted)", 3, () => summaries.Report(new DateOnly(last.Year - 9, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Range, "CAD", rates));
+            // The answer as the app sends it to the interface (the same JSON options as the app's bridge).
+            var web = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
+            {
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase) },
+            };
+            foreach (var (name, from, to, g, times) in new[]
+            {
+                ("year", new DateOnly(last.Year, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Year, 10),
+                ("ten years", new DateOnly(last.Year - 9, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Range, 3),
+            })
+            {
+                var report = summaries.Report(from, to, g, "CAD", rates);
+                Cost($"{name} report to JSON", times, () => System.Text.Json.JsonSerializer.Serialize(report, web));
+                Console.WriteLine($"{name} report JSON size: {System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(report, web).Length / 1048576.0:0.0} MB");
+            }
+            Cost("periods index (every bank)", 20, () => summaries.Index(null));
+            Cost("rates status", 50, () => rates.Status());
             var some = db.AllTransactions().Where(t => t.Currency == "CAD" && t.Amount < 0).Take(10).ToList();
             var i = 0;
             Report("category change (whole brand)", Rate(5, () => tx.SetCategory(some[i++ % some.Count].Id, i % 2 == 0 ? "shopping" : "entertainment")));
@@ -125,6 +156,19 @@ internal static class Bench
     }
 
     private static void Report(string what, double perSecond) => Console.WriteLine($"{what}: {perSecond:0.0} per second");
+
+    /// <summary>Time of one run (average of several, after a warm-up run) and the memory it allocates.</summary>
+    private static void Cost(string what, int times, Action action)
+    {
+        action();
+        GC.Collect();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var sw = Stopwatch.StartNew();
+        for (var n = 0; n < times; n++) action();
+        var ms = sw.Elapsed.TotalMilliseconds / times;
+        var mb = (GC.GetAllocatedBytesForCurrentThread() - before) / (double)times / 1048576;
+        Console.WriteLine($"{what}: {ms:0.0} ms per run, {mb:0.0} MB allocated per run");
+    }
 
     private static double Once(Action action)
     {

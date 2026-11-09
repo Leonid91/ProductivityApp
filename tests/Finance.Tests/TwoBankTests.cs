@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Parsing;
 using ProductivityApp.Finance.Reports;
@@ -101,6 +102,74 @@ public class TwoBankTests
         Assert.Equal(("European Central Bank", "EUR"), (rates.Status().Source, rates.Status().Base));
     }
 
+    /// <summary>Answers every request with one status and body, and counts the requests.</summary>
+    private sealed class Answer(HttpStatusCode code, byte[] body) : HttpMessageHandler
+    {
+        public int Calls;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult(new HttpResponseMessage(code) { Content = new ByteArrayContent(body) });
+        }
+    }
+
+    [Fact]
+    public void The_sources_are_a_table_of_names_and_addresses_starting_with_the_two_central_banks()
+    {
+        using var s = new TempStore();
+        var rates = new ExchangeRates(s.Db);
+        Assert.Equal(["European Central Bank", "Bank of Canada"], rates.Sources().Select(x => x.Name));
+        var added = rates.SaveSource(null, " Another bank ", "https://example.test/rates.csv");
+        Assert.Equal(("Another bank", null), (added.Name, added.Base));
+        Assert.Equal(3, new ExchangeRates(s.Db).Sources().Count);
+        // Only full https addresses, names of 1 to 60 characters, each name once.
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "Plain", "http://example.test/rates.csv"));
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "Relative", "rates.csv"));
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "", "https://example.test/x"));
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "bank of canada", "https://example.test/x"));
+        // A new address drops what the old one gave.
+        rates.Save(added, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5000,"));
+        rates.SaveSource(added.Id, "Another bank", "https://example.test/other.csv");
+        Assert.Empty(s.Db.LoadRateSet(added.Id, 0));
+        // The source in use cannot be removed; another one can, with its rates.
+        Assert.Throws<InvalidOperationException>(() => rates.RemoveSource("ecb"));
+        rates.RemoveSource(added.Id);
+        Assert.Equal(2, rates.Sources().Count);
+    }
+
+    [Fact]
+    public async Task Choosing_a_source_checks_its_address_and_says_cleanly_what_is_wrong()
+    {
+        using var s = new TempStore();
+        var id = "";
+        var rates = new ExchangeRates(s.Db, () => id);
+        id = rates.SaveSource(null, "Another bank", "https://example.test/rates").Id;
+        async Task<string?> Check(HttpStatusCode code, string body) =>
+            (await rates.UpdateAsync(id, new HttpClient(new Answer(code, System.Text.Encoding.UTF8.GetBytes(body))))).Error;
+
+        Assert.Equal("Nothing at this address (404): check it.", await Check(HttpStatusCode.NotFound, ""));
+        Assert.StartsWith("This address gives a web page, not a file of rates", await Check(HttpStatusCode.OK, "<!doctype html><html></html>"));
+        Assert.StartsWith("The file at this address is not a table of exchange rates", await Check(HttpStatusCode.OK, "hello"));
+        Assert.Equal("The file at this address is not a file of exchange rates the app can read.", await Check(HttpStatusCode.OK, "{ broken"));
+        Assert.Equal("The file at this address holds no exchange rates.", await Check(HttpStatusCode.OK, """{"observations":[]}"""));
+        Assert.Null(rates.Source.Base);
+
+        // A Valet file: the currency the rates are against is read from it, and the error is gone.
+        Assert.Null(await Check(HttpStatusCode.OK, BankOfCanada));
+        Assert.Equal("CAD", rates.Source.Base);
+        Assert.Equal("2025-10-10", rates.Views().Single(v => v.Id == id).Latest);
+        Assert.Equal(162.00m, rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
+        // The European Central Bank's table: against the euro.
+        Assert.Null(await Check(HttpStatusCode.OK, Rates));
+        Assert.Equal("EUR", rates.Source.Base);
+        // A table with a euro column does not say what its rates are against.
+        Assert.StartsWith("The table does not say which currency", await Check(HttpStatusCode.OK, "Date,EUR,USD\n2025-10-10,1,1.15"));
+        // The address itself must be https.
+        s.Db.SaveRateSource(new RateSource(id, "Another bank", "http://example.test/rates", "EUR"));
+        rates.Reload();
+        Assert.Equal("The address must be a full web address starting with https://.", await Check(HttpStatusCode.OK, Rates));
+    }
+
     [Fact]
     public void Only_the_latest_copy_and_the_one_before_are_kept_and_the_one_before_is_the_fallback()
     {
@@ -170,7 +239,7 @@ public class TwoBankTests
         Assert.Equal(spentCad, line.ConvertedExpenses);
         Assert.Equal(0, line.Unconverted);
         Assert.All(line.Rates, u => Assert.Equal(1.60m + int.Parse(u.Day[8..], CultureInfo.InvariantCulture) / 1000m, u.Rate));
-        Assert.Equal((RateSource.Ecb.PageUrl, "EUR"), (r.Conversion.PageUrl, r.Conversion.Base));
+        Assert.Equal((RateSource.Ecb.Url, "EUR"), (r.Conversion.Url, r.Conversion.Base));
         // The salary: its amount in CAD at the rate of its day.
         var salary = caisse.Transactions.First(t => t.Amount == 2450.00m);
         Assert.Equal(Cad(2450.00m, DateOnly.ParseExact(salary.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture)), r.Converted[salary.Id].Amount);

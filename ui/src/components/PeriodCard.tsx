@@ -11,8 +11,19 @@ import CurrencyExchange from '@mui/icons-material/CurrencyExchangeRounded'
 import { api, globalTransactions, type Conversion, type ConversionLine, type Granularity, type PeriodReport, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural } from '../format'
-import { ExpenseBars, ExpensePie } from './Charts'
-import { CategoryLines } from './CategoryLines'
+// The charts (the largest library of the interface) are not needed to start: their code is read when the browser is
+// idle after start-up, or when a period first shows its analytics. Once read, they are drawn at once (no waiting state).
+type ChartsModule = typeof import('./Charts') & typeof import('./CategoryLines')
+let charts: ChartsModule | null = null
+let loading: Promise<ChartsModule> | null = null
+export function loadCharts(): Promise<ChartsModule> {
+  return (loading ??= Promise.all([import('./Charts'), import('./CategoryLines')]).then(([c, l]) => (charts = { ...c, ...l })))
+}
+function useCharts(wanted: boolean): ChartsModule | null {
+  const [m, setM] = useState(charts)
+  useEffect(() => { if (wanted && !m) void loadCharts().then(setM) }, [wanted, m])
+  return m ?? charts
+}
 import { ExportDialog } from './ExportDialog'
 import { FlowChart } from './FlowChart'
 import { MovementsTable } from './MovementsTable'
@@ -89,6 +100,7 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
 }) {
   const { category, settings } = useApp()
   const theme = useTheme()
+  const c = useCharts(view === 'analytics')
   // Transfers, card payments and investments: in their own folded table, hidden, or with the rest (Settings).
   // Recurring payments and income are shown in their own tables, never twice.
   const mode = settings.periodTransfers || 'separate'
@@ -100,8 +112,8 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
     const isMove = (t: TransactionView) => category(t.categoryId).kind === 'transfer'
     const isIncome = (t: TransactionView) => t.amount > 0 && !isMove(t)
     return {
-      main: all.filter((t) => t.recurring === null && !isIncome(t) && (mode === 'inline' || !isMove(t))),
-      recurringOut: all.filter((t) => t.recurring !== null && t.amount < 0),
+      main: all.filter((t) => t.recurring == null && !isIncome(t) && (mode === 'inline' || !isMove(t))),
+      recurringOut: all.filter((t) => t.recurring != null && t.amount < 0),
       // Every income, whatever its source; for money back from an investment, only the part entered as earned.
       income: [
         ...all.filter(isIncome),
@@ -172,25 +184,25 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
           )}
         </>
       )) : (
-        <>
+        !c ? <Box data-loading-charts sx={{ minHeight: 1400 }} /> : <>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'flex-start' }}>
-            <ExpensePie title="Expenses per category" slices={fold(topLevel ? summary.byTopCategory : summary.byCategory)} currency={currency} />
-            <ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
+            <c.ExpensePie title="Expenses per category" slices={fold(topLevel ? summary.byTopCategory : summary.byCategory)} currency={currency} />
+            <c.ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
           </Box>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
-            <ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
-            <ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
+            <c.ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
+            <c.ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
           </Box>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
             {/* Each tagged expense in the slice of its whole set of tags: no money is counted twice. */}
-            <ExpensePie title="Tags" slices={fold(summary.tagPie)} currency={currency} empty="No tagged expenses" />
+            <c.ExpensePie title="Tags" slices={fold(summary.tagPie)} currency={currency} empty="No tagged expenses" />
             <Box sx={{ flex: '1 1 340px', minWidth: 0 }} />
           </Box>
           <Box sx={{ mt: 1.5 }}>
-            <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
+            <c.ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
           </Box>
           <Box sx={{ mt: 1.5 }}>
-            <CategoryLines keep={`${keep}:lines:${topLevel}`} from={summary.from} to={summary.to} transactions={summary.transactions} categories={topLevel ? summary.byTopCategory : summary.byCategory} topLevel={topLevel} currency={currency} />
+            <c.CategoryLines keep={`${keep}:lines:${topLevel}`} from={summary.from} to={summary.to} transactions={summary.transactions} categories={topLevel ? summary.byTopCategory : summary.byCategory} topLevel={topLevel} currency={currency} />
           </Box>
           <Box sx={{ mt: 1.5 }}>
             <FlowChart diagram={summary.diagram} flows={summary.flows} currency={currency} />
@@ -252,7 +264,7 @@ function ConversionRow({ line }: { line: ConversionLine }) {
 
 /** How the amounts of every bank together were converted: where the rates come from, the method, each currency before and after. */
 const ConversionPanel = memo(function ConversionPanel({ conversion }: { conversion: Conversion }) {
-  const { settings, fail, dataChanged, notify } = useApp()
+  const { settings, fail, dataChanged, notify, go } = useApp()
   const [updating, setUpdating] = useState(false)
   const missing = conversion.lines.filter((l) => l.unconverted > 0)
   const old = conversion.lines.filter((l) => l.oldRates > 0)
@@ -268,7 +280,7 @@ const ConversionPanel = memo(function ConversionPanel({ conversion }: { conversi
         {(missing.length > 0 || old.length > 0) && <Button size="small" variant="outlined" disabled={updating} onClick={update}>Update rates</Button>}
       </Box>
       <Typography variant="body2" sx={{ mb: 0.5 }}>
-        Rates: <Link component="button" data-rates-source sx={{ verticalAlign: 'baseline' }} onClick={() => void api.shell.openRatesPage().catch(fail)}>{conversion.source}</Link>, against {conversion.base}
+        Rates: <Link component="button" data-rates-source sx={{ verticalAlign: 'baseline' }} title={conversion.url} onClick={() => go('settings', 'rates')}>{conversion.source}</Link>, against {conversion.base}
         {conversion.latest && <>, published up to {formatDate(conversion.latest, settings.dateFormat)}</>}.
       </Typography>
       <Typography variant="body2" color="text.secondary">

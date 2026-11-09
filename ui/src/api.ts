@@ -57,12 +57,13 @@ export interface TransactionView {
   rawLabel: string
   note: string
   accountId: number
-  statementId: number | null
+  /** Missing (like the fields below that can be empty) when it has none. */
+  statementId?: number | null
   /** How often it comes back ("monthly", "twice a month", "yearly"); null when it is not recurring. */
-  recurring: string | null
-  linkedId: number | null
+  recurring?: string | null
+  linkedId?: number | null
   /** For money back from an investment: the part entered as earned (gain), counted as income. */
-  earned: number | null
+  earned?: number | null
   /** Tags put on the operation itself. */
   ownTags: number[]
   /** Every tag it carries: its own and its category's. */
@@ -152,8 +153,8 @@ export interface ConversionLine {
   lowestRate: number | null; highestRate: number | null; effectiveRate: number | null
   rates: RateUse[]; unconverted: number; unconvertedAmount: number; oldRates: number
 }
-export interface Conversion { to: string; source: string; base: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; lines: ConversionLine[] }
-export interface ConvertedView { amount: number; rate: number; rateDay: string; earned: number | null }
+export interface Conversion { to: string; source: string; base: string; url: string; updatedAt: string | null; latest: string | null; lines: ConversionLine[] }
+export interface ConvertedView { amount: number; rate: number; rateDay: string; earned?: number | null }
 /**
  * A period bank by bank, then every bank together in the global display currency. The operations are in the banks'
  * parts only (global holds the totals and charts): globalTransactions() gives them all in the global currency.
@@ -182,13 +183,18 @@ export function globalTransactions(r: PeriodReport): TransactionView[] {
     .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
 }
 export interface RatesStatus {
-  sourceId: string; source: string; base: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; first: string | null
+  sourceId: string; source: string; base: string; url: string; updatedAt: string | null; latest: string | null; first: string | null
   currencies: number; error: string | null
   /** The latest download could not be read: the copy before it is used. */
   fromPrevious: boolean
 }
-/** A central bank whose free daily rates can convert the currencies; base: the currency it quotes them against. */
-export interface RateSource { id: string; name: string; base: string; pageUrl: string; dataUrl: string }
+/**
+ * A place the daily exchange rates are downloaded from (Definitions > Exchange rates): its name, the address of its file
+ * of rates, the currency they are against (read from the file), the last day of the rates and why the last download failed.
+ */
+export interface RateSource {
+  id: string; name: string; url: string; base: string | null; latest: string | null; updatedAt: string | null; error: string | null; inUse: boolean
+}
 
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
@@ -304,7 +310,10 @@ export const api = {
   rates: {
     sources: () => invoke<RateSource[]>('rates.sources'),
     status: () => invoke<RatesStatus>('rates.status'),
-    update: () => invoke<RatesStatus>('rates.update'),
+    /** Downloads a source's rates again (the chosen one by default), which checks its address too. */
+    update: (id?: string) => invoke<RatesStatus>('rates.update', { id }),
+    saveSource: (source: { id?: string; name: string; url: string }) => invoke<{ id: string; sources: RateSource[] }>('rates.saveSource', source),
+    removeSource: (id: string) => invoke<RateSource[]>('rates.removeSource', { id }),
     /** Downloads the chosen bank's rates when today's copy is not there yet; says whether anything changed. */
     ensure: () => invoke<{ updated: boolean; status: RatesStatus }>('rates.ensure'),
   },
@@ -373,8 +382,6 @@ export const api = {
   shell: {
     open: (path: string) => invoke<null>('shell.open', { path }),
     reveal: (path: string) => invoke<null>('shell.reveal', { path }),
-    /** Opens the page of the exchange rates' source in the browser (the only web page the app opens). */
-    openRatesPage: () => invoke<null>('shell.openRatesPage'),
   },
   report: {
     defaults: (from: string, to: string, granularity: Granularity, currency: string) =>

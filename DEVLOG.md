@@ -453,3 +453,39 @@ real app with `tools/e2e/perf.mjs`.
   beside the choice. The conversion details and the PDF name the bank and the currency its rates go through.
 - The rates of the chosen bank are downloaded again every day (checked at start and every hour). Only the latest
   copy and the one before are kept; when the latest cannot be read, the one before is used.
+
+## November 9th, 2026 - Sources of exchange rates as a table; faster and lighter periods - Commit 21
+
+### Added
+- Settings > Definitions > Exchange rates (after Bank): a table of the places the rates come from, each a name and
+  the address of its file of rates, with the currency its rates are against (read from the file) and the last day
+  of its rates. The European Central Bank and the Bank of Canada are there to start with; sources can be added,
+  renamed, readdressed and deleted (not the one in use). Two sentences above the table say where to find the address.
+- Settings > Display > Exchange rates offers the sources of that table. Choosing one downloads its rates in the
+  background, which checks the address: nothing is said when it works; when it does not, the reason is written in
+  red under the choice (and under the address in the table): a web page instead of a file, nothing at the address,
+  no answer, a file that holds no rates, an address that is not https.
+- Files read: tables in the European Central Bank's layout (CSV or ZIP) and Valet JSON files like the Bank of
+  Canada's; downloads larger than 32 MB are refused.
+
+### Changed
+- The pencil beside the Exchange rates choice, and the source named in a period's conversion details, open the table
+  of sources.
+
+### Speed (41,520 operations over ten years, a Canadian and a French bank; previous version, then this one)
+- Frame rate unchanged: 240 fps idle, about 165 fps scrolling months and years (within the measuring noise).
+- Engine, per period: a month 4.4 ms, now 2.3 ms; a year 51.2 ms, now 24.0 ms; ten years 353.7 ms, now 198.3 ms.
+  Memory allocated: a year 10.1 MB, now 5.5 MB; ten years 94.2 MB, now 50.5 MB. Settings were read from the database
+  for every operation converted (now kept in memory); a setting saved (window place, row order, rates downloaded)
+  made the next period work out the recurring payments of the whole history again (no longer).
+- Data sent to the interface: empty fields of the operations are left out (a year 1.7 MB, now 1.2 MB; ten years
+  16.4 MB, now 11.6 MB).
+- In the app: a year's report 111 ms, now 82 ms; ten years 1,444 ms, now 1,130 ms; switching to All time 1,840 ms,
+  now 1,430 ms; start-up after a download of rates 797 ms, now 402 ms.
+- The interface starts with 867 KB of code instead of 1,519 KB: Calendar, Import and Settings load when first opened,
+  the charts when the browser is idle after start-up. A message shown or a dialog opened no longer draws every period
+  again.
+- Memory of the app and its browser processes after scrolling the months: 1,136 MB, now 968 MB (engine 439 MB, now
+  311 MB).
+- `tools/e2e/perf.mjs` also times actions until drawn and measures every process of the app;
+  `tools/e2e/perf-quick.mjs` compares two builds on period changes; the engine benchmark times the converted reports.

@@ -51,8 +51,16 @@ internal static class Api
 
         // ------------------------------------------------------------ exchange rates
         b.Register("rates.status", _ => s.Rates.Status());
-        b.RegisterBackground("rates.update", async _ => await s.Rates.UpdateAsync());
-        b.Register("rates.sources", _ => RateSource.All);
+        // Downloads a source's rates again (the chosen one by default); this checks its address too.
+        b.RegisterBackground("rates.update", async p => await s.Rates.UpdateAsync(p.Opt<string>("id")));
+        // The sources the person defined (Definitions > Exchange rates): name and address of the file of rates.
+        b.Register("rates.sources", _ => s.Rates.Views());
+        b.Register("rates.saveSource", p =>
+        {
+            var saved = s.Rates.SaveSource(p.Opt<string>("id"), p.Get<string>("name"), p.Get<string>("url"));
+            return new { id = saved.Id, sources = s.Rates.Views() };
+        });
+        b.Register("rates.removeSource", p => { s.Rates.RemoveSource(p.Get<string>("id")); return s.Rates.Views(); });
         // The chosen bank's rates are downloaded again every day (the copy before stays as the fallback). Says whether
         // anything changed.
         b.RegisterBackground("rates.ensure", async _ =>
@@ -269,11 +277,6 @@ internal static class Api
             var reports = s.Setting("reportsFolder") is { Length: > 0 } rf ? rf : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             if (!Path.GetFullPath(path).StartsWith(Path.GetFullPath(reports), StringComparison.OrdinalIgnoreCase)) throw new UnauthorizedAccessException("Only reports can be opened.");
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            return null;
-        });
-        b.Register("shell.openRatesPage", _ =>
-        {
-            Process.Start(new ProcessStartInfo(s.Rates.Source.PageUrl) { UseShellExecute = true });
             return null;
         });
         b.Register("shell.reveal", p =>

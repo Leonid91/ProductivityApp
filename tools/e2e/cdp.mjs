@@ -2,6 +2,9 @@
 import { spawn } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 
+/** Runs an attempt until it gives something, for up to 5 seconds. */
+const retry = async (attempt) => { const t0 = Date.now(); for (;;) { const v = await attempt(); if (v || Date.now() - t0 > 5000) return v; await sleep(100) } }
+
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export async function launch(exe, args, port) {
@@ -66,7 +69,8 @@ export async function launch(exe, args, port) {
     },
     /** Clicks the first visible element whose text matches exactly (or contains, with partial); scrolls to it only when it is off screen, like a person. */
     async clickText(text, { selector = 'button, [role=button], [role=menuitem], [role=option], li, a', partial = false, index = 0 } = {}) {
-      const ok = await page.eval(`(() => {
+      // Waits up to 5 seconds for it to appear (a page loaded on demand, a menu opening), like a person would.
+      const ok = await retry(() => page.eval(`(() => {
         const want = ${JSON.stringify(text)}
         const els = [...document.querySelectorAll(${JSON.stringify(selector)})].filter((e) => {
           const t = (e.innerText || e.textContent || '').trim()
@@ -78,13 +82,13 @@ export async function launch(exe, args, port) {
         { const v = el.getBoundingClientRect(); if (v.top < 0 || v.bottom > innerHeight) el.scrollIntoView({ block: 'center' }) }
         el.click()
         return true
-      })()`)
+      })()`))
       if (!ok) throw new Error('Nothing to click with text: ' + text)
       await sleep(250)
     },
     /** A real mouse press and release at the element's centre (some controls open on mouse down). */
     async mouseClick(selector, index = 0) {
-      const c = await page.eval(`(() => { const el = document.querySelectorAll(${JSON.stringify(selector)})[${index}]; if (!el) return null; { const v = el.getBoundingClientRect(); if (v.top < 0 || v.bottom > innerHeight) el.scrollIntoView({ block: 'center' }) }; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+      const c = await retry(() => page.eval(`(() => { const el = document.querySelectorAll(${JSON.stringify(selector)})[${index}]; if (!el) return null; { const v = el.getBoundingClientRect(); if (v.top < 0 || v.bottom > innerHeight) el.scrollIntoView({ block: 'center' }) }; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`))
       if (!c) throw new Error('Nothing to click: ' + selector)
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y })
       await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', clickCount: 1 })
@@ -92,7 +96,7 @@ export async function launch(exe, args, port) {
       await sleep(300)
     },
     async click(selector, index = 0) {
-      const ok = await page.eval(`(() => { const el = document.querySelectorAll(${JSON.stringify(selector)})[${index}]; if (!el) return false; { const v = el.getBoundingClientRect(); if (v.top < 0 || v.bottom > innerHeight) el.scrollIntoView({ block: 'center' }) }; el.click(); return true })()`)
+      const ok = await retry(() => page.eval(`(() => { const el = document.querySelectorAll(${JSON.stringify(selector)})[${index}]; if (!el) return false; { const v = el.getBoundingClientRect(); if (v.top < 0 || v.bottom > innerHeight) el.scrollIntoView({ block: 'center' }) }; el.click(); return true })()`))
       if (!ok) throw new Error('Nothing to click: ' + selector)
       await sleep(250)
     },

@@ -57,7 +57,8 @@ internal sealed class Bridge
             var method = root.GetProperty("method").GetString() ?? "";
             var args = root.TryGetProperty("params", out var p) ? p.Clone() : default;
             if (!_methods.TryGetValue(method, out var handler)) throw new InvalidOperationException($"Unknown method '{method}'.");
-            var result = await handler(args);
+            // Work done on a worker thread is also turned into text there: the window's thread only passes the answer on.
+            var result = await handler(args).ConfigureAwait(false);
             Reply(JsonSerializer.Serialize(new { id, ok = true, result }, Json));
         }
         catch (Exception ex)

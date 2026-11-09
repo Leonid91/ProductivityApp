@@ -7,7 +7,7 @@ import UploadFile from '@mui/icons-material/UploadFileRounded'
 import { api, type PeriodIndex, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, iso } from '../format'
-import { PeriodCard, type PeriodView } from '../components/PeriodCard'
+import { loadCharts, PeriodCard, type PeriodView } from '../components/PeriodCard'
 import { TransactionDialog, pickerFormats } from '../components/TransactionDialog'
 import { EmptyState } from '../components/common'
 
@@ -15,6 +15,11 @@ interface Period { from: string; to: string; key: string }
 
 export function PeriodsPage() {
   const { settings, dataVersion, fail, go } = useApp()
+  // The charts are not needed to start: their code is read once the browser is idle, so Analytics opens at once.
+  useEffect(() => {
+    const id = requestIdleCallback(() => void loadCharts(), { timeout: 4000 })
+    return () => cancelIdleCallback(id)
+  }, [])
   const [index, setIndex] = useState<PeriodIndex | null>(null)
   const [mode, setMode] = useState<'month' | 'year' | 'all' | 'custom'>('month')
   // Second layer, the same for every kind of period: its summary (balances), statements (tables) or analytics (charts).
