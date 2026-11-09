@@ -283,3 +283,28 @@ real app with `tools/e2e/perf.mjs`.
   the app and in the PDF reports); "Other exceptional" joins "Other expenses" (database v9 moves its operations and
   rules, and the categories nested in it move to the top).
 - No line under the last row before a group in Settings (Date format above Periods).
+
+## November 8th, 2026 - Tables and Charts, expenses per category per day, money moved redrawn - Commit 13
+
+### Changed
+- Every period (Month, Year, All time, Custom, and any period added later) has a second layer, Tables or Charts:
+  the tables in one, every chart in the other; Expenses, Earnings, Balance, recurring payments and the expenses /
+  earnings ratio sit at the bottom of both, above the PDF export.
+- Money moved: everything outside the app is one orange box of the same size as the accounts, without amounts in
+  it (they are on the arrows; who is behind it shows on hover). Every arrow has its own point on each box, never
+  shared with another arrow coming or going, comes into the box square to its side, goes around the other boxes,
+  and its amount sits clear of boxes, heads and other amounts. Long account names are cut with "…" (full name on
+  hover). Same drawing in the PDF.
+- Expenses / earnings: red like the expenses above 100% (more spent than earned), green like the earnings below; the
+  "spent of earned" line is gone. The line under "Recurring payments, rent excluded" is gone.
+- Settings: banks and accounts are added with buttons and a dialog, not typed into the tables. Bank Configuration
+  has Add account and Add bank on the right of the tabs and shows every bank as a tab; Definitions > Bank has Add
+  bank.
+
+### Added
+- Expenses per category, per day (Charts): one line per category and the total always; the top five first, then
+  none, any top n or all, or each category ticked on or off.
+
+### Fixed
+- Chart tooltips (the amount of a day in Expenses per day, the pies) were placed off the screen: they now open
+  next to the pointer.

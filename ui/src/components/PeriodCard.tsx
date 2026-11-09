@@ -9,6 +9,7 @@ import { api, type Granularity, type PeriodSummary, type TransactionView } from 
 import { useApp } from '../AppContext'
 import { money, plural } from '../format'
 import { ExpenseBars, ExpensePie } from './Charts'
+import { CategoryLines } from './CategoryLines'
 import { ExportDialog } from './ExportDialog'
 import { FlowChart } from './FlowChart'
 import { MovementsTable } from './MovementsTable'
@@ -42,15 +43,20 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
   )
 }
 
+/** What a period shows: its tables or its charts (the totals are under both). */
+export type PeriodView = 'tables' | 'charts'
+
 /**
- * One period: title, operations, recurring payments, regular income, transfers (From / To),
- * Expenses / Earnings / Balance, the pies, expenses per day, the money moved, and the PDF export.
+ * One period, in two views. Tables: operations, recurring payments, income, transfers (From / To). Charts: the pies,
+ * expenses per day, expenses per category per day, the money moved. Under both: Expenses / Earnings / Balance, the
+ * recurring payments and the expenses / earnings ratio, and the PDF export.
  */
-export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }: {
+export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLoaded }: {
   from: string
   to: string
   granularity: Granularity
   currency: string
+  view: PeriodView
   onEdit: (tx: TransactionView) => void
   onLoaded?: (s: PeriodSummary) => void
 }) {
@@ -111,6 +117,11 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
     : theme.palette.money.zero
   const balanceBg = !summary || summary.balance === 0 ? 'surface.sunken'
     : summary.balance > 0 ? theme.palette.money.positiveStrong : theme.palette.money.negativeStrong
+  const ratioBg = !summary ? 'surface.sunken'
+    : summary.expensesShare === null ? (summary.expenses > 0 ? theme.palette.money.expenseSoft : 'surface.sunken')
+    : summary.expensesShare > 1 ? theme.palette.money.expenseSoft
+    : summary.expensesShare < 1 ? theme.palette.money.incomeSoft
+    : 'surface.sunken'
   const per = granularity === 'month' ? 'this month' : granularity === 'year' ? 'this year' : 'over the period'
   const months = summary ? Math.max(1, Math.round((Date.parse(summary.to) - Date.parse(summary.from)) / (30.44 * 86400000))) : 1
   const monthly = (v: number) => (granularity === 'month' ? undefined : `about ${money(v / months, currency)} a month`)
@@ -144,46 +155,70 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
             </Typography>
           </Box>
-          <TransactionTable transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
+          {view === 'tables' ? (
+            <>
+            <TransactionTable transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
 
-          {recurringOut.length > 0 && (
-            <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
-              <TransactionTable transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency />
-            </Section>
-          )}
-          {income.length > 0 && (
-            <Section id="income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Income" total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
-              <TransactionTable transactions={income} currency={currency} paged onEdit={editOriginal} frequency />
-            </Section>
-          )}
+            {recurringOut.length > 0 && (
+              <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
+                <TransactionTable transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency />
+              </Section>
+            )}
+            {income.length > 0 && (
+              <Section id="income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Income" total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
+                <TransactionTable transactions={income} currency={currency} paged onEdit={editOriginal} frequency />
+              </Section>
+            )}
 
-          {mode === 'table' && summary.movements.length > 0 && (
-            <Section id="movements" icon={<SwapHoriz />} title="Transfers, card payments & investments" note={String(summary.movements.length)}>
-              <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
-            </Section>
-          )}
-          {mode === 'separate' && summary.movements.length > 0 && (
-            <Accordion
-              data-section="movements"
-              disableGutters
-              elevation={0}
-              slotProps={{ transition: { unmountOnExit: true } }}
-              sx={{ mt: 3, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '& th': { bgcolor: 'surface.sunken' }, '&::before': { display: 'none' } }}
-            >
-              <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2.5, minHeight: 52 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
-                  <SwapHoriz sx={{ color: 'text.secondary', fontSize: 20 }} />
-                  <Typography sx={{ fontWeight: 600 }}>Transfers, card payments & investments</Typography>
-                  <Typography color="text.secondary" className="tnum">{summary.movements.length}</Typography>
-                </Box>
-              </AccordionSummary>
-              <AccordionDetails sx={{ px: 2.5, pt: 0, pb: 2 }}>
+            {mode === 'table' && summary.movements.length > 0 && (
+              <Section id="movements" icon={<SwapHoriz />} title="Transfers, card payments & investments" note={String(summary.movements.length)}>
                 <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
-              </AccordionDetails>
-            </Accordion>
+              </Section>
+            )}
+            {mode === 'separate' && summary.movements.length > 0 && (
+              <Accordion
+                data-section="movements"
+                disableGutters
+                elevation={0}
+                slotProps={{ transition: { unmountOnExit: true } }}
+                sx={{ mt: 3, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '& th': { bgcolor: 'surface.sunken' }, '&::before': { display: 'none' } }}
+              >
+                <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2.5, minHeight: 52 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                    <SwapHoriz sx={{ color: 'text.secondary', fontSize: 20 }} />
+                    <Typography sx={{ fontWeight: 600 }}>Transfers, card payments & investments</Typography>
+                    <Typography color="text.secondary" className="tnum">{summary.movements.length}</Typography>
+                  </Box>
+                </AccordionSummary>
+                <AccordionDetails sx={{ px: 2.5, pt: 0, pb: 2 }}>
+                  <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
+                </AccordionDetails>
+              </Accordion>
+            )}
+            </>
+          ) : (
+            <>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'flex-start' }}>
+              <ExpensePie title="Expenses per category" slices={fold(summary.byCategory)} currency={currency} />
+              <ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
+            </Box>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
+              <ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
+              <ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
+            </Box>
+            <Box sx={{ mt: 1.5 }}>
+              <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
+            </Box>
+            <Box sx={{ mt: 1.5 }}>
+              <CategoryLines from={summary.from} to={summary.to} transactions={summary.transactions} categories={summary.byCategory} currency={currency} />
+            </Box>
+            <Box sx={{ mt: 1.5 }}>
+              <FlowChart diagram={summary.diagram} flows={summary.flows} currency={currency} />
+            </Box>
+            </>
           )}
 
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 3.5 }}>
+          <Box data-totals sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 3.5 }}>
             <Stat label="Expenses" value={money(summary.expenses, currency)} bg={theme.palette.money.expenseSoft} />
             <Stat label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
             <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
@@ -192,30 +227,14 @@ export function PeriodCard({ from, to, granularity, currency, onEdit, onLoaded }
             <Stat
               label="Recurring payments, rent excluded"
               value={money(summary.recurringWithoutHousing, currency)}
-              note={`${percent(summary.recurringWithoutHousingShare)} of earnings ${per}`}
               bg="surface.sunken"
             />
             <Stat
               label="Expenses / earnings"
               value={percent(summary.expensesShare)}
-              note={`${money(summary.expenses, currency)} spent of ${money(summary.earnings, currency)} earned`}
-              bg="surface.sunken"
+              // Above 100% more was spent than earned (red, like the expenses); below, a surplus (green, like the earnings).
+              bg={ratioBg}
             />
-          </Box>
-
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5, alignItems: 'flex-start' }}>
-            <ExpensePie title="Expenses per category" slices={fold(summary.byCategory)} currency={currency} />
-            <ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
-          </Box>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
-            <ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
-            <ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
-          </Box>
-          <Box sx={{ mt: 1.5 }}>
-            <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
-          </Box>
-          <Box sx={{ mt: 1.5 }}>
-            <FlowChart diagram={summary.diagram} flows={summary.flows} currency={currency} />
           </Box>
 
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2.5 }}>

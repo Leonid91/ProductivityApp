@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Box, Button, IconButton, InputBase, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
+  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
   Tooltip, Typography,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
@@ -209,30 +209,122 @@ function AccountsTable({ accounts, system, confirm }: { accounts: Account[]; sys
   )
 }
 
-/** One tab per bank the person has accounts at, the first imported first. */
+/**
+ * One tab per bank, banks with accounts first (the first imported first); banks and accounts are added with the
+ * buttons on the right of the tabs.
+ */
 function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
   const { accounts, banks } = useApp()
-  const first = (bankId: number | null) => Math.min(...accounts.filter((a) => a.bankId === bankId).map((a) => a.id))
-  const tabs = banks.filter((b) => accounts.some((a) => a.bankId === b.id)).sort((a, b) => first(a.id) - first(b.id))
-    .map((b) => ({ value: String(b.id), label: b.name }))
+  const [adding, setAdding] = useState<'bank' | 'account' | null>(null)
+  const first = (bankId: number | null) => {
+    const ids = accounts.filter((a) => a.bankId === bankId).map((a) => a.id)
+    return ids.length ? Math.min(...ids) : Number.MAX_SAFE_INTEGER
+  }
+  const tabs = [...banks].sort((a, b) => first(a.id) - first(b.id) || a.id - b.id).map((b) => ({ value: String(b.id), label: b.name }))
   const [tab, setTab] = useState('')
   const current = tabs.find((t) => t.value === tab)?.value ?? tabs[0]?.value
-  if (!current) return <EmptyState icon={<AccountBalance />} title="No accounts yet" />
   const bank = banks.find((b) => String(b.id) === current)
+  const mine = accounts.filter((a) => String(a.bankId) === current)
   return (
     <>
-      <Tabs size="small" value={current} onChange={setTab} tabs={tabs} />
-      <AccountsTable accounts={accounts.filter((a) => String(a.bankId) === current)} system={bank?.system ?? 'northAmerica'} confirm={confirm} />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+        {tabs.length > 0 && <Tabs size="small" value={current} onChange={setTab} tabs={tabs} />}
+        <Box sx={{ flex: 1 }} />
+        <Button variant="outlined" startIcon={<Add />} disabled={banks.length === 0} onClick={() => setAdding('account')}>Add account</Button>
+        <Button variant="contained" startIcon={<Add />} onClick={() => setAdding('bank')}>Add bank</Button>
+      </Box>
+      {!bank ? <EmptyState icon={<AccountBalance />} title="No banks yet" />
+        : mine.length === 0 ? <EmptyState icon={<AccountBalance />} title={`No accounts at ${bank.name} yet`} />
+        : <AccountsTable accounts={mine} system={bank.system} confirm={confirm} />}
+      <AddBankDialog open={adding === 'bank'} onClose={() => setAdding(null)} onAdded={(id) => setTab(String(id))} />
+      <AddAccountDialog open={adding === 'account'} bankId={bank?.id ?? null} onClose={() => setAdding(null)} />
     </>
   )
 }
 
 const emptyBank: Bank = { id: 0, name: '', country: '', system: 'northAmerica', currency: 'CAD' }
 
+/** A new bank: name, country, banking system and the currency of its accounts. Calls back with the new bank's id. */
+function AddBankDialog({ open, onClose, onAdded }: { open: boolean; onClose: () => void; onAdded?: (id: number) => void }) {
+  const { refreshBanks, dataChanged, notify, fail } = useApp()
+  const [draft, setDraft] = useState<Bank>(emptyBank)
+  useEffect(() => { if (open) setDraft(emptyBank) }, [open])
+  const add = () => api.banks.save(draft).then((list) => {
+    notify('Bank added')
+    void refreshBanks()
+    dataChanged()
+    onAdded?.(Math.max(...list.map((b) => b.id)))
+    onClose()
+  }, fail)
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth data-bank-dialog>
+      <DialogTitle>Add bank</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <TextField autoFocus label="Bank name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
+        <TextField label="Country" value={draft.country} onChange={(e) => setDraft({ ...draft, country: e.target.value })} slotProps={{ htmlInput: { 'data-field': 'country' } }} />
+        <TextField select label="Banking system" value={draft.system} onChange={(e) => setDraft({ ...draft, system: e.target.value as BankingSystem })}>
+          {systems.map((x) => <MenuItem key={x.value} value={x.value}>{x.label}</MenuItem>)}
+        </TextField>
+        <TextField select label="Currency" value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value })}>
+          {currencies.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+        </TextField>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={draft.name.trim() === ''} onClick={() => void add()}>Add</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+/** A new account at one of the banks: name, type (named by the bank's banking system) and currency. */
+function AddAccountDialog({ open, bankId, onClose }: { open: boolean; bankId: number | null; onClose: () => void }) {
+  const { banks, refreshAccounts, dataChanged, notify, fail } = useApp()
+  const [bank, setBank] = useState<number | ''>('')
+  const [name, setName] = useState('')
+  const [kind, setKind] = useState<AccountKind>('bank')
+  const [currency, setCurrency] = useState('CAD')
+  useEffect(() => {
+    if (!open) return
+    const b = banks.find((x) => x.id === bankId) ?? banks[0]
+    setBank(b?.id ?? '')
+    setName('')
+    setKind('bank')
+    setCurrency(b?.currency ?? 'CAD')
+  }, [open, bankId, banks])
+  const system = banks.find((x) => x.id === bank)?.system ?? 'northAmerica'
+  const add = () => api.accounts.add({ bankId: Number(bank), name, kind, currency }).then(() => {
+    notify('Account added')
+    void refreshAccounts()
+    dataChanged()
+    onClose()
+  }, fail)
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth data-account-dialog>
+      <DialogTitle>Add account</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <TextField select label="Bank" value={bank} onChange={(e) => { const b = banks.find((x) => x.id === Number(e.target.value)); setBank(Number(e.target.value)); if (b) setCurrency(b.currency) }}>
+          {banks.map((b) => <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>)}
+        </TextField>
+        <TextField autoFocus label="Account name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
+        <TextField select label="Account type" value={kind} onChange={(e) => setKind(e.target.value as AccountKind)}>
+          {accountKinds(system).map((k) => <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>)}
+        </TextField>
+        <TextField select label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          {[...new Set([currency, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+        </TextField>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={bank === '' || name.trim() === ''} onClick={() => void add()}>Add</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
 /** The banks the person can choose from: name, country, banking system and the currency of new accounts. */
 function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
   const { banks, refreshBanks, dataChanged, notify, fail } = useApp()
-  const [draft, setDraft] = useState<Bank>(emptyBank)
   const keyOf = useCallback((b: Bank) => String(b.id), [])
   const order = useRowOrder('banks', banks, keyOf)
   const save = (b: Bank, message: string) => api.banks.save(b).then(() => { notify(message); void refreshBanks(); dataChanged() }, fail)
@@ -281,26 +373,6 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
               </TableCell>
             </TableRow>
           ))}
-          <TableRow data-new-bank>
-            <TableCell padding="none" />
-            <TableCell><InputBase placeholder="New bank" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} inputProps={{ 'aria-label': 'New bank name' }} sx={{ ...inlineInput, width: '100%' }} /></TableCell>
-            <TableCell><InputBase placeholder="Country" value={draft.country} onChange={(e) => setDraft({ ...draft, country: e.target.value })} inputProps={{ 'aria-label': 'New bank country' }} sx={{ ...inlineInput, width: '100%' }} /></TableCell>
-            <TableCell>
-              <TextField select size="small" value={draft.system} onChange={(e) => setDraft({ ...draft, system: e.target.value as BankingSystem })} sx={{ width: 190 }}>
-                {systems.map((x) => <MenuItem key={x.value} value={x.value}>{x.label}</MenuItem>)}
-              </TextField>
-            </TableCell>
-            <TableCell><CurrencySelect value={draft.currency} onChange={(c) => setDraft({ ...draft, currency: c })} /></TableCell>
-            <TableCell padding="checkbox">
-              <Tooltip title="Add">
-                <span>
-                  <IconButton size="small" aria-label="Add bank" disabled={draft.name.trim() === ''} onClick={() => void save(draft, 'Bank added').then(() => setDraft(emptyBank))}>
-                    <Add fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            </TableCell>
-          </TableRow>
         </TableBody>
       </Table>
     </SectionCard>
@@ -312,6 +384,7 @@ export function SettingsPage() {
   const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>('general')
   const [definition, setDefinition] = useState<'bank' | 'brands' | 'categories'>('bank')
   const [confirm, setConfirm] = useState<Confirm>(null)
+  const [addingBank, setAddingBank] = useState(false)
 
   useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
 
@@ -325,7 +398,12 @@ export function SettingsPage() {
       {tab === 'banks' && <BankConfiguration confirm={setConfirm} />}
       {tab === 'definitions' && (
         <>
-          <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }]} />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+            <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }]} />
+            <Box sx={{ flex: 1 }} />
+            {definition === 'bank' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingBank(true)}>Add bank</Button>}
+          </Box>
+          <AddBankDialog open={addingBank} onClose={() => setAddingBank(false)} />
           {definition === 'bank' && <BanksTable confirm={setConfirm} />}
           {definition === 'brands' && <BrandsPanel />}
           {definition === 'categories' && <CategoriesPanel />}

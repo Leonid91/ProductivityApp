@@ -249,6 +249,7 @@ export const api = {
   },
   accounts: {
     list: () => invoke<Account[]>('accounts.list'),
+    add: (a: { bankId: number; name: string; kind: AccountKind; currency: string }) => invoke<Account>('accounts.add', a),
     /** bankId 0: no bank. */
     update: (a: Account, change: { name?: string; kind?: AccountKind; currency?: string; bankId?: number }) =>
       invoke<Account>('accounts.update', { id: a.id, name: a.name, ...change }),

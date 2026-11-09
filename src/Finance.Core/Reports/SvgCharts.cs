@@ -92,29 +92,13 @@ public static class SvgCharts
 
     /// <summary>
     /// The money-moved diagram as laid out by the engine (<see cref="Services.FlowDiagram"/>): account boxes (name, then
-    /// type), the outside blob with who is behind it, and arrows pointing where the money went with their amounts.
+    /// type), the outside box (same size, orange), and arrows pointing where the money went with their amounts.
     /// Blue between own accounts, orange to or from the outside.
     /// </summary>
     public static string FlowDiagram(Services.FlowDiagram d, double width, double height, string currency)
     {
         var sb = new StringBuilder();
         sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(width)}\" height=\"{F(height)}\" viewBox=\"0 0 {F(d.Width)} {F(d.Height)}\" preserveAspectRatio=\"xMidYMid meet\" font-family=\"Inter\">");
-        foreach (var n in d.Nodes.Where(n => n.Outside))
-        {
-            sb.Append($"<ellipse cx=\"{F(n.X)}\" cy=\"{F(n.Y)}\" rx=\"{F(n.W / 2)}\" ry=\"{F(n.H / 2)}\" fill=\"{Palette.OutsideSoft}\" stroke=\"{Palette.OutsideInk}\" stroke-width=\"1.5\" stroke-dasharray=\"6 4\"/>");
-            var y = n.Y - (n.Parties.Count * 20 + 34) / 2.0 + 12;
-            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(y)}\" font-size=\"15\" font-weight=\"700\" fill=\"{Palette.OutsideInk}\" text-anchor=\"middle\">{Escape(n.Name)}</text>");
-            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(y + 17)}\" font-size=\"11.5\" fill=\"{Palette.InkMuted}\" text-anchor=\"middle\">{Escape(n.Type)}</text>");
-            y += 17;
-            foreach (var p in n.Parties)
-            {
-                y += 20;
-                var parts = new List<string>();
-                if (p.Sent > 0) parts.Add("sent " + Formatting.Money(p.Sent, currency));
-                if (p.Received > 0) parts.Add("received " + Formatting.Money(p.Received, currency));
-                sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(y)}\" font-size=\"12.5\" fill=\"{Palette.InkSecondary}\" text-anchor=\"middle\"><tspan font-weight=\"600\" fill=\"{Palette.Ink}\">{Escape(p.Name)}</tspan>: {Escape(string.Join(", ", parts))}</text>");
-            }
-        }
         foreach (var a in d.Arrows)
         {
             var color = a.Outside ? Palette.OutsideInk : Palette.Accent;
@@ -130,10 +114,12 @@ public static class SvgCharts
             sb.Append($"<rect x=\"{F(a.LabelX - w / 2)}\" y=\"{F(a.LabelY - 11)}\" width=\"{F(w)}\" height=\"22\" rx=\"11\" fill=\"#ffffff\" stroke=\"{(a.Outside ? Palette.OutsideInk : Palette.Accent)}\" stroke-width=\"1\"/>");
             sb.Append($"<text x=\"{F(a.LabelX)}\" y=\"{F(a.LabelY + 4.5)}\" font-size=\"12.5\" font-weight=\"600\" fill=\"{Palette.Ink}\" text-anchor=\"middle\">{Escape(text)}</text>");
         }
-        foreach (var n in d.Nodes.Where(n => !n.Outside))
+        foreach (var n in d.Nodes)
         {
-            sb.Append($"<rect x=\"{F(n.X - n.W / 2)}\" y=\"{F(n.Y - n.H / 2)}\" width=\"{F(n.W)}\" height=\"{F(n.H)}\" rx=\"12\" fill=\"#ffffff\" stroke=\"{Palette.Ink}\" stroke-width=\"1.5\"/>");
-            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(n.Y - 3)}\" font-size=\"15\" font-weight=\"700\" fill=\"{Palette.Ink}\" text-anchor=\"middle\">{Escape(n.Name)}</text>");
+            // The outside box: same size as the accounts, in orange.
+            var (fill, stroke, ink) = n.Outside ? (Palette.OutsideSoft, Palette.OutsideInk, Palette.OutsideInk) : ("#ffffff", Palette.Ink, Palette.Ink);
+            sb.Append($"<rect x=\"{F(n.X - n.W / 2)}\" y=\"{F(n.Y - n.H / 2)}\" width=\"{F(n.W)}\" height=\"{F(n.H)}\" rx=\"12\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1.5\"/>");
+            sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(n.Y - 3)}\" font-size=\"15\" font-weight=\"700\" fill=\"{ink}\" text-anchor=\"middle\">{Escape(Services.FlowDiagram.Fit(n.Name, n.W))}</text>");
             sb.Append($"<text x=\"{F(n.X)}\" y=\"{F(n.Y + 16)}\" font-size=\"12\" fill=\"{Palette.InkMuted}\" text-anchor=\"middle\">{Escape(n.Type)}</text>");
         }
         sb.Append("</svg>");

@@ -4,6 +4,12 @@ import { BarChart } from '@mui/x-charts/BarChart'
 import type { Bar, Slice } from '../api'
 import { money, percent } from '../format'
 
+/**
+ * Chart tooltips go on the page itself: inside a period (drawn with content-visibility, which makes the period the
+ * frame of fixed-position elements) they would be placed far from the pointer, off the screen.
+ */
+export const tooltipOnPage = { tooltip: { container: () => document.body } }
+
 /** HSL to #rrggbb, the same arithmetic as the PDF palette (Palette.Series in the engine). */
 function hsl(h: number, s: number, l: number): string {
   const c = (1 - Math.abs(2 * l - 1)) * s
@@ -15,7 +21,7 @@ function hsl(h: number, s: number, l: number): string {
 }
 
 /** The eight series colours, then evenly spread hues: any number of slices stays distinguishable. */
-function sliceColor(colors: string[], other: string, slice: Slice, index: number) {
+export function sliceColor(colors: string[], other: string, slice: Slice, index: number) {
   if (slice.key === '__other') return other
   if (index < colors.length) return colors[index]
   return hsl(((index - colors.length) * 137.508) % 360, 0.55, 0.52)
@@ -39,6 +45,7 @@ export function ExpensePie({ title, slices, currency, empty = 'No expenses' }: {
               height={168}
               margin={0}
               hideLegend
+              slotProps={tooltipOnPage}
               series={[{
                 data: slices.map((s, i) => ({ id: s.key, value: s.amount, label: s.label, color: sliceColor(series, other, s, i) })),
                 innerRadius: 54,
@@ -89,6 +96,7 @@ export function ExpenseBars({ bars, unit, currency }: { bars: Bar[]; unit: 'day'
         <BarChart
           height={250}
           hideLegend
+          slotProps={tooltipOnPage}
           borderRadius={4}
           grid={{ horizontal: true }}
           margin={{ left: 4, right: 8, top: 16, bottom: 0 }}

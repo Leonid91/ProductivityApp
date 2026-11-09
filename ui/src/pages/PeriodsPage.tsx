@@ -7,7 +7,7 @@ import UploadFile from '@mui/icons-material/UploadFileRounded'
 import { api, type PeriodIndex, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, iso } from '../format'
-import { PeriodCard } from '../components/PeriodCard'
+import { PeriodCard, type PeriodView } from '../components/PeriodCard'
 import { TransactionDialog, pickerFormats } from '../components/TransactionDialog'
 import { EmptyState } from '../components/common'
 
@@ -17,6 +17,8 @@ export function PeriodsPage() {
   const { settings, dataVersion, fail, go } = useApp()
   const [index, setIndex] = useState<PeriodIndex | null>(null)
   const [mode, setMode] = useState<'month' | 'year' | 'all' | 'custom'>('month')
+  // Second layer, the same for every kind of period: its tables or its charts.
+  const [view, setView] = useState<PeriodView>('tables')
   // Custom period: any two days, picked on the calendar or typed.
   const [customFrom, setCustomFrom] = useState<Dayjs | null>(null)
   const [customTo, setCustomTo] = useState<Dayjs | null>(null)
@@ -103,6 +105,12 @@ export function PeriodsPage() {
           </TextField>
         )}
         <Button variant="contained" startIcon={<Add />} onClick={() => setAdding(true)}>Add operation</Button>
+        <Box sx={{ flexBasis: '100%' }}>
+          <ToggleButtonGroup data-period-view exclusive size="small" value={view} onChange={(_, v) => v && setView(v)}>
+            <ToggleButton value="tables">Tables</ToggleButton>
+            <ToggleButton value="charts">Charts</ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
       </Box>
 
       {empty ? (
@@ -120,6 +128,7 @@ export function PeriodsPage() {
               to={p.to}
               granularity={mode === 'month' || mode === 'year' ? mode : 'range'}
               currency={currency}
+              view={view}
               onEdit={onEdit}
             />
           ))}

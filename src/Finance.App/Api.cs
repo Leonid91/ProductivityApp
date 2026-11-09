@@ -105,6 +105,21 @@ internal static class Api
 
         // ------------------------------------------------------------ accounts & statements
         b.Register("accounts.list", _ => s.Db.Accounts());
+        b.Register("accounts.add", p =>
+        {
+            // An account added by hand, at one of the person's banks (Settings > Bank Configuration).
+            var bankId = p.Get<long>("bankId");
+            var bank = s.Db.Banks().FirstOrDefault(x => x.Id == bankId) ?? throw new ArgumentException("Unknown bank.");
+            var name = p.Get<string>("name").Trim();
+            if (name.Length is 0 or > 80) throw new ArgumentException("The account name must be 1 to 80 characters.");
+            var currency = p.Opt<string>("currency") ?? bank.Currency;
+            if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper)) throw new ArgumentException("A currency is a three-letter code such as CAD.");
+            if (s.Db.Accounts().Any(a => a.BankId == bankId && string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException($"{bank.Name} already has an account named {name}.");
+            var account = new Account { Name = name, Currency = currency, Kind = p.Opt<AccountKind?>("kind") ?? AccountKind.Bank, Bank = bank.Name, BankId = bankId };
+            account.Id = s.Db.AddAccount(account);
+            return s.Db.Accounts().First(a => a.Id == account.Id);
+        });
         b.Register("accounts.update", p =>
         {
             var a = s.Db.Accounts().FirstOrDefault(x => x.Id == p.Get<long>("id")) ?? throw new KeyNotFoundException("This account no longer exists.");
