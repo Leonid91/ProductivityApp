@@ -373,3 +373,14 @@ real app with `tools/e2e/perf.mjs`.
 - The code printed down the margin of Scotiabank statements broke two-line descriptions; it is left out.
 - A description split by a page break ("Continued on next page") keeps its second line.
 - CSV exports without a header keep every text column in the label ("Point of sale purchase" and the shop).
+
+## November 9th, 2026 - Summary scrolls back up, a year shown alone - Commit 17
+
+### Changed
+- Summary of a year: the year alone with its balance (a month shows its month, all time and long custom periods
+  their years, shorter custom periods their months).
+
+### Fixed
+- Summary: after scrolling down (or switching to Summary from far down in Statements), scrolling up jumped back down
+  again and again. Every month (or year) in Summary is now as tall as the others whether loaded or not, so nothing
+  above the screen changes size while scrolling.

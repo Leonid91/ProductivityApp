@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { startTransition, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react'
 import { Accordion, AccordionDetails, AccordionSummary, Box, Button, Skeleton, Typography, useTheme } from '@mui/material'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfOutlined'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
@@ -25,6 +25,11 @@ function Stat({ label, value, color, bg, note, ...rest }: { label: string; value
   )
 }
 
+// In the Summary view every month (or year) is as tall as the others: periods not loaded yet take the height of a loaded
+// one, so nothing above the screen changes size while scrolling (the page never jumps back down).
+const summaryHeights = new Map<string, number>()
+const summaryListeners = new Set<() => void>()
+
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`)
 
 /** A table under its own heading, with the total of the period on the right. */
@@ -44,7 +49,7 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
 }
 
 /**
- * What a period shows: its summary (only the balance, month by month, or year by year beyond a year), its statements
+ * What a period shows: its summary (only the balance: a month or a year alone, other periods month by month, or year by year beyond a year), its statements
  * (the tables) or its analytics (the charts); the totals are under the statements and the analytics.
  */
 export type PeriodView = 'summary' | 'statements' | 'analytics'
@@ -70,6 +75,17 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
   const [height, setHeight] = useState(560)
   const [summary, setSummary] = useState<PeriodSummary | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [, redraw] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => { summaryListeners.add(redraw); return () => { summaryListeners.delete(redraw) } }, [])
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (view !== 'summary' || !summary || summary.breakdown.length > 1 || !el) return
+    if (summaryHeights.get(granularity) !== el.offsetHeight) {
+      summaryHeights.set(granularity, el.offsetHeight)
+      summaryListeners.forEach((l) => l())
+    }
+  }, [view, summary, granularity])
+  const sameHeight = view === 'summary' ? summaryHeights.get(granularity) : undefined
 
   // Load a period only when it comes near the screen: years of history stay fast.
   useEffect(() => {
@@ -151,7 +167,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
       data-period={from}
       // Periods far from the screen are not laid out or painted (the browser skips them until they come near).
       // Only their height is guessed meanwhile: a guessed width would stretch every period wider than the window.
-      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: summary ? undefined : height, contentVisibility: 'auto', minWidth: 0, containIntrinsicHeight: 'auto 2400px' }}
+      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: summary ? undefined : height, ...(!summary && sameHeight ? { height: sameHeight, minHeight: 0, overflow: 'hidden' } : {}), contentVisibility: view === 'summary' ? 'visible' : 'auto', minWidth: 0, containIntrinsicHeight: 'auto 2400px' }}
     >
       {!summary ? (
         <>

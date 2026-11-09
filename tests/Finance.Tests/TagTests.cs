@@ -112,7 +112,7 @@ public class TagTests
     }
 
     [Fact]
-    public async Task The_summary_cuts_a_period_in_months_up_to_a_year_and_in_years_beyond()
+    public async Task The_summary_shows_a_month_or_a_year_alone_and_cuts_other_periods_in_months_or_years()
     {
         using var s = await October();
         var month = Sum(s);
@@ -122,9 +122,9 @@ public class TagTests
         Assert.StartsWith("October, from Wednesday 1 to Friday 31, 2025", only.Title);
 
         var year = s.Summaries.Summarize(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), Granularity.Year, "CAD");
-        Assert.Equal(12, year.Breakdown.Count);
-        Assert.Equal(year.Balance, year.Breakdown.Sum(b => b.Balance));
-        Assert.Equal(month.Balance, year.Breakdown[9].Balance);
+        // A year: the year alone.
+        var whole = Assert.Single(year.Breakdown);
+        Assert.Equal(("2025-01-01", "2025-12-31", year.Balance), (whole.From, whole.To, whole.Balance));
 
         // A custom range from mid-September to mid-November: three parts, each kept inside the range.
         var custom = s.Summaries.Summarize(new DateOnly(2025, 9, 15), new DateOnly(2025, 11, 10), Granularity.Range, "CAD");

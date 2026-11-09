@@ -700,7 +700,22 @@ try {
   await sleep(600)
 
   // ---- Summary (left of Statements): only the balance, by month (or by year beyond a year), every kind of period.
+  // Scrolled down in Statements, switched to Summary, then scrolled back up with the wheel: every turn of the wheel
+  // goes back up (newer months), never down again, until the top.
+  const wheel = (dy) => p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 500, deltaX: 0, deltaY: dy })
+  const onScreen = () => p.eval(`(() => { const m = document.querySelector('main'); const line = m.getBoundingClientRect().top + 140; const s = [...document.querySelectorAll('section[data-period]')].find(x => { const r = x.getBoundingClientRect(); return r.top <= line && r.bottom > line }); return { top: Math.round(m.scrollTop), at: s ? s.dataset.period : '' } })()`)
+  await p.scrollMain(0)
+  for (let i = 0; i < 25; i++) { await wheel(600); await sleep(200) }
+  await sleep(600)
+  const beforeSwitch = await onScreen()
   await p.clickText('Summary', { selector: '[data-period-view] button' })
+  await sleep(1500)
+  const afterSwitch = await onScreen()
+  const climb = [afterSwitch]
+  for (let i = 0; i < 60 && climb[climb.length - 1].top > 0; i++) { await wheel(-300); await sleep(220); climb.push(await onScreen()) }
+  const back = climb.slice(1).filter((c, i) => c.at && climb[i].at && c.at < climb[i].at)
+  check('Summary scrolls back up after scrolling down (no jump back)', beforeSwitch.top > 3000 && afterSwitch.top > 0 && climb[climb.length - 1].top === 0 && back.length === 0
+    && climb.slice(1).every((c, i) => c.top < climb[i].top), `${beforeSwitch.at} -> ${afterSwitch.at}, ${climb.length - 1} turns to the top, ${back.length} jumps back`)
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${sec} [data-summary]') !== null`, 20000, 'month summary')
   await sleep(400)
@@ -713,10 +728,10 @@ try {
   await p.clickText('Year', { selector: 'button' })
   await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'year summary')
   await sleep(500)
-  const yearParts = await p.eval(`[...document.querySelector('section [data-summary]').querySelectorAll('[data-part]')].map(x => x.dataset.stat)`)
+  const yearCard = await p.eval(`(() => { const s = document.querySelector('section[data-period="2025-01-01"]'); return { parts: s.querySelectorAll('[data-part]').length, stats: [...s.querySelectorAll('[data-stat]')].map(x => x.dataset.stat).join(), text: s.innerText } })()`)
   const yearSum = await p.engine('periods.summary', { from: '2025-01-01', to: '2025-12-31', granularity: 'year', currency: 'CAD' })
-  check('Summary of a year: its twelve months with their dates and balances', yearParts.length === 12 && yearParts[0] === 'January, from Wednesday 1 to Friday 31, 2025' && yearParts[11].startsWith('December, from Monday 1 to Wednesday 31')
-    && cents(yearSum.breakdown.reduce((s, b) => s + b.balance, 0)) === cents(yearSum.balance), yearParts.slice(0, 2).join(' | '))
+  check('Summary of a year: the year alone, with its balance', yearCard.parts === 0 && yearCard.stats === 'Balance' && yearSum.breakdown.length === 1
+    && cents(yearSum.breakdown[0].balance) === cents(yearSum.balance) && yearCard.text.includes(Math.abs(yearSum.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), yearCard.stats)
   await shot(p, '23b-summary-year.png')
   await p.clickText('All time', { selector: 'button' })
   await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'all time summary')

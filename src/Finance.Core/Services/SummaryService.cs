@@ -47,7 +47,7 @@ public sealed class PeriodSummary
     /// them ("Travel + Work"), so no money is counted twice; operations without a tag are left out.
     /// </summary>
     public required List<Slice> TagPie { get; init; }
-    /// <summary>The period in years (more than a year) or months, each with its balance (the Summary view).</summary>
+    /// <summary>The period as its year alone (a year), in years (more than a year) or in months, each with its balance (the Summary view).</summary>
     public required List<PeriodBalance> Breakdown { get; init; }
     /// <summary>Every tag (names for the tag ids of the operations).</summary>
     public required List<Tag> Tags { get; init; }
@@ -207,7 +207,7 @@ public sealed class SummaryService(Database db)
             ByTopCategory = topSlices,
             TagPie = tagSlices,
             Tags = [.. tags.Tags],
-            Breakdown = Breakdown(txs, from, to),
+            Breakdown = Breakdown(txs, from, to, g),
             ByBrand = brandSlices,
             BrandPie = FoldPie(brandSlices),
             Series = series,
@@ -248,9 +248,10 @@ public sealed class SummaryService(Database db)
     }
 
     /// <summary>The period cut in years when it is longer than a year, in months otherwise, each part kept inside the period.</summary>
-    public static List<PeriodBalance> Breakdown(List<Transaction> txs, DateOnly from, DateOnly to)
+    public static List<PeriodBalance> Breakdown(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g = Granularity.Range)
     {
-        var years = to.DayNumber - from.DayNumber + 1 > 366;
+        // A year is shown as the year alone; any other period month by month, or year by year beyond a year.
+        var years = g == Granularity.Year || to.DayNumber - from.DayNumber + 1 > 366;
         var parts = new List<PeriodBalance>();
         var start = from;
         while (start <= to)
