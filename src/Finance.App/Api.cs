@@ -52,20 +52,15 @@ internal static class Api
         // ------------------------------------------------------------ exchange rates
         b.Register("rates.status", _ => s.Rates.Status());
         b.RegisterBackground("rates.update", async _ => await s.Rates.UpdateAsync());
-        // Downloads the rates when some operations are in another currency than the global one and the rates kept are
-        // missing or more than a few days behind (at most twice a day). Says whether anything changed.
+        b.Register("rates.sources", _ => RateSource.All);
+        // The chosen bank's rates are downloaded again every day (the copy before stays as the fallback). Says whether
+        // anything changed.
         b.RegisterBackground("rates.ensure", async _ =>
         {
-            var global = s.Setting("currency");
-            var used = s.Db.Accounts().Select(a => a.Currency).Append(global).Distinct().ToList();
-            if (used.Count < 2) return new { updated = false, status = s.Rates.Status() };
             var status = s.Rates.Status();
-            var behind = status.Latest is null || used.Any(c => !s.Rates.Knows(c))
-                || DateOnly.ParseExact(status.Latest, "yyyy-MM-dd", CultureInfo.InvariantCulture) < DateOnly.FromDateTime(DateTime.Today).AddDays(-4);
-            var recent = status.UpdatedAt is { } at && DateTime.UtcNow - DateTime.Parse(at, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) < TimeSpan.FromHours(12);
-            if (!behind || (recent && status.Latest is not null)) return new { updated = false, status };
+            if (!s.Rates.DueToday()) return new { updated = false, status };
             var after = await s.Rates.UpdateAsync();
-            return new { updated = after.Latest != status.Latest || after.Currencies != status.Currencies, status = after };
+            return new { updated = after.Error is null, status = after };
         });
         b.Register("periods.summary", p => s.Summaries.Summarize(
             ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
@@ -278,7 +273,7 @@ internal static class Api
         });
         b.Register("shell.openRatesPage", _ =>
         {
-            Process.Start(new ProcessStartInfo(ExchangeRates.PageUrl) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(s.Rates.Source.PageUrl) { UseShellExecute = true });
             return null;
         });
         b.Register("shell.reveal", p =>

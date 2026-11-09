@@ -152,7 +152,7 @@ export interface ConversionLine {
   lowestRate: number | null; highestRate: number | null; effectiveRate: number | null
   rates: RateUse[]; unconverted: number; unconvertedAmount: number; oldRates: number
 }
-export interface Conversion { to: string; source: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; lines: ConversionLine[] }
+export interface Conversion { to: string; source: string; base: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; lines: ConversionLine[] }
 export interface ConvertedView { amount: number; rate: number; rateDay: string; earned: number | null }
 /**
  * A period bank by bank, then every bank together in the global display currency. The operations are in the banks'
@@ -181,7 +181,14 @@ export function globalTransactions(r: PeriodReport): TransactionView[] {
     })
     .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
 }
-export interface RatesStatus { source: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; first: string | null; currencies: number; error: string | null }
+export interface RatesStatus {
+  sourceId: string; source: string; base: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; first: string | null
+  currencies: number; error: string | null
+  /** The latest download could not be read: the copy before it is used. */
+  fromPrevious: boolean
+}
+/** A central bank whose free daily rates can convert the currencies; base: the currency it quotes them against. */
+export interface RateSource { id: string; name: string; base: string; pageUrl: string; dataUrl: string }
 
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
@@ -295,9 +302,10 @@ export const api = {
     report: (from: string, to: string, granularity: Granularity) => invoke<PeriodReport>('periods.report', { from, to, granularity }),
   },
   rates: {
+    sources: () => invoke<RateSource[]>('rates.sources'),
     status: () => invoke<RatesStatus>('rates.status'),
     update: () => invoke<RatesStatus>('rates.update'),
-    /** Downloads the rates when they are needed and missing or behind; says whether anything changed. */
+    /** Downloads the chosen bank's rates when today's copy is not there yet; says whether anything changed. */
     ensure: () => invoke<{ updated: boolean; status: RatesStatus }>('rates.ensure'),
   },
   tx: {

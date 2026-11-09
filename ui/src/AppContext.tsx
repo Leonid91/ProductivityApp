@@ -111,11 +111,18 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     void refreshBanks()
   }, [refreshAccounts, refreshBanks])
 
-  // Exchange rates: downloaded at start when some accounts are in another currency than the global one and the rates
-  // kept are missing or behind; the periods are drawn again with them.
+  // Exchange rates of the chosen bank: downloaded again every day (checked at start, every hour, and when the bank is
+  // changed); the periods are drawn again with them. Another bank converts at once with the copy it already has.
+  const lastSource = useRef(settings.ratesSource)
   useEffect(() => {
-    api.rates.ensure().then((r) => { if (r.updated) setDataVersion((v) => v + 1) }, () => undefined)
-  }, [settings.currency, accounts.length])
+    const changed = lastSource.current !== settings.ratesSource
+    lastSource.current = settings.ratesSource
+    const check = () => api.rates.ensure().then((r) => { if (r.updated) setDataVersion((v) => v + 1) }, () => undefined)
+    if (changed) setDataVersion((v) => v + 1)
+    void check()
+    const hourly = setInterval(() => void check(), 3600_000)
+    return () => clearInterval(hourly)
+  }, [settings.ratesSource])
 
   const value: AppState = {
     info,

@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 11;
+    private const int SchemaVersion = 12;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -157,6 +157,19 @@ public sealed class Database : IDisposable
             Exec("UPDATE categories SET name = 'Card statement payments' WHERE id = 'cardpayments' AND name = 'Credit card payments'");
             Exec("UPDATE categories SET name = 'Card statement spending' WHERE id = 'cardspending' AND name = 'Credit card spending'");
         }
+        if (version < 12)
+        {
+            // Rates of several central banks, each with its latest copy (slot 0) and the one before (slot 1).
+            Exec("""
+                CREATE TABLE rate_sets (source TEXT NOT NULL, slot INTEGER NOT NULL, currency TEXT NOT NULL, data TEXT NOT NULL,
+                    PRIMARY KEY (source, slot, currency));
+                INSERT INTO rate_sets(source, slot, currency, data) SELECT 'ecb', 0, currency, data FROM rates;
+                DROP TABLE rates;
+                UPDATE settings SET key = 'rates.ecb.updatedAt' WHERE key = 'rates.updatedAt';
+                UPDATE settings SET key = 'rates.ecb.error' WHERE key = 'rates.error';
+                PRAGMA user_version = 12;
+                """);
+        }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -281,14 +294,18 @@ public sealed class Database : IDisposable
     public void SetSetting(string key, string value) =>
         Exec("INSERT INTO settings(key, value) VALUES($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ("$k", key), ("$v", value));
 
-    /// <summary>Exchange rates per currency, as stored by <see cref="Services.ExchangeRates"/>.</summary>
-    public Dictionary<string, string> LoadRates() =>
-        Query("SELECT currency, data FROM rates", r => (r.GetString(0), r.GetString(1))).ToDictionary(x => x.Item1, x => x.Item2);
+    /// <summary>One copy of a bank's exchange rates per currency: slot 0 the latest download, slot 1 the one before.</summary>
+    public Dictionary<string, string> LoadRateSet(string source, int slot) =>
+        Query("SELECT currency, data FROM rate_sets WHERE source = $s AND slot = $n", r => (r.GetString(0), r.GetString(1)), ("$s", source), ("$n", slot))
+            .ToDictionary(x => x.Item1, x => x.Item2);
 
-    public void SaveRates(IReadOnlyDictionary<string, string> series) => InTransaction(() =>
+    /// <summary>Keeps a new download as the latest copy; the latest becomes the previous one; anything older is deleted.</summary>
+    public void SaveRateSet(string source, IReadOnlyDictionary<string, string> series) => InTransaction(() =>
     {
+        Exec("DELETE FROM rate_sets WHERE source = $s AND slot = 1", ("$s", source));
+        Exec("UPDATE rate_sets SET slot = 1 WHERE source = $s AND slot = 0", ("$s", source));
         foreach (var (currency, data) in series)
-            Exec("INSERT INTO rates(currency, data) VALUES($c, $d) ON CONFLICT(currency) DO UPDATE SET data = excluded.data", ("$c", currency), ("$d", data));
+            Exec("INSERT INTO rate_sets(source, slot, currency, data) VALUES($s, 0, $c, $d)", ("$s", source), ("$c", currency), ("$d", data));
     });
 
     public Dictionary<string, string> AllSettings() =>

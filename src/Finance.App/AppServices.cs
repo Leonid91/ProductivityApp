@@ -30,6 +30,8 @@ internal sealed class AppServices : IDisposable
     {
         // Global display currency: every bank together is converted to it and shown in it.
         ["currency"] = "CAD",
+        // Central bank whose daily exchange rates convert the other currencies ("ecb" or "boc").
+        ["ratesSource"] = "ecb",
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
         ["reportsFolder"] = "",
@@ -69,7 +71,7 @@ internal sealed class AppServices : IDisposable
         Imports = new ImportService(Db, () => Setting("currency"), Transactions);
         Categories = new CategoryService(Db);
         Tags = new TagService(Db);
-        Rates = new ExchangeRates(Db);
+        Rates = new ExchangeRates(Db, () => Setting("ratesSource"));
         if (Db.GetSetting("rulesVersion") != RulesVersion)
         {
             Transactions.ReapplyRules();
@@ -116,6 +118,8 @@ internal sealed class AppServices : IDisposable
         {
             case "currency" when value.Length != 3 || !value.All(char.IsAsciiLetterUpper):
                 throw new ArgumentException("A currency is a three-letter code such as CAD.");
+            case "ratesSource" when RateSource.All.All(r => r.Id != value):
+                throw new ArgumentException("Unknown source of exchange rates.");
             case "dateFormat" when !Formatting.DateFormats.Contains(value):
                 throw new ArgumentException("Unknown date format.");
             case "theme" when value is not ("light" or "dark"):
@@ -131,7 +135,7 @@ internal sealed class AppServices : IDisposable
             // The order the person gave the rows of a table: a list of row keys.
             case not null when key.StartsWith("order.", StringComparison.Ordinal) && (key.Length > 60 || value.Length > 200_000 || !IsStringList(value)):
                 throw new ArgumentException("Invalid row order.");
-            case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers"
+            case "currency" or "ratesSource" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers"
                 or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" or "chartsTopLevel"
                 or "section.expense" or "section.income" or "section.transfer":
             case not null when key.StartsWith("order.", StringComparison.Ordinal):

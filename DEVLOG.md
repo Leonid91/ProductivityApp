@@ -443,3 +443,13 @@ real app with `tools/e2e/perf.mjs`.
 - The app is one file that unpacks itself (about 120 MB) into %TEMP%\.net\ProductivityApp the first time each build
   runs; .NET never deletes the copies of earlier builds, so every new version left 120 MB more on drive C: (twenty
   builds had left 2.4 GB). At start the app now deletes the copies of other builds that no program is using.
+
+## November 9th, 2026 - Exchange rates from the bank of your choice, every day - Commit 20
+
+### Changed
+- Settings > Display: "Global display currency" and "Exchange rates" are rows like "Date format", their values in the
+  same column. The exchange rates are a choice: the European Central Bank (by default, rates against the euro since
+  1999) or the Bank of Canada (rates against the Canadian dollar since 2017); the bank's page and a new download sit
+  beside the choice. The conversion details and the PDF name the bank and the currency its rates go through.
+- The rates of the chosen bank are downloaded again every day (checked at start and every hour). Only the latest
+  copy and the one before are kept; when the latest cannot be read, the one before is used.

@@ -94,7 +94,8 @@ public sealed record ConversionLine(
     decimal? LowestRate, decimal? HighestRate, decimal? EffectiveRate, List<RateUse> Rates, int Unconverted, decimal UnconvertedAmount, int OldRates);
 
 /// <summary>The conversions behind a period's global figures, and where the rates come from.</summary>
-public sealed record Conversion(string To, string Source, string PageUrl, string DataUrl, string? UpdatedAt, string? Latest, List<ConversionLine> Lines);
+/// <param name="Base">The currency the bank quotes every rate against (two other currencies are converted through it).</param>
+public sealed record Conversion(string To, string Source, string Base, string PageUrl, string DataUrl, string? UpdatedAt, string? Latest, List<ConversionLine> Lines);
 
 /// <summary>A period bank by bank (each in its own currency), then every bank together in the global currency.</summary>
 public sealed class PeriodReport
@@ -224,7 +225,7 @@ public sealed class SummaryService(Database db)
             Currency = global,
             Banks = parts,
             Global = globalSummary,
-            Conversion = new Conversion(global, status.Source, status.PageUrl, status.DataUrl, status.UpdatedAt, status.Latest, lines),
+            Conversion = new Conversion(global, status.Source, status.Base, status.PageUrl, status.DataUrl, status.UpdatedAt, status.Latest, lines),
             Converted = everyConversion.ToDictionary(kv => kv.Key, kv => new ConvertedView(kv.Value.Rate.Amount, kv.Value.Rate.Rate,
                 kv.Value.Rate.RateDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), copies.GetValueOrDefault(kv.Key)?.Earned)),
             Unconverted = [.. all.Where(t => t.Currency != global && !everyConversion.ContainsKey(t.Id)).Select(t => t.Id)],

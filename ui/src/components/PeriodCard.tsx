@@ -268,12 +268,12 @@ const ConversionPanel = memo(function ConversionPanel({ conversion }: { conversi
         {(missing.length > 0 || old.length > 0) && <Button size="small" variant="outlined" disabled={updating} onClick={update}>Update rates</Button>}
       </Box>
       <Typography variant="body2" sx={{ mb: 0.5 }}>
-        Rates: <Link component="button" data-rates-source sx={{ verticalAlign: 'baseline' }} onClick={() => void api.shell.openRatesPage().catch(fail)}>{conversion.source}</Link>
+        Rates: <Link component="button" data-rates-source sx={{ verticalAlign: 'baseline' }} onClick={() => void api.shell.openRatesPage().catch(fail)}>{conversion.source}</Link>, against {conversion.base}
         {conversion.latest && <>, published up to {formatDate(conversion.latest, settings.dateFormat)}</>}.
       </Typography>
       <Typography variant="body2" color="text.secondary">
         Each operation is converted at the rate published for its own day (on a weekend or holiday, the last rate before it).
-        Between two currencies other than the euro the rate goes through the euro, the same day. Each converted amount is rounded to the cent; totals add the rounded amounts.
+        Between two currencies other than {conversion.base} the rate goes through {conversion.base}, the same day. Each converted amount is rounded to the cent; totals add the rounded amounts.
       </Typography>
       {conversion.lines.length === 0 ? (
         <Typography variant="body2" sx={{ mt: 1 }}>Nothing to convert: every amount is in {conversion.to}.</Typography>

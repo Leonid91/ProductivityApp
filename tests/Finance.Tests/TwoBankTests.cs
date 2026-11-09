@@ -26,7 +26,7 @@ public class TwoBankTests
     private static ExchangeRates WithRates(TempStore s)
     {
         var rates = new ExchangeRates(s.Db);
-        rates.Save(ExchangeRates.ParseCsv(Rates));
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv(Rates));
         return rates;
     }
 
@@ -74,6 +74,63 @@ public class TwoBankTests
         return (national, caisse, st);
     }
 
+    /// <summary>Two days of the Bank of Canada's service: each rate is the value of one unit in Canadian dollars.</summary>
+    private const string BankOfCanada = """
+        {"observations":[{"d":"2025-10-09","FXEURCAD":{"v":"1.6300"},"FXUSDCAD":{"v":"1.4000"}},
+                         {"d":"2025-10-10","FXEURCAD":{"v":"1.6200"},"FXUSDCAD":{"v":"1.3900"},"FXVNDCAD":{"v":""}}]}
+        """;
+
+    [Fact]
+    public void Another_central_bank_can_give_the_rates_against_its_own_currency()
+    {
+        using var s = new TempStore();
+        var source = "boc";
+        var rates = new ExchangeRates(s.Db, () => source);
+        Assert.Equal(("Bank of Canada", "CAD"), (rates.Source.Name, rates.Source.Base));
+        rates.Save(RateSource.BankOfCanada, ExchangeRates.ParseBankOfCanada(System.Text.Encoding.UTF8.GetBytes(BankOfCanada)));
+        // 100 EUR on 10 October: 162.00 CAD (the bank's own figure, no detour).
+        Assert.Equal(new Converted(162.00m, 1.62m, new DateOnly(2025, 10, 10)), rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10)));
+        // EUR to USD goes through the Canadian dollar: 100 x 1.62 / 1.39.
+        Assert.Equal(Math.Round(100m * 1.62m / 1.39m, 2, MidpointRounding.AwayFromZero), rates.Convert(100m, "EUR", "USD", new DateOnly(2025, 10, 10))!.Amount);
+        // Sunday: Friday's rate. An empty value is not a rate.
+        Assert.Equal(new DateOnly(2025, 10, 10), rates.Convert(10m, "USD", "CAD", new DateOnly(2025, 10, 12))!.RateDay);
+        Assert.False(rates.Knows("VND"));
+        // Back to the European Central Bank: its own copy (none here yet), nothing mixed up.
+        source = "ecb";
+        Assert.Null(rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10)));
+        Assert.Equal(("European Central Bank", "EUR"), (rates.Status().Source, rates.Status().Base));
+    }
+
+    [Fact]
+    public void Only_the_latest_copy_and_the_one_before_are_kept_and_the_one_before_is_the_fallback()
+    {
+        using var s = new TempStore();
+        var rates = new ExchangeRates(s.Db);
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5000,"));
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-09,1.6000,"));
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-10,1.7000,"));
+        Assert.Equal(1.7m, rates.Convert(1m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
+        Assert.Equal("2025-10-09=1.6000;", Assert.Single(s.Db.LoadRateSet("ecb", 1)).Value);
+        Assert.Empty(s.Db.LoadRateSet("ecb", 2));
+        // A latest copy that cannot be read: the one before is used, and the status says so.
+        s.Db.SaveRateSet("ecb", new Dictionary<string, string> { ["CAD"] = "garbage" });
+        rates.Reload();
+        Assert.Equal(1.7m, rates.Convert(1m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
+        Assert.True(rates.Status().FromPrevious);
+    }
+
+    [Fact]
+    public void The_rates_are_downloaded_again_every_day()
+    {
+        using var s = new TempStore();
+        var rates = new ExchangeRates(s.Db);
+        Assert.True(rates.DueToday());
+        s.Db.SetSetting("rates.ecb.updatedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        Assert.False(rates.DueToday());
+        s.Db.SetSetting("rates.ecb.updatedAt", DateTime.Today.AddDays(-1).ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+        Assert.True(rates.DueToday());
+    }
+
     [Fact]
     public async Task Each_bank_in_its_currency_then_all_banks_converted_operation_by_operation()
     {
@@ -81,7 +138,7 @@ public class TwoBankTests
         var rates = new ExchangeRates(s.Db);
         // A rate for every day of October 2025 (invented): 1.60 + day / 1000 CAD per euro.
         var csv = "Date,CAD,\n" + string.Join("\n", Enumerable.Range(1, 31).Reverse().Select(d => $"2025-10-{d:D2},{(1.60m + d / 1000m).ToString(CultureInfo.InvariantCulture)},"));
-        rates.Save(ExchangeRates.ParseCsv(csv));
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv(csv));
         var (_, _, st) = await TwoBanks(s);
 
         var r = s.Summaries.Report(new DateOnly(2025, 10, 1), new DateOnly(2025, 10, 31), Granularity.Month, "CAD", rates);
@@ -113,7 +170,7 @@ public class TwoBankTests
         Assert.Equal(spentCad, line.ConvertedExpenses);
         Assert.Equal(0, line.Unconverted);
         Assert.All(line.Rates, u => Assert.Equal(1.60m + int.Parse(u.Day[8..], CultureInfo.InvariantCulture) / 1000m, u.Rate));
-        Assert.Equal(ExchangeRates.PageUrl, r.Conversion.PageUrl);
+        Assert.Equal((RateSource.Ecb.PageUrl, "EUR"), (r.Conversion.PageUrl, r.Conversion.Base));
         // The salary: its amount in CAD at the rate of its day.
         var salary = caisse.Transactions.First(t => t.Amount == 2450.00m);
         Assert.Equal(Cad(2450.00m, DateOnly.ParseExact(salary.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture)), r.Converted[salary.Id].Amount);

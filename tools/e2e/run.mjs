@@ -652,6 +652,7 @@ try {
   await p.waitFor(`document.querySelector('${sec} table [data-tag-cell]') !== null`, 20000, 'tags column')
   await sleep(500)
   const tagRows = () => p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].filter(r => r.children.length > 2).map(r => ({ cat: r.children[1].innerText, tags: [...r.querySelectorAll('[data-tag]')].map(t => t.dataset.tag) }))`)
+  await p.waitFor(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].some(r => r.children[1]?.innerText === 'Restaurants & cafés')`, 15000, 'restaurant rows').catch(() => undefined)
   const tagBefore = await tagRows()
   const restaurantRows = tagBefore.filter((r) => r.cat === 'Restaurants & cafés')
   check('Tags column: a category\'s tags on every one of its operations', restaurantRows.length > 0 && restaurantRows.every((r) => r.tags.join() === 'Trip (test),Work (test)')
@@ -775,12 +776,26 @@ try {
   await p.waitFor(`document.querySelector('${octSec} [data-summary]') !== null`, 20000, 'October summary')
   check('the Summary is the global balance', (await p.eval(`document.querySelector('${octSec} [data-summary]').innerText`)).includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })))
   await p.clickText('Statements', { selector: '[data-period-view] button' })
-  // The global display currency, in the title of Settings > Display, then the link to the rates.
+  // Settings > Display: the global display currency and the bank of the exchange rates are rows like the date format,
+  // their values in the same column; the European Central Bank by default, the Bank of Canada as another choice.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('General', { selector: 'button' })
-  await sleep(400)
-  check('global display currency in the Display title, then the link to the rates', await p.eval(`(() => { const g = document.querySelector('[data-global-currency]'); return !!g && g.innerText.includes('Global display') && g.innerText.includes('European Central Bank exchange rates') && !!g.querySelector('[data-rates-link]') })()`))
-  await shot(p, '24b-global-currency.png')
+  await sleep(600)
+  const display = await p.eval(`(() => {
+    const card = [...document.querySelectorAll('main h6')].find(h => h.innerText === 'Display').closest('div').parentElement
+    const rows = [...card.children].filter(r => r.querySelector('.MuiInputBase-root')).slice(0, 3)
+    return rows.map(r => { const v = r.querySelector('.MuiInputBase-root').getBoundingClientRect(); return { label: r.firstElementChild.innerText, value: r.querySelector('.MuiInputBase-root').innerText.replace(/[​s]+/g, ' ').trim(), right: Math.round(v.right), width: Math.round(v.width) } })
+  })()`)
+  check('Display: global currency and exchange rates as rows, values aligned with the date format', display.map((r) => r.label).join() === 'Global display currency,Exchange rates,Date format'
+    && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[1].value === 'European Central Bank' && (await p.eval(`!!document.querySelector('[data-rates-link]')`)), JSON.stringify(display))
+  await shot(p, '24b-display-settings.png')
+  await p.engine('settings.set', { key: 'ratesSource', value: 'boc' })
+  const boc = await p.engine('rates.update')
+  const octBoc = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
+  check('another central bank: the Bank of Canada, rates against CAD', boc.error === null && boc.base === 'CAD' && octBoc.conversion.source === 'Bank of Canada' && octBoc.conversion.base === 'CAD'
+    && octBoc.conversion.lines.length > 0 && octBoc.conversion.lines.every((l) => l.unconverted === 0) && Math.abs(octBoc.global.balance - oct.global.balance) < Math.abs(oct.global.balance) * 0.02,
+    `${octBoc.global.balance} with the Bank of Canada, ${oct.global.balance} with the ECB`)
+  await p.engine('settings.set', { key: 'ratesSource', value: 'ecb' })
   await p.engine('settings.set', { key: 'currency', value: 'EUR' })
   const octEur = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
   check('in euros, the Canadian banks are the ones converted', octEur.currency === 'EUR' && octEur.conversion.lines.length > 0 && octEur.conversion.lines.every((l) => l.from === 'CAD' && l.to === 'EUR')

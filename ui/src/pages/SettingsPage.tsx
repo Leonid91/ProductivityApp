@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, Link, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
+  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
   Tooltip, Typography,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
@@ -8,7 +8,8 @@ import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
 import Refresh from '@mui/icons-material/RefreshRounded'
-import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem, type RatesStatus } from '../api'
+import OpenInNew from '@mui/icons-material/OpenInNewRounded'
+import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem, type RateSource, type RatesStatus } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample } from '../format'
 import { FileBrowser } from '../components/FileBrowser'
@@ -75,14 +76,16 @@ function CurrencySelect({ value, onChange, label, width = 110 }: { value: string
 }
 
 /**
- * The global display currency (every bank together is converted to it and shown in it), then the source of the
- * exchange rates: a link to its page, and the button that downloads the rates again.
+ * The central bank whose daily exchange rates convert the other currencies (European Central Bank by default), with
+ * its page and a new download beside the choice.
  */
-function GlobalCurrency() {
+function RatesSourceSelect() {
   const { settings, setSetting, fail, notify, dataChanged } = useApp()
+  const [sources, setSources] = useState<RateSource[]>([])
   const [status, setStatus] = useState<RatesStatus | null>(null)
   const [updating, setUpdating] = useState(false)
-  useEffect(() => { api.rates.status().then(setStatus, () => setStatus(null)) }, [])
+  useEffect(() => { api.rates.sources().then(setSources, () => setSources([])) }, [])
+  useEffect(() => { api.rates.status().then(setStatus, () => setStatus(null)) }, [settings.ratesSource])
   const update = () => {
     setUpdating(true)
     api.rates.update().then((s) => {
@@ -92,15 +95,20 @@ function GlobalCurrency() {
     }, fail).finally(() => setUpdating(false))
   }
   return (
-    <Box data-global-currency sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-      <CurrencySelect label="Global display" width={150} value={settings.currency} onChange={(c) => void setSetting('currency', c)} />
-      <Link component="button" data-rates-link onClick={() => void api.shell.openRatesPage().catch(fail)}>European Central Bank exchange rates</Link>
+    <>
+      <Tooltip title="Open the bank's page of exchange rates">
+        <IconButton size="small" aria-label="Open the bank's page of exchange rates" data-rates-link onClick={() => void api.shell.openRatesPage().catch(fail)}><OpenInNew fontSize="small" /></IconButton>
+      </Tooltip>
       <Tooltip title={status?.latest ? `Rates up to ${formatDate(status.latest, settings.dateFormat)}. Download again` : 'Download the rates'}>
         <span>
-          <IconButton size="small" aria-label="Update exchange rates" disabled={updating} onClick={update}><Refresh fontSize="small" /></IconButton>
+          <IconButton size="small" aria-label="Download the exchange rates again" disabled={updating} onClick={update}><Refresh fontSize="small" /></IconButton>
         </span>
       </Tooltip>
-    </Box>
+      <TextField select size="small" value={settings.ratesSource || 'ecb'} onChange={(e) => void setSetting('ratesSource', e.target.value)} sx={{ width: 220 }}
+        slotProps={{ htmlInput: { 'data-rates-source-select': '' } }}>
+        {sources.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+      </TextField>
+    </>
   )
 }
 
@@ -120,7 +128,16 @@ function General({ confirm }: { confirm: (c: Confirm) => void }) {
 
   return (
     <>
-      <SectionCard title="Display" action={<GlobalCurrency />}>
+      <SectionCard title="Display">
+        {/* Every bank together is converted to this currency and shown in it. */}
+        <Row label="Global display currency">
+          <Box data-global-currency sx={{ display: 'contents' }}>
+            <CurrencySelect width={220} value={settings.currency} onChange={(c) => void setSetting('currency', c)} />
+          </Box>
+        </Row>
+        <Row label="Exchange rates">
+          <RatesSourceSelect />
+        </Row>
         <Row label="Date format">
           <TextField select size="small" value={settings.dateFormat} onChange={(e) => void setSetting('dateFormat', e.target.value)} sx={{ width: 220 }}>
             {info.dateFormats.map((f) => <MenuItem key={f} value={f}>{formatExample(f)}</MenuItem>)}
