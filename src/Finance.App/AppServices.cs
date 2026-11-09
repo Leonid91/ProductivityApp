@@ -40,6 +40,8 @@ internal sealed class AppServices : IDisposable
         ["calendarHideInvestments"] = "false",
         // Pies: every category and brand ("true"), or the five largest and "Other" ("false").
         ["pieShowAll"] = "false",
+        // Charts by first-level category, nested categories counted in theirs ("true"), or by every category ("false").
+        ["chartsTopLevel"] = "true",
         // Names of the three kinds of operation the categories sit under (renamed in Categories).
         ["section.expense"] = "Expenses",
         ["section.income"] = "Income",
@@ -118,7 +120,7 @@ internal sealed class AppServices : IDisposable
                 throw new DirectoryNotFoundException("This folder does not exist.");
             case "periodTransfers" when value is not ("separate" or "table" or "hidden" or "inline"):
                 throw new ArgumentException("Unknown choice.");
-            case "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" when value is not ("true" or "false"):
+            case "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" or "chartsTopLevel" when value is not ("true" or "false"):
                 throw new ArgumentException("Unknown choice.");
             case "section.expense" or "section.income" or "section.transfer" when value.Trim().Length is 0 or > 40:
                 throw new ArgumentException("A name has 1 to 40 characters.");
@@ -126,7 +128,7 @@ internal sealed class AppServices : IDisposable
             case not null when key.StartsWith("order.", StringComparison.Ordinal) && (key.Length > 60 || value.Length > 200_000 || !IsStringList(value)):
                 throw new ArgumentException("Invalid row order.");
             case "currency" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers"
-                or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll"
+                or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" or "chartsTopLevel"
                 or "section.expense" or "section.income" or "section.transfer":
             case not null when key.StartsWith("order.", StringComparison.Ordinal):
                 Db.SetSetting(key, value);

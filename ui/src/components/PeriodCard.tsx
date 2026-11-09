@@ -43,11 +43,11 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
   )
 }
 
-/** What a period shows: its tables or its charts (the totals are under both). */
-export type PeriodView = 'tables' | 'charts'
+/** What a period shows: its statements (the tables) or its analytics (the charts); the totals are under both. */
+export type PeriodView = 'statements' | 'analytics'
 
 /**
- * One period, in two views. Tables: operations, recurring payments, income, transfers (From / To). Charts: the pies,
+ * One period, in two views. Statements: operations, recurring payments, income, transfers (From / To). Analytics: the pies,
  * expenses per day, expenses per category per day, the money moved. Under both: Expenses / Earnings / Balance, the
  * recurring payments and the expenses / earnings ratio, and the PDF export.
  */
@@ -94,6 +94,10 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
   // Recurring payments and income are shown in their own tables, never twice.
   const mode = settings.periodTransfers || 'separate'
   const showAll = settings.pieShowAll !== 'false'
+  // Charts by first-level category (nested categories counted in theirs), or down to every nested category.
+  const topLevel = settings.chartsTopLevel !== 'false'
+  // The period's filters and choices are kept under this key while it is away from the screen.
+  const keep = `${from}_${to}_${currency}`
   const { main, recurringOut, income } = useMemo(() => {
     const all = summary?.transactions ?? []
     const isMove = (t: TransactionView) => category(t.categoryId).kind === 'transfer'
@@ -155,24 +159,24 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
             </Typography>
           </Box>
-          {view === 'tables' ? (
+          {view === 'statements' ? (
             <>
-            <TransactionTable transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
+            <TransactionTable keep={keep + ':main'} transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
 
             {recurringOut.length > 0 && (
               <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
-                <TransactionTable transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency />
+                <TransactionTable keep={keep + ':recurring'} transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency />
               </Section>
             )}
             {income.length > 0 && (
               <Section id="income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Income" total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
-                <TransactionTable transactions={income} currency={currency} paged onEdit={editOriginal} frequency />
+                <TransactionTable keep={keep + ':income'} transactions={income} currency={currency} paged onEdit={editOriginal} frequency />
               </Section>
             )}
 
             {mode === 'table' && summary.movements.length > 0 && (
               <Section id="movements" icon={<SwapHoriz />} title="Transfers, card payments & investments" note={String(summary.movements.length)}>
-                <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
+                <MovementsTable keep={keep + ':movements'} movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
               </Section>
             )}
             {mode === 'separate' && summary.movements.length > 0 && (
@@ -191,7 +195,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
                   </Box>
                 </AccordionSummary>
                 <AccordionDetails sx={{ px: 2.5, pt: 0, pb: 2 }}>
-                  <MovementsTable movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
+                  <MovementsTable keep={keep + ':movements'} movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
                 </AccordionDetails>
               </Accordion>
             )}
@@ -199,7 +203,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
           ) : (
             <>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'flex-start' }}>
-              <ExpensePie title="Expenses per category" slices={fold(summary.byCategory)} currency={currency} />
+              <ExpensePie title="Expenses per category" slices={fold(topLevel ? summary.byTopCategory : summary.byCategory)} currency={currency} />
               <ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
             </Box>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
@@ -210,7 +214,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
               <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
             </Box>
             <Box sx={{ mt: 1.5 }}>
-              <CategoryLines from={summary.from} to={summary.to} transactions={summary.transactions} categories={summary.byCategory} currency={currency} />
+              <CategoryLines keep={`${keep}:lines:${topLevel}`} from={summary.from} to={summary.to} transactions={summary.transactions} categories={topLevel ? summary.byTopCategory : summary.byCategory} topLevel={topLevel} currency={currency} />
             </Box>
             <Box sx={{ mt: 1.5 }}>
               <FlowChart diagram={summary.diagram} flows={summary.flows} currency={currency} />

@@ -33,10 +33,41 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
 
     public static FlowDiagram Build(IReadOnlyList<MovementView> movements)
     {
-        // Laid out once, then again lower if an arrow or a label would leave the top edge.
-        var (d, top) = Build(movements, Margin);
-        return top >= Margin ? d : Build(movements, Margin + (Margin - top)).Diagram;
+        // Laid out, then again with taller or wider boxes when the arrows of one side need more room than it has (every
+        // box keeps the same size), and lower when an arrow or a label would leave the top edge. Only when a box can
+        // grow no wider are all arrows drawn a little thinner, the same for all, so their thickness still follows the money.
+        var (top, h, w, k) = (Margin, NodeH, 0.0, 1.0);
+        Layout r = default;
+        for (var round = 0; round < 8; round++)
+        {
+            r = Build(movements, top, h, w, k);
+            if (r.NeedH > h + 0.5) { h = Math.Min(r.NeedH, MaxNodeH); if (r.NeedH > MaxNodeH) k *= Shrink(r.NeedH - 16, MaxNodeH - 16); continue; }
+            if (r.NeedW > r.NodeW + 0.5)
+            {
+                if (r.NeedW <= r.MaxW) w = r.NeedW;
+                else { w = r.MaxW; k *= Shrink(r.NeedW - 40, r.MaxW - 40); }
+                continue;
+            }
+            if (r.Top < Margin) { top += Margin - r.Top; continue; }
+            break;
+        }
+        return r.Diagram;
     }
+
+    private const double MaxNodeH = 132;
+
+    private static double Shrink(double need, double have) => Math.Clamp(have / need, 0.4, 0.98);
+
+    private readonly record struct Layout(FlowDiagram Diagram, double Top, double NodeW, double MaxW, double NeedW, double NeedH);
+
+    /// <summary>How thick an arrow is (before any shrinking): from 2.5 for the smallest amount to 11 for the largest.</summary>
+    private static double Size(decimal amount, decimal max) => 2.5 + 8.5 * Math.Sqrt((double)(amount / max));
+
+    /// <summary>Half the base and the length of an arrowhead for an arrow of size <paramref name="s"/>: large enough to see.</summary>
+    private static (double Half, double Length) HeadSize(double s, double k) => (Math.Max(7, k * (8 + 0.7 * s)), Math.Max(12, k * (15 + 1.3 * s)));
+
+    /// <summary>Space between two neighbouring ends on one side of a box.</summary>
+    private const double EndGap = 7;
 
     /// <summary>
     /// How many characters of a name fit in a box of width <paramref name="w"/>; longer names are cut with "…" by the
@@ -48,9 +79,12 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         return name.Length <= max ? name : name[..Math.Max(1, max - 1)].TrimEnd() + "…";
     }
 
-    private static (FlowDiagram Diagram, double Top) Build(IReadOnlyList<MovementView> movements, double Top)
+    /// <param name="NodeH">Height of every box.</param>
+    /// <param name="MinW">Width every box has at least (to give the arrows of a side their room).</param>
+    /// <param name="K">How much thinner than their full size all arrows are drawn (1 = full size).</param>
+    private static Layout Build(IReadOnlyList<MovementView> movements, double Top, double NodeH, double MinW, double K)
     {
-        if (movements.Count == 0) return (new FlowDiagram(W, 0, [], []), Margin);
+        if (movements.Count == 0) return new Layout(new FlowDiagram(W, 0, [], []), Margin, 0, 0, 0, 0);
 
         // Places: own accounts (by name) and the single outside box.
         var types = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -74,7 +108,8 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         var accounts = moved.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).Select(x => x.Key).ToList();
         var perRow = accounts.Count <= 4 ? Math.Max(1, accounts.Count) : (int)Math.Ceiling(accounts.Count / Math.Ceiling(accounts.Count / 4.0));
         var longest = accounts.Append("Outside the app").Max(a => a.Length);
-        var nodeW = Math.Clamp(longest * CharW + 28, MinNodeW, Math.Max(MinNodeW, W / perRow - 80));
+        var maxW = Math.Max(MinNodeW, W / perRow - 40);
+        var nodeW = Math.Max(Math.Clamp(longest * CharW + 28, MinNodeW, Math.Max(MinNodeW, W / perRow - 80)), Math.Min(MinW, maxW));
         var nodes = new List<DiagramNode>();
         double lastY = Top + NodeH / 2;
         // Room under a raised middle box for arrows running between its neighbours.
@@ -104,8 +139,14 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         var links = edges.Where(e => e.Key.From != e.Key.To).OrderByDescending(e => e.Value.Amount)
             .ThenBy(e => e.Key.From, StringComparer.Ordinal).ThenBy(e => e.Key.To, StringComparer.Ordinal).ToList();
 
-        // 1. Sides: for each arrow, the pair of sides giving the shortest curve that goes through no other box.
+        // Every arrow as thick as its money, its head in proportion (and never too small to see).
+        var size = links.Select(l => Size(l.Value.Amount, max)).ToArray();
+
+        // 1. Sides: for each arrow, the pair of sides giving the shortest curve that goes through no other box. A side
+        // already used by other arrows costs a little more (the short sides of a box much more), so arrows spread out.
         var ends = new List<End>();
+        var used = new Dictionary<(string, Sides), int>();
+        double Crowd(DiagramNode n, Sides side) => used.GetValueOrDefault((n.Id, side)) * (side is Sides.Left or Sides.Right ? 45 : 8);
         for (var i = 0; i < links.Count; i++)
         {
             var (from, to) = links[i].Key;
@@ -117,25 +158,33 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
                     var (ax, ay, anx, any) = Port(a, sa, 0);
                     var (bx, by, bnx, bny) = Port(b, sb, 0);
                     var c = Curve(ax, ay, anx, any, bx, by, bnx, bny);
-                    var cost = Cost(c, nodes, a, b) + (sa == Natural(a, b) ? 0 : 6) + (sb == Natural(b, a) ? 0 : 6);
+                    var cost = Cost(c, nodes, a, b) + (sa == Natural(a, b) ? 0 : 6) + (sb == Natural(b, a) ? 0 : 6) + Crowd(a, sa) + Crowd(b, sb);
                     if (cost < best.Cost) best = (cost, sa, sb);
                 }
-            ends.Add(new End(i, a, b, true, best.A, Pair(from, to)));
-            ends.Add(new End(i, b, a, false, best.B, Pair(from, to)));
+            var (half, _) = HeadSize(size[i], K);
+            ends.Add(new End(i, a, b, true, best.A, Pair(from, to)) { Room = K * size[i] });
+            ends.Add(new End(i, b, a, false, best.B, Pair(from, to)) { Room = 2 * half });
+            used[(a.Id, best.A)] = used.GetValueOrDefault((a.Id, best.A)) + 1;
+            used[(b.Id, best.B)] = used.GetValueOrDefault((b.Id, best.B)) + 1;
         }
 
-        // 2. Points: each end its own point on its side, ordered by where the arrow goes.
+        // 2. Points: each end its own stretch of its side, as wide as its line (leaving) or its head (arriving), ordered
+        // by where the arrow goes, with the spare room shared out between them. A side too short for its arrows asks
+        // for larger boxes.
+        double needW = 0, needH = 0;
         foreach (var group in ends.GroupBy(e => (e.Node.Id, e.Side)))
         {
             var horizontal = group.Key.Side is Sides.Top or Sides.Bottom;
             var ordered = group.OrderBy(e => horizontal ? e.Other.X : e.Other.Y).ThenBy(e => horizontal ? e.Other.Y : e.Other.X).ThenBy(e => e.PairOrder).ToList();
-            var n = ordered.Count;
             var span = horizontal ? nodeW - 40 : NodeH - 16;
-            for (var k = 0; k < n; k++)
+            var need = ordered.Sum(e => e.Room) + EndGap * (ordered.Count - 1);
+            if (horizontal) needW = Math.Max(needW, need + 40); else needH = Math.Max(needH, need + 16);
+            var gap = Math.Max(EndGap, (span - ordered.Sum(e => e.Room)) / (ordered.Count + 1));
+            var at = -(ordered.Sum(e => e.Room) + gap * (ordered.Count - 1)) / 2;
+            foreach (var e in ordered)
             {
-                var e = ordered[k];
-                e.Spacing = n == 1 ? double.MaxValue : span / n;
-                (e.X, e.Y, e.Nx, e.Ny) = Port(e.Node, e.Side, -span / 2 + span * (k + 0.5) / n);
+                (e.X, e.Y, e.Nx, e.Ny) = Port(e.Node, e.Side, at + e.Room / 2);
+                at += e.Room + gap;
             }
         }
 
@@ -146,11 +195,9 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             var ((from, to), (amount, count)) = links[i];
             var s = ends.First(e => e.Arrow == i && e.Leaving);
             var e = ends.First(e => e.Arrow == i && !e.Leaving);
-            var room = Math.Min(s.Spacing, e.Spacing);
-            var width = Math.Min(2 + 7 * Math.Sqrt((double)(amount / max)), room * 0.4);
+            var width = K * size[i];
             const double Gap = 3;
-            var headLen = 11 + width * 1.3;
-            var headHalf = Math.Min(6 + width * 0.8, room / 2 - 1.5);
+            var (headHalf, headLen) = HeadSize(size[i], K);
             double tx = e.X + e.Nx * Gap, ty = e.Y + e.Ny * Gap;
             double bx = tx + e.Nx * headLen, by = ty + e.Ny * headLen;
             var c = Curve(s.X + s.Nx * Gap, s.Y + s.Ny * Gap, s.Nx, s.Ny, bx, by, e.Nx, e.Ny);
@@ -200,7 +247,7 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             arrows.Add(new DiagramArrow(d.From, d.To, d.Amount, d.Count, d.From == OutsideId || d.To == OutsideId, d.C.Svg(), d.Head,
                 Math.Round(d.Width, 2), Math.Round(label.X, 1), Math.Round(label.Y, 1)));
         }
-        return (new FlowDiagram(W, Math.Ceiling(bottom + Margin), nodes, arrows), arrows.Count == 0 ? Margin : top);
+        return new Layout(new FlowDiagram(W, Math.Ceiling(bottom + Margin), nodes, arrows), arrows.Count == 0 ? Margin : top, nodeW, maxW, needW, needH);
     }
 
     private enum Sides { Top, Bottom, Left, Right }
@@ -220,7 +267,8 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         public double Y { get; set; }
         public double Nx { get; set; }
         public double Ny { get; set; }
-        public double Spacing { get; set; }
+        /// <summary>How much of its side the end takes: the width of its line, or of its head.</summary>
+        public double Room { get; init; }
     }
 
     /// <summary>A cubic curve from (X0, Y0) to (X3, Y3).</summary>

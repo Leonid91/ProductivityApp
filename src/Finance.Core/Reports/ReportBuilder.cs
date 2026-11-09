@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Services;
@@ -40,7 +41,8 @@ public static class ReportBuilder
     /// What the report shows, following the settings: every slice in the pies or the five largest; transfers in their
     /// own table ("separate"), left out ("hidden") or among the operations ("inline").
     /// </summary>
-    public sealed record Options(bool PieShowAll = true, string Transfers = "separate");
+    /// <param name="TopLevelCategories">Charts by first-level category (nested categories counted in theirs), or by the categories themselves.</param>
+    public sealed record Options(bool PieShowAll = true, string Transfers = "separate", bool TopLevelCategories = true);
 
     public static byte[] Build(PeriodSummary s, string dateFormat, DateTime generatedAt, Options? options = null)
     {
@@ -93,7 +95,8 @@ public static class ReportBuilder
                     t.Item().Element(c => Totals(c, s));
                     t.Item().Element(c => Ratios(c, s));
                 });
-                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per category", o.PieShowAll ? s.ByCategory : s.CategoryPie, s.Currency));
+                var byCategory = o.TopLevelCategories ? s.ByTopCategory : s.ByCategory;
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per category", o.PieShowAll ? byCategory : SummaryService.FoldPie(byCategory), s.Currency));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", o.PieShowAll ? s.ByBrand : s.BrandPie, s.Currency));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Recurring payments & subscriptions",
                     o.PieShowAll ? s.RecurringExpensePie : SummaryService.FoldPie(s.RecurringExpensePie), s.Currency, "No recurring payments in this period."));
@@ -290,7 +293,7 @@ public static class ReportBuilder
                             r.ConstantItem(5);
                             r.RelativeItem().Text(sl.Label).FontSize(size).ClampLines(1);
                             r.ConstantItem(90).AlignRight().Text(Formatting.Money(sl.Amount, currency)).FontSize(size).EnableFontFeature("tnum");
-                            r.ConstantItem(44).AlignRight().Text($"{Math.Round(sl.Share * 100):0}%").FontSize(size).FontColor(Palette.InkSecondary).EnableFontFeature("tnum");
+                            r.ConstantItem(50).AlignRight().Text((sl.Share * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%").FontSize(size).FontColor(Palette.InkSecondary).EnableFontFeature("tnum");
                         });
                     }
                 });

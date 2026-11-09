@@ -104,6 +104,7 @@ function General({ confirm }: { confirm: (c: Confirm) => void }) {
             </TextField>
           </Row>
           <Toggle label="Show all data in pie charts" setting="pieShowAll" />
+          <Toggle label="Show only first level categories in charts" setting="chartsTopLevel" />
         </Group>
         <Group title="Calendar">
           <Toggle label="Hide transfers" setting="calendarHideTransfers" />
@@ -210,12 +211,12 @@ function AccountsTable({ accounts, system, confirm }: { accounts: Account[]; sys
 }
 
 /**
- * One tab per bank, banks with accounts first (the first imported first); banks and accounts are added with the
- * buttons on the right of the tabs.
+ * One tab per bank, banks with accounts first (the first imported first); accounts are added with the button on the
+ * right of the tabs (banks are added in Definitions > Bank).
  */
 function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
   const { accounts, banks } = useApp()
-  const [adding, setAdding] = useState<'bank' | 'account' | null>(null)
+  const [adding, setAdding] = useState(false)
   const first = (bankId: number | null) => {
     const ids = accounts.filter((a) => a.bankId === bankId).map((a) => a.id)
     return ids.length ? Math.min(...ids) : Number.MAX_SAFE_INTEGER
@@ -230,14 +231,12 @@ function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
         {tabs.length > 0 && <Tabs size="small" value={current} onChange={setTab} tabs={tabs} />}
         <Box sx={{ flex: 1 }} />
-        <Button variant="outlined" startIcon={<Add />} disabled={banks.length === 0} onClick={() => setAdding('account')}>Add account</Button>
-        <Button variant="contained" startIcon={<Add />} onClick={() => setAdding('bank')}>Add bank</Button>
+        <Button variant="contained" startIcon={<Add />} disabled={banks.length === 0} onClick={() => setAdding(true)}>Add account</Button>
       </Box>
       {!bank ? <EmptyState icon={<AccountBalance />} title="No banks yet" />
         : mine.length === 0 ? <EmptyState icon={<AccountBalance />} title={`No accounts at ${bank.name} yet`} />
         : <AccountsTable accounts={mine} system={bank.system} confirm={confirm} />}
-      <AddBankDialog open={adding === 'bank'} onClose={() => setAdding(null)} onAdded={(id) => setTab(String(id))} />
-      <AddAccountDialog open={adding === 'account'} bankId={bank?.id ?? null} onClose={() => setAdding(null)} />
+      <AddAccountDialog open={adding} bankId={bank?.id ?? null} onClose={() => setAdding(false)} />
     </>
   )
 }

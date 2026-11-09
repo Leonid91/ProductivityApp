@@ -1,12 +1,14 @@
-import { useMemo, useState } from 'react'
-import { Box, Checkbox, MenuItem, TextField, Typography, useTheme } from '@mui/material'
+import { useMemo } from 'react'
+import { Box, Checkbox, Typography, useTheme } from '@mui/material'
 import { LineChart } from '@mui/x-charts/LineChart'
 import type { Slice, TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, parts, monthName } from '../format'
+import { useKept } from '../keep'
 import { sliceColor, tooltipOnPage } from './Charts'
 
-const DEFAULT_SHOWN = 5
+/** Height of the chart; the list of categories beside it has the same, so the two line up. */
+const HEIGHT = 340
 
 /** Every day from one ISO date to another, both included. */
 function days(from: string, to: string): string[] {
@@ -17,28 +19,41 @@ function days(from: string, to: string): string[] {
   return out
 }
 
+/** What is drawn: the total line or not, and which categories. */
+interface Shown { total: boolean; categories: string[] }
+
 /**
- * Expenses per category, one line each, one point per day; the line of all expenses is always there. The top five
- * categories are shown first; any number of them (none to all) can be chosen, or each one ticked on or off.
+ * Expenses per category, one line each, one point per day. Beside the chart, under "Categories", every category with
+ * expenses in the period and the total, each ticked on or off; the total and the five largest categories are ticked
+ * at first. The vertical scale follows the lines shown.
  */
-export function CategoryLines({ from, to, transactions, categories, currency }: {
+export function CategoryLines({ keep, from, to, transactions, categories, topLevel, currency }: {
+  /** Where the choices are kept while the period is away from the screen. */
+  keep: string
   from: string
   to: string
   transactions: TransactionView[]
   /** Expenses per category of the period, largest first (the same order and colours as the pie). */
   categories: Slice[]
+  /** Nested categories drawn as the first-level category they are in. */
+  topLevel: boolean
   currency: string
 }) {
   const theme = useTheme()
   const { category, settings } = useApp()
   const { series: palette, other } = theme.palette.chart
-  const [chosen, setChosen] = useState<Set<string> | null>(null)
-  const shown = chosen ?? new Set(categories.slice(0, DEFAULT_SHOWN).map((c) => c.key))
-  const topCount = categories.findIndex((c) => !shown.has(c.key))
-  const isTop = (topCount === -1 ? categories.length : topCount) === shown.size
-  const count = shown.size
+  const [kept, setShown] = useKept<Shown | null>(keep, null)
+  const shown: Shown = kept ?? { total: true, categories: categories.slice(0, 5).map((c) => c.key) }
+  const on = new Set(shown.categories)
+  const toggle = (key: string) => setShown({ ...shown, categories: on.has(key) ? shown.categories.filter((k) => k !== key) : [...shown.categories, key] })
 
   const { axis, total, byCategory } = useMemo(() => {
+    const groupOf = (id: string) => {
+      if (!topLevel) return id
+      let c = category(id)
+      for (let depth = 0; c.parentId && depth < 64; depth++) c = category(c.parentId)
+      return c.id
+    }
     const axis = days(from, to)
     const index = new Map(axis.map((d, i) => [d, i]))
     const total = new Array<number>(axis.length).fill(0)
@@ -48,16 +63,19 @@ export function CategoryLines({ from, to, transactions, categories, currency }: 
       const i = index.get(t.date)
       if (i === undefined) continue
       total[i] += -t.amount
-      let line = byCategory.get(t.categoryId)
-      if (!line) byCategory.set(t.categoryId, (line = new Array<number>(axis.length).fill(0)))
+      const key = groupOf(t.categoryId)
+      let line = byCategory.get(key)
+      if (!line) byCategory.set(key, (line = new Array<number>(axis.length).fill(0)))
       line[i] += -t.amount
     }
     // Cents only: sums of decimals stay clean in the tooltip.
     const round = (v: number[]) => v.map((x) => Math.round(x * 100) / 100)
     return { axis, total: round(total), byCategory: new Map([...byCategory].map(([k, v]) => [k, round(v)])) }
-  }, [from, to, transactions, category])
+  }, [from, to, transactions, category, topLevel])
 
-  const max = Math.max(0, ...total)
+  const lines = categories.map((c, i) => ({ c, color: sliceColor(palette, other, c, i) })).filter((x) => on.has(x.c.key))
+  const drawn = [...(shown.total ? [total] : []), ...lines.map((l) => byCategory.get(l.c.key) ?? [])]
+  const max = Math.max(0, ...drawn.flat())
   const oneMonth = from.slice(0, 7) === to.slice(0, 7)
   const long = axis.length > 400
   const tick = (d: string) => {
@@ -66,22 +84,36 @@ export function CategoryLines({ from, to, transactions, categories, currency }: 
     return long ? `${monthName(p.m).slice(0, 3)} ${p.y}` : `${monthName(p.m).slice(0, 3)} ${p.d}`
   }
   const every = axis.length <= 31 ? 1 : Math.ceil(axis.length / 12)
-  const lines = categories.map((c, i) => ({ c, color: sliceColor(palette, other, c, i) })).filter((x) => shown.has(x.c.key))
+  const spent = categories.reduce((s, c) => s + c.amount, 0)
+
+  const row = (key: string, label: string, amount: number, color: string, checked: boolean, onChange: () => void, bold = false) => (
+    <Box component="li" key={key} data-choice={key} sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+      <Checkbox
+        size="small"
+        checked={checked}
+        onChange={onChange}
+        slotProps={{ input: { 'aria-label': label } }}
+        sx={{ p: 0.5, color, '&.Mui-checked': { color } }}
+      />
+      <Typography variant="body2" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: bold ? 650 : undefined }}>{label}</Typography>
+      <Typography variant="body2" className="tnum" color="text.secondary" sx={{ ml: 1 }}>{money(amount, currency)}</Typography>
+    </Box>
+  )
 
   return (
-    <Box data-category-lines sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, pb: 1, bgcolor: 'background.paper' }}>
+    <Box data-category-lines sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, pb: 1.5, bgcolor: 'background.paper' }}>
       <Typography variant="subtitle1">Expenses per category, per day</Typography>
-      {max === 0 ? (
+      {categories.length === 0 ? (
         <Typography color="text.secondary" sx={{ py: 6, textAlign: 'center' }}>No expenses</Typography>
       ) : (
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', gap: 2.5, alignItems: 'flex-start', flexWrap: 'wrap', mt: 1 }}>
           <Box sx={{ flex: '1 1 520px', minWidth: 0 }}>
             <LineChart
-              height={320}
+              height={HEIGHT}
               hideLegend
               slotProps={tooltipOnPage}
               grid={{ horizontal: true }}
-              margin={{ left: 4, right: 12, top: 16, bottom: 0 }}
+              margin={{ left: 4, right: 12, top: 12, bottom: 0 }}
               xAxis={[{
                 scaleType: 'point',
                 data: axis,
@@ -95,18 +127,21 @@ export function CategoryLines({ from, to, transactions, categories, currency }: 
                 width: 64,
                 disableTicks: true,
                 tickNumber: 5,
+                // The scale follows the lines shown: without the total, the categories fill the height.
+                min: 0,
+                max: max > 0 ? undefined : 1,
                 tickLabelStyle: { fontSize: 11, fill: theme.palette.chart.axis },
                 valueFormatter: (v: number) => money(v, currency, { compact: max >= 10000, whole: true }),
               }]}
               series={[
-                {
+                ...(shown.total ? [{
                   id: '__total',
                   data: total,
                   label: 'Total',
                   color: theme.palette.text.primary,
                   showMark: false,
-                  valueFormatter: (v) => (v === null ? '' : money(v, currency)),
-                },
+                  valueFormatter: (v: number | null) => (v === null ? '' : money(v, currency)),
+                }] : []),
                 ...lines.map(({ c, color }) => ({
                   id: c.key,
                   data: byCategory.get(c.key) ?? new Array<number>(axis.length).fill(0),
@@ -124,42 +159,11 @@ export function CategoryLines({ from, to, transactions, categories, currency }: 
               }}
             />
           </Box>
-          <Box sx={{ flex: '0 1 280px', minWidth: 220, pt: 1 }}>
-            <TextField
-              select
-              size="small"
-              label="Categories shown"
-              value={isTop ? String(count) : 'custom'}
-              onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setChosen(new Set(categories.slice(0, n).map((c) => c.key))) }}
-              sx={{ width: '100%' }}
-            >
-              {categories.map((_, i) => i).concat(categories.length).map((n) => (
-                <MenuItem key={n} value={String(n)}>{n === 0 ? 'None' : n === categories.length ? `All (${n})` : `Top ${n}`}</MenuItem>
-              ))}
-              {!isTop && <MenuItem value="custom" sx={{ display: 'none' }}>{`${count} chosen`}</MenuItem>}
-            </TextField>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1.5, mb: 0.5, pl: 0.5 }}>
-              <Box sx={{ width: 14, height: 3, borderRadius: 2, bgcolor: 'text.primary', flex: '0 0 14px' }} />
-              <Typography variant="body2" sx={{ flex: 1, fontWeight: 600 }}>Total</Typography>
-            </Box>
-            <Box component="ul" data-category-choices sx={{ listStyle: 'none', m: 0, p: 0, maxHeight: 236, overflowY: 'auto' }}>
-              {categories.map((c, i) => (
-                <Box component="li" key={c.key} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-                  <Checkbox
-                    size="small"
-                    checked={shown.has(c.key)}
-                    onChange={(e) => {
-                      const next = new Set(shown)
-                      if (e.target.checked) next.add(c.key); else next.delete(c.key)
-                      setChosen(next)
-                    }}
-                    slotProps={{ input: { 'aria-label': c.label } }}
-                    sx={{ p: 0.5, color: sliceColor(palette, other, c, i), '&.Mui-checked': { color: sliceColor(palette, other, c, i) } }}
-                  />
-                  <Typography variant="body2" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Typography>
-                  <Typography variant="body2" className="tnum" color="text.secondary">{money(c.amount, currency)}</Typography>
-                </Box>
-              ))}
+          <Box sx={{ flex: '0 1 300px', minWidth: 230, height: HEIGHT, display: 'flex', flexDirection: 'column' }}>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5, pl: 0.5 }}>Categories</Typography>
+            <Box component="ul" data-category-choices sx={{ listStyle: 'none', m: 0, p: 0, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              {row('__total', 'Total', spent, theme.palette.text.primary, shown.total, () => setShown({ ...shown, total: !shown.total }), true)}
+              {categories.map((c, i) => row(c.key, c.label, c.amount, sliceColor(palette, other, c, i), on.has(c.key), () => toggle(c.key)))}
             </Box>
           </Box>
         </Box>

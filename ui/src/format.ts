@@ -64,8 +64,9 @@ export function money(value: number, currency: string, opts: { sign?: boolean; c
   return abs
 }
 
+/** A share with two decimals (0.29%, 88.50%): a small share never reads as 0%. */
 export function percent(share: number): string {
-  return `${Math.round(share * 100)}%`
+  return `${(share * 100).toFixed(2)}%`
 }
 
 export function today(): string {

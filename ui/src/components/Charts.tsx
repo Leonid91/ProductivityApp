@@ -70,7 +70,7 @@ export function ExpensePie({ title, slices, currency, empty = 'No expenses' }: {
                 <Box sx={{ width: 10, height: 10, borderRadius: '3px', flex: '0 0 10px', bgcolor: sliceColor(series, other, s, i) }} />
                 <Typography variant="body2" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</Typography>
                 <Typography variant="body2" className="tnum" sx={{ fontWeight: 560 }}>{money(s.amount, currency)}</Typography>
-                <Typography variant="body2" className="tnum" color="text.secondary" sx={{ width: 38, textAlign: 'right' }}>{percent(s.share)}</Typography>
+                <Typography variant="body2" className="tnum" color="text.secondary" sx={{ width: 58, flex: '0 0 58px', textAlign: 'right' }}>{percent(s.share)}</Typography>
               </Box>
             ))}
           </Box>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Autocomplete, Box, Checkbox, IconButton, InputBase, ListItemIcon, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
+  Autocomplete, Box, IconButton, InputBase, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
   TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
@@ -12,8 +12,12 @@ import { useApp } from '../AppContext'
 import { formatDate, formatExample, plural } from '../format'
 import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill, MenuDivider, Money } from './common'
+import { choiceItems, countChoices, hiding } from './filters'
+import { useKept } from '../keep'
 
-function HeaderButton({ label, active, onClick }: { label: string; active?: boolean; onClick: (e: React.MouseEvent<HTMLElement>) => void }) {
+const NONE_HIDDEN = new Set<string>()
+
+export function HeaderButton({ label, active, onClick }: { label: string; active?: boolean; onClick: (e: React.MouseEvent<HTMLElement>) => void }) {
   return (
     <Box
       component="button"
@@ -91,8 +95,13 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: strin
   )
 }
 
-/** The operations of one period: Date, Category, Brand Name, (how often it comes back), Amount. */
-export function TransactionTable({ transactions, currency, paged, onEdit, frequency = false, empty = 'No operations in this period' }: {
+/**
+ * The operations of one period: Date, Category, Brand Name, (how often it comes back), Amount. Dates, categories and
+ * brands each have a filter (all, none, one or any of them); the dates also their format and order.
+ */
+export function TransactionTable({ keep, transactions, currency, paged, onEdit, frequency = false, empty = 'No operations in this period' }: {
+  /** Where the table's filters, order and page are kept while the period is away from the screen. */
+  keep: string
   transactions: TransactionView[]
   currency: string
   paged: boolean
@@ -104,24 +113,27 @@ export function TransactionTable({ transactions, currency, paged, onEdit, freque
   const { settings, setSetting, info, category, notify, fail, dataChanged, askScope } = useApp()
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
   const [catMenu, setCatMenu] = useState<HTMLElement | null>(null)
-  const [newestFirst, setNewestFirst] = useState(true)
-  const [filter, setFilter] = useState<Set<string>>(new Set())
-  const [page, setPage] = useState(1)
+  const [brandMenu, setBrandMenu] = useState<HTMLElement | null>(null)
+  const [newestFirst, setNewestFirst] = useKept(keep + ':newestFirst', true)
+  const [hiddenCategories, setHiddenCategories] = useKept(keep + ':categories', NONE_HIDDEN)
+  const [hiddenBrands, setHiddenBrands] = useKept(keep + ':brands', NONE_HIDDEN)
+  const [hiddenDates, setHiddenDates] = useKept(keep + ':dates', NONE_HIDDEN)
+  const [page, setPage] = useKept(keep + ':page', 1)
   const pageSize = 25
 
-  const present = useMemo(() => {
-    const counts = new Map<string, number>()
-    transactions.forEach((t) => counts.set(t.categoryId, (counts.get(t.categoryId) ?? 0) + 1))
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])
-  }, [transactions])
+  const categoryChoices = useMemo(() => countChoices(transactions, (t) => t.categoryId, (id) => category(id).name,
+    (id) => <CategoryIcon name={category(id).icon} sx={{ fontSize: 18 }} />).sort((a, b) => b.count - a.count), [transactions, category])
+  const brandChoices = useMemo(() => countChoices(transactions, (t) => t.brand, (b) => b).sort((a, b) => a.label.localeCompare(b.label)), [transactions])
+  const dateChoices = useMemo(() => countChoices(transactions, (t) => t.date, (d) => formatDate(d, settings.dateFormat))
+    .sort((a, b) => (newestFirst ? b.key.localeCompare(a.key) : a.key.localeCompare(b.key))), [transactions, settings.dateFormat, newestFirst])
 
-  const brands = useMemo(() => [...new Set(transactions.map((t) => t.brand))].sort((a, b) => a.localeCompare(b)), [transactions])
+  const brands = useMemo(() => brandChoices.map((c) => c.key), [brandChoices])
 
   const rows = useMemo(() => {
-    let list = filter.size ? transactions.filter((t) => filter.has(t.categoryId)) : transactions
+    let list = transactions.filter((t) => !hiddenCategories.has(t.categoryId) && !hiddenBrands.has(t.brand) && !hiddenDates.has(t.date))
     if (newestFirst) list = [...list].reverse()
     return list
-  }, [transactions, filter, newestFirst])
+  }, [transactions, hiddenCategories, hiddenBrands, hiddenDates, newestFirst])
 
   const pages = Math.max(1, Math.ceil(rows.length / pageSize))
   const visible = paged ? rows.slice((Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize) : rows
@@ -145,13 +157,8 @@ export function TransactionTable({ transactions, currency, paged, onEdit, freque
     }
   }
 
-  const toggle = (id: string) => {
-    const next = new Set(filter)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    setFilter(next)
-    setPage(1)
-  }
+  // A filter changed: back to the first page.
+  const filtered = (set: (hidden: Set<string>) => void) => (hidden: Set<string>) => { set(hidden); setPage(1) }
 
   return (
     <Box>
@@ -166,9 +173,9 @@ export function TransactionTable({ transactions, currency, paged, onEdit, freque
         </colgroup>
         <TableHead>
           <TableRow>
-            <TableCell><HeaderButton label="Date" onClick={(e) => setDateMenu(e.currentTarget)} /></TableCell>
-            <TableCell><HeaderButton label="Category" active={filter.size > 0} onClick={(e) => setCatMenu(e.currentTarget)} /></TableCell>
-            <TableCell>Brand Name</TableCell>
+            <TableCell><HeaderButton label="Date" active={hiding(hiddenDates, dateChoices)} onClick={(e) => setDateMenu(e.currentTarget)} /></TableCell>
+            <TableCell><HeaderButton label="Category" active={hiding(hiddenCategories, categoryChoices)} onClick={(e) => setCatMenu(e.currentTarget)} /></TableCell>
+            <TableCell><HeaderButton label="Brand Name" active={hiding(hiddenBrands, brandChoices)} onClick={(e) => setBrandMenu(e.currentTarget)} /></TableCell>
             {frequency && <TableCell>Comes back</TableCell>}
             <TableCell align="right">Amount ({currency})</TableCell>
             <TableCell />
@@ -195,7 +202,7 @@ export function TransactionTable({ transactions, currency, paged, onEdit, freque
           {visible.length === 0 && (
             <TableRow>
               <TableCell colSpan={frequency ? 6 : 5} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>
-                {transactions.length === 0 ? empty : 'No operations in these categories'}
+                {transactions.length === 0 ? empty : 'No operations match these filters'}
               </TableCell>
             </TableRow>
           )}
@@ -208,7 +215,7 @@ export function TransactionTable({ transactions, currency, paged, onEdit, freque
         </Box>
       )}
 
-      <Menu anchorEl={dateMenu} open={dateMenu !== null} onClose={() => setDateMenu(null)}>
+      <Menu anchorEl={dateMenu} open={dateMenu !== null} onClose={() => setDateMenu(null)} slotProps={{ paper: { sx: { maxHeight: 560 } } }}>
         {info.dateFormats.map((f) => (
           <MenuItem key={f} onClick={() => { void setSetting('dateFormat', f); setDateMenu(null) }} sx={{ minWidth: 250 }}>
             <ListItemText primary={f} secondary={formatExample(f)} slotProps={{ secondary: { className: 'tnum' } }} />
@@ -224,25 +231,16 @@ export function TransactionTable({ transactions, currency, paged, onEdit, freque
           <ListItemText>Oldest first</ListItemText>
           {!newestFirst && <Check fontSize="small" sx={{ color: 'primary.main', ml: 2 }} />}
         </MenuItem>
+        <MenuDivider />
+        {choiceItems({ title: 'Dates', choices: dateChoices, hidden: hiddenDates, onChange: filtered(setHiddenDates), all: 'All dates' })}
       </Menu>
 
-      <Menu anchorEl={catMenu} open={catMenu !== null} onClose={() => setCatMenu(null)} slotProps={{ paper: { sx: { width: 270, maxHeight: 440 } } }}>
-        <MenuItem onClick={() => { setFilter(new Set()); setPage(1) }}>
-          <ListItemText>All categories</ListItemText>
-          {filter.size === 0 && <Check fontSize="small" sx={{ color: 'primary.main' }} />}
-        </MenuItem>
-        <MenuDivider />
-        {present.map(([id, n]) => {
-          const c = category(id)
-          return (
-            <MenuItem key={id} onClick={() => toggle(id)} sx={{ py: 0.25 }}>
-              <Checkbox size="small" checked={filter.has(id)} sx={{ p: 0.5, mr: 1 }} disableRipple />
-              <ListItemIcon sx={{ minWidth: 30 }}><CategoryIcon name={c.icon} sx={{ fontSize: 18 }} /></ListItemIcon>
-              <ListItemText>{c.name}</ListItemText>
-              <Typography variant="body2" color="text.secondary" className="tnum">{n}</Typography>
-            </MenuItem>
-          )
-        })}
+      <Menu anchorEl={catMenu} open={catMenu !== null} onClose={() => setCatMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
+        {choiceItems({ choices: categoryChoices, hidden: hiddenCategories, onChange: filtered(setHiddenCategories), all: 'All categories' })}
+      </Menu>
+
+      <Menu anchorEl={brandMenu} open={brandMenu !== null} onClose={() => setBrandMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
+        {choiceItems({ choices: brandChoices, hidden: hiddenBrands, onChange: filtered(setHiddenBrands), all: 'All brands' })}
       </Menu>
     </Box>
   )

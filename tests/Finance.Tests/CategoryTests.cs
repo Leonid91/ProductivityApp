@@ -115,4 +115,44 @@ public class CategoryTests
 
         Assert.Throws<InvalidOperationException>(() => cats.Delete("groceries"));
     }
+
+    [Fact]
+    public async Task A_category_placed_above_others_counts_their_money_once_and_shows_in_their_place()
+    {
+        using var s = new TempStore();
+        var cats = new CategoryService(s.Db);
+        var spec = Sample(Style.EnglishWithdrawalsDeposits, 2025, 10, 30, 4);
+        var draft = await s.Imports.ParseAsync("october.pdf", Render(spec));
+        s.Imports.Commit(new CommitRequest(draft.Id, null, null, "CAD", AccountKind.Bank, [], BankId: s.Bank));
+        var october = () => s.Summaries.Summarize(new DateOnly(2025, 10, 1), new DateOnly(2025, 10, 31), Granularity.Month, "CAD");
+
+        // Groceries and Restaurants & cafés go into a new "Food"; four levels down under Restaurants, one operation each.
+        var food = cats.Create("Food", null, CategoryKind.Expense, null);
+        cats.Update("groceries", Categories.Get("groceries").Name, food.Id, null);
+        cats.Update("restaurants", Categories.Get("restaurants").Name, food.Id, null);
+        var level = "restaurants";
+        var spent = s.Db.AllTransactions().Where(t => t.Amount < 0 && !Categories.IsTransfer(t.CategoryId)).ToList();
+        Assert.True(spent.Count >= 6);
+        s.Transactions.SetCategory(spent[0].Id, "groceries", allOfBrand: false);
+        s.Transactions.SetCategory(spent[1].Id, "restaurants", allOfBrand: false);
+        for (var i = 1; i <= 4; i++)
+        {
+            level = cats.Create($"Nested {i}", level, CategoryKind.Expense, null).Id;
+            s.Transactions.SetCategory(spent[1 + i].Id, level, allOfBrand: false);
+        }
+
+        var sum = october();
+        var inFood = s.Db.AllTransactions().Where(t => t.Amount < 0 && t.Date.Month == 10 && Categories.Root(t.CategoryId).Id == food.Id).Sum(t => -t.Amount);
+        Assert.True(inFood >= spent.Take(6).Sum(t => -t.Amount));
+        // First level: one Food slice with all of it, no Groceries or Restaurants beside it, every expense counted once.
+        Assert.Equal(inFood, sum.ByTopCategory.Single(x => x.Key == food.Id).Amount);
+        Assert.DoesNotContain(sum.ByTopCategory, x => x.Key is "groceries" or "restaurants" || x.Label.StartsWith("Nested"));
+        Assert.Equal(sum.Expenses, sum.ByTopCategory.Sum(x => x.Amount));
+        Assert.Equal(1, sum.ByTopCategory.Sum(x => x.Share), 6);
+        // Every level: the categories themselves still exist and keep their own money, nothing counted twice.
+        Assert.Equal(sum.Expenses, sum.ByCategory.Sum(x => x.Amount));
+        Assert.Contains(sum.ByCategory, x => x.Key == "groceries");
+        for (var i = 1; i <= 4; i++) Assert.Contains(sum.ByCategory, x => x.Label == $"Nested {i}" && x.Amount == -spent[1 + i].Amount);
+        Assert.Equal(food.Id, Categories.Root(level).Id);
+    }
 }

@@ -31,6 +31,11 @@ public sealed class PeriodSummary
     public required List<TransactionView> Transactions { get; init; }
     public required List<Slice> ByCategory { get; init; }
     public required List<Slice> CategoryPie { get; init; }
+    /// <summary>
+    /// Expenses per first-level category: every nested category counted once, in the category it sits in at the top
+    /// (Groceries and Restaurants under Food make one Food slice).
+    /// </summary>
+    public required List<Slice> ByTopCategory { get; init; }
     public required List<Slice> ByBrand { get; init; }
     public required List<Slice> BrandPie { get; init; }
     public required List<Bar> Series { get; init; }
@@ -143,6 +148,8 @@ public sealed class SummaryService(Database db)
         }
 
         var categorySlices = Slices(byCategory.Select(kv => (kv.Key, Categories.Get(kv.Key).Name, kv.Value)), expenses);
+        var topSlices = Slices(byCategory.GroupBy(kv => Categories.Root(kv.Key).Id)
+            .Select(g => (g.Key, Categories.Get(g.Key).Name, g.Sum(kv => kv.Value))), expenses);
         var recurringOut = txs.Where(t => t.Amount < 0 && recurring.ContainsKey(t.Id)).ToList();
         var recurringOutTotal = -recurringOut.Sum(t => t.Amount);
         var burden = -recurringOut.Where(t => t.CategoryId != "housing").Sum(t => t.Amount);
@@ -167,6 +174,7 @@ public sealed class SummaryService(Database db)
             Transactions = txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => View(t, recurring.GetValueOrDefault(t.Id))).ToList(),
             ByCategory = categorySlices,
             CategoryPie = FoldPie(categorySlices),
+            ByTopCategory = topSlices,
             ByBrand = brandSlices,
             BrandPie = FoldPie(brandSlices),
             Series = series,

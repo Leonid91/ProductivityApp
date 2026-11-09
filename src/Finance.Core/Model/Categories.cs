@@ -84,6 +84,14 @@ public static class Categories
 
     public static bool IsTransfer(string id) => Get(id).Kind == CategoryKind.Transfer;
 
+    /// <summary>The first-level category a category is nested in (itself at the top), however deep it sits.</summary>
+    public static Category Root(string id)
+    {
+        var c = Get(id);
+        for (var depth = 0; c.Parent is { } p && ById.ContainsKey(p) && depth < 64; depth++) c = ById[p];
+        return c;
+    }
+
     /// <summary>Default category for an amount nobody recognised.</summary>
     public static string DefaultFor(decimal amount) => amount >= 0 ? OtherIncome : OtherExpense;
 }

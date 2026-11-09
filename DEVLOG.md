@@ -308,3 +308,28 @@ real app with `tools/e2e/perf.mjs`.
 ### Fixed
 - Chart tooltips (the amount of a day in Expenses per day, the pies) were placed off the screen: they now open
   next to the pointer.
+
+## November 8th, 2026 - Statements and Analytics, categories listed beside their lines, table filters, first-level categories - Commit 14
+
+### Changed
+- The second layer of every period is named Statements | Analytics.
+- Expenses per category, per day: no drop-down any more. Beside the chart, under "Categories", the total and every
+  category with expenses in the period (the person's own categories included), each ticked on or off; the total and
+  the five largest are ticked at first. The vertical scale follows the lines shown.
+- Money moved: every arrow is as thick as its money again, with a head large enough to see. Each side of a box gives
+  every arrow its own stretch, as wide as its line or its head, so heads never cover one another; boxes grow (all
+  the same size) when a side needs more room.
+- Pie shares are shown with two decimals (0.29%, not 0%), on screen and in the PDF.
+- Bank Configuration has only Add account; banks are added in Definitions > Bank.
+
+### Added
+- Filters in every table of a period: dates, categories and brands (descriptions for transfers), each all, none,
+  one or any; the dates keep their format and order choices.
+- Settings > Periods: "Show only first level categories in charts", on by default. A category placed above others
+  (Food over Groceries and Restaurants & cafés) shows as one slice and one line with all of their money, counted once;
+  off, the charts go down to every nested category. The tables keep each operation's own category. The PDF follows it.
+
+### Fixed
+- Filters, order, page and chart choices of a period were lost when it scrolled away (or when switching views): they
+  are kept.
+- Category filter: the count no longer touches long names.

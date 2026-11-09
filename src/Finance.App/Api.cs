@@ -286,7 +286,8 @@ internal static class Api
 
     private static ReportBuilder.Options ReportOptions(AppServices s) => new(
         PieShowAll: s.Setting("pieShowAll") != "false",
-        Transfers: s.Setting("periodTransfers"));
+        Transfers: s.Setting("periodTransfers"),
+        TopLevelCategories: s.Setting("chartsTopLevel") != "false");
 
     private static string ReportsFolder(AppServices s)
     {
