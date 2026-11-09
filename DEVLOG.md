@@ -333,3 +333,9 @@ real app with `tools/e2e/perf.mjs`.
 - Filters, order, page and chart choices of a period were lost when it scrolled away (or when switching views): they
   are kept.
 - Category filter: the count no longer touches long names.
+
+## November 8th, 2026 - Category filter in the transfers table - Commit 15
+
+### Added
+- The table of transfers, card payments and investments has a category filter (all, none, one or any), next to its
+  date and description filters; it is kept while the period is away from the screen.

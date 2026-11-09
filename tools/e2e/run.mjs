@@ -215,6 +215,31 @@ try {
   await shot(p, '09b-transfers-folded-table.png')
   const newest = await p.eval(`(() => { const d = [...document.querySelector('section[data-period="2025-08-01"] table').querySelectorAll('tbody tr td:first-child')].map(x => x.innerText); return d.length > 1 && new Date(d[0]) >= new Date(d[d.length - 1]) })()`)
   check('newest first by default', newest)
+  // The transfers table has its own filters too: dates, categories and descriptions.
+  const mv = 'section[data-period="2025-08-01"] [data-movements]'
+  const mvRows = () => p.eval(`[...document.querySelectorAll('${mv} tbody tr')].map(r => [...r.children].map(c => c.innerText))`)
+  const mvAll = await mvRows()
+  const mvHeaders = await p.eval(`[...document.querySelectorAll('${mv} th button')].map(b => b.innerText.trim())`)
+  await p.eval(`[...document.querySelectorAll('${mv} th button')].find(b => b.innerText.trim() === 'Category').click()`)
+  await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'transfers category filter')
+  await sleep(250)
+  await shot(p, '09b2-transfers-category-filter.png')
+  const mvCats = await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].map(l => l.dataset.choice).filter(k => k !== 'all' && k !== 'none')`)
+  await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === 'none').click()`)
+  await sleep(250)
+  await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === ${JSON.stringify(mvCats[0])}).click()`)
+  await sleep(250)
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(400)
+  const mvOne = await mvRows()
+  check('transfers table: date, category and description filters; one category shown', mvHeaders.join() === 'Date,Category,Description' && mvCats.length > 1
+    && mvOne.length > 0 && mvOne.length < mvAll.length && mvOne.every((r) => r[1] === mvOne[0][1]), `${mvOne.length}/${mvAll.length} rows of ${mvOne[0]?.[1]}`)
+  await p.eval(`[...document.querySelectorAll('${mv} th button')].find(b => b.innerText.trim() === 'Category').click()`)
+  await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'transfers category filter')
+  await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === 'all').click()`)
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(400)
+  check('transfers table: every category again', (await mvRows()).length === mvAll.length)
 
   // Every period fits the window, however many months there are (periods not drawn yet included).
   await p.scrollMain(0)

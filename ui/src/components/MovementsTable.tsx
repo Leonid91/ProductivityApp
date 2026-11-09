@@ -5,6 +5,7 @@ import East from '@mui/icons-material/EastRounded'
 import { api, type MovementView, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural } from '../format'
+import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill } from './common'
 import { choiceItems, countChoices, hiding } from './filters'
 import { HeaderButton } from './TransactionTable'
@@ -15,7 +16,7 @@ const NONE_HIDDEN = new Set<string>()
 /**
  * Transfers, card payments and investments, each movement once: from which account (or the outside) to which account
  * (or the outside). Places outside the app (accounts not imported, other people, investments) are in orange.
- * Dates and descriptions each have a filter (all, none, one or any of them).
+ * Dates, categories and descriptions each have a filter (all, none, one or any of them).
  */
 export function MovementsTable({ keep, movements, transactions, currency, paged, onEdit }: {
   /** Where the table's filters and page are kept while the period is away from the screen. */
@@ -46,13 +47,18 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
   const [page, setPage] = useKept(keep + ':page', 1)
   const [hiddenDates, setHiddenDates] = useKept(keep + ':dates', NONE_HIDDEN)
   const [hiddenLabels, setHiddenLabels] = useKept(keep + ':labels', NONE_HIDDEN)
+  const [hiddenCategories, setHiddenCategories] = useKept(keep + ':categories', NONE_HIDDEN)
+  const [catMenu, setCatMenu] = useState<HTMLElement | null>(null)
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
   const [labelMenu, setLabelMenu] = useState<HTMLElement | null>(null)
   const pageSize = 25
   const byId = useMemo(() => new Map(transactions.map((t) => [t.id, t])), [transactions])
   const dateChoices = useMemo(() => countChoices(movements, (m) => m.date, (d) => formatDate(d, settings.dateFormat)).sort((a, b) => b.key.localeCompare(a.key)), [movements, settings.dateFormat])
   const labelChoices = useMemo(() => countChoices(movements, (m) => m.label, (l) => l).sort((a, b) => a.label.localeCompare(b.label)), [movements])
-  const rows = useMemo(() => [...movements].reverse().filter((m) => !hiddenDates.has(m.date) && !hiddenLabels.has(m.label)), [movements, hiddenDates, hiddenLabels])
+  const categoryChoices = useMemo(() => countChoices(movements, (m) => m.categoryId, (id) => category(id).name,
+    (id) => <CategoryIcon name={category(id).icon} sx={{ fontSize: 18 }} />).sort((a, b) => b.count - a.count), [movements, category])
+  const rows = useMemo(() => [...movements].reverse().filter((m) => !hiddenDates.has(m.date) && !hiddenCategories.has(m.categoryId) && !hiddenLabels.has(m.label)),
+    [movements, hiddenDates, hiddenCategories, hiddenLabels])
   const filtered = (set: (hidden: Set<string>) => void) => (hidden: Set<string>) => { set(hidden); setPage(1) }
   const pages = Math.max(1, Math.ceil(rows.length / pageSize))
   const visible = paged ? rows.slice((Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize) : rows
@@ -81,7 +87,7 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
         <TableHead>
           <TableRow>
             <TableCell><HeaderButton label="Date" active={hiding(hiddenDates, dateChoices)} onClick={(e) => setDateMenu(e.currentTarget)} /></TableCell>
-            <TableCell>Category</TableCell>
+            <TableCell><HeaderButton label="Category" active={hiding(hiddenCategories, categoryChoices)} onClick={(e) => setCatMenu(e.currentTarget)} /></TableCell>
             <TableCell><HeaderButton label="Description" active={hiding(hiddenLabels, labelChoices)} onClick={(e) => setLabelMenu(e.currentTarget)} /></TableCell>
             <TableCell>From</TableCell>
             <TableCell padding="none" />
@@ -133,6 +139,9 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
       )}
       <Menu anchorEl={dateMenu} open={dateMenu !== null} onClose={() => setDateMenu(null)} slotProps={{ paper: { sx: { minWidth: 280, maxHeight: 480 } } }}>
         {choiceItems({ choices: dateChoices, hidden: hiddenDates, onChange: filtered(setHiddenDates), all: 'All dates' })}
+      </Menu>
+      <Menu anchorEl={catMenu} open={catMenu !== null} onClose={() => setCatMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
+        {choiceItems({ choices: categoryChoices, hidden: hiddenCategories, onChange: filtered(setHiddenCategories), all: 'All categories' })}
       </Menu>
       <Menu anchorEl={labelMenu} open={labelMenu !== null} onClose={() => setLabelMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
         {choiceItems({ choices: labelChoices, hidden: hiddenLabels, onChange: filtered(setHiddenLabels), all: 'All descriptions' })}
