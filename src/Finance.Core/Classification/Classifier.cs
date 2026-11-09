@@ -99,7 +99,7 @@ public sealed class Classifier
             Movement.CardPayment => "Credit card payment",
             Movement.AccountTransfer => "Transfer between accounts",
             Movement.BillPayment => "Bill payment",
-            Movement.MoneyTransfer when key is "" or "VIREMENT" or "VIR" or "TRANSFER" or "TRANSFERT" or "E TRANSFER" or "ETRANSFER" => "Interac e-Transfer",
+            Movement.MoneyTransfer when key is "" or "VIREMENT" or "VIR" or "TRANSFER" or "TRANSFERT" or "E TRANSFER" or "ETRANSFER" || key.Contains("EMAIL MONEY", StringComparison.Ordinal) => "Interac e-Transfer",
             _ => null,
         };
         if (brand is null && builtIn is not null) { brand = builtIn.Brand; brandSource = ValueSource.BuiltIn; }
@@ -189,6 +189,7 @@ public sealed class Classifier
     [
         "PAIEMENT MASTERCARD", "PAIEMENT VISA", "PAIEMENT AMEX", "PAIEMENT RECU", "PAYMENT RECEIVED", "PAYMENT THANK YOU", "PAIEMENT MERCI",
         "CREDIT CARD PAYMENT", "PAIEMENT CARTE DE CREDIT", "PAIEMENT CARTE CREDIT", "MASTERCARD PAYMENT", "VISA PAYMENT", "AMEX PAYMENT",
+        "CARD LOC PAYMENT", "CREDIT CARD LOC PAYMENT", "PAYMENT FROM CHEQUING", "CC PAYMENT",
     ];
     private static readonly string[] DeferredCardWords = ["FACTURE CARTE", "RELEVE CB", "RELEVE CARTE", "DEBIT DIFFERE", "CARTE DIFFERE", "PRLV CARTE"];
     private static readonly string[] AccountTransferWords =
@@ -199,7 +200,12 @@ public sealed class Classifier
     private static readonly string[] MoneyTransferWords =
     [
         "VIREMENT INTERAC", "INTERAC E TRANSFER", "E TRANSFER", "ETRANSFER", "VIREMENT", "VIR", "VIRT", "TRANSFER", "TRANSFERT", "TFR", "VIR SEPA", "VIR INST",
+        "EMAIL MONEY TRF", "EMAIL MONEY TRANSFER", "E MAIL MONEY TRANSFER", "E MAIL MONEY TRF", "INTERAC E TRF", "SEND E TFR", "E TFR", "WIRE PAYMENT", "WIRE TRANSFER",
+        "MONEY TRF", "TRF",
     ];
+
+    /// <summary>A fee charged on a transfer is a fee, not the transfer: "Service charge MB-Email Money Trf".</summary>
+    private static readonly string[] FeeWords = ["SERVICE CHARGE", "SERVICE CHARGES", "FEE", "FEES", "FRAIS", "COMMISSION"];
     private static readonly string[] BillPaymentWords = ["PAIEMENT DE FACTURE", "PAIEMENT FACTURE", "BILL PAYMENT", "PAIEMENT DE FACTURES"];
     private static readonly string[] InvestmentWordsNorthAmerica =
         ["COTISATION REER", "COTISATION CELI", "TFSA CONTRIBUTION", "RRSP CONTRIBUTION", "WEALTHSIMPLE", "QUESTRADE", "DISNAT", "COURTAGE",
@@ -213,6 +219,7 @@ public sealed class Classifier
         var bank = TextNorm.Fold(bankCategory ?? "").Trim();
         if (Has(CardPaymentWords) || bank is "PAIEMENT CARTE DE CREDIT" or "CREDIT CARD PAYMENT" or "CREDIT CARD PAYMENTS") return Movement.CardPayment;
         if (system == BankingSystem.France && Has(DeferredCardWords)) return Movement.CardPayment;
+        if (Has(FeeWords)) return Movement.None;
         if (Has(BillPaymentWords)) return Movement.BillPayment;
         if (Has(AccountTransferWords)) return Movement.AccountTransfer;
         if (Has(system == BankingSystem.France ? InvestmentWordsFrance : InvestmentWordsNorthAmerica)) return Movement.Investment;
@@ -285,6 +292,7 @@ public sealed class Classifier
         "QC", "ON", "BC", "AB", "MB", "SK", "NS", "NB", "NL", "PE", "QUE", "ONT", "FR", "FRA", "FRANCE", "USA", "US", "PAYPAL", "SQ", "TST",
         "DE", "DU", "DES", "LE", "LA", "LES", "THE", "OF", "AND", "ET", "A", "AU", "AUX", "EN", "PAR", "CHEZ", "MAG", "MAGASIN", "STORE",
         "CHQ", "FRAIS", "OPERATION", "OP", "TRANSACTION", "TRX", "RECU", "EMIS", "PRESENTE", "CARD", "CREDIT", "DEBITS", "ACH", "PPD", "BY",
+        "POINT", "SALE", "OPOS", "APOS", "FPOS", "MISC", "AUTHORIZED", "PREAUTHORIZED", "MEMO", "ONCD", "ONC",
     ];
 
     private static readonly HashSet<string> Cities =
@@ -309,7 +317,7 @@ public sealed class Classifier
     private static readonly (string Category, string[] Words, int Sign)[] KeywordRules =
     [
         ("salary", ["SALAIRE", "PAIE", "PAYROLL", "SALARY", "DEPOT DIRECT", "DIRECT DEP", "DIRECT DEPOSIT", "REMUNERATION", "DEPOT DE PAIE"], 1),
-        ("cash", ["RETRAIT", "DAB", "GAB", "ATM", "WITHDRAWAL", "GUICHET", "RETRAIT DAB", "CASH"], -1),
+        ("cash", ["RETRAIT", "DAB", "GAB", "ATM", "ABM", "WITHDRAWAL", "GUICHET", "RETRAIT DAB", "CASH"], -1),
         ("otherincome", ["INTERET", "INTERETS", "INTEREST", "DIVIDENDE", "DIVIDEND", "ALLOCATION", "PENSION", "CASHBACK", "REMISE", "PRESTATION", "CAF", "GST", "TPS", "DEPOT", "DEPOSIT"], 1),
         ("refunds", ["REMBOURSEMENT", "REFUND", "RETOUR", "AVOIR", "RETURN"], 1),
         ("fees", ["FRAIS", "FEE", "FEES", "SERVICE CHARGE", "INTERET", "INTERETS", "INTEREST", "COMMISSION", "COTISATION", "AGIOS", "ANNUAL FEE", "PENALITE", "NSF"], -1),

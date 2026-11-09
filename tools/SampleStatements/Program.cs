@@ -41,6 +41,45 @@ if (args.Length == 2 && args[0] == "parse")
     foreach (var r in p.Rows) Console.WriteLine($"{r.Date:yyyy-MM-dd} {r.Amount,10} {r.Balance,10}  {r.Label}");
     return 0;
 }
+if (args.Length == 2 && args[0] == "scotia")
+{
+    // scotia <folder>: fictitious statements in Scotiabank layouts (PDF chequing and card, both CSV exports)
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    var chq = ScotiaGenerator.Chequing();
+    Write(Path.Combine(dir, "Scotia chequing 2026-01.pdf"), ScotiaGenerator.ChequingPdf(chq));
+    Write(Path.Combine(dir, "Scotia chequing 2026-01 old.csv"), ScotiaGenerator.OldCsv(chq));
+    Write(Path.Combine(dir, "Scotia chequing 2026-01 new.csv"), ScotiaGenerator.NewCsv(chq));
+    Console.WriteLine($"chequing open={chq.Opening} close={chq.Closing} out={chq.Withdrawals} in={chq.Deposits} lines={chq.Lines.Count}");
+    var card = ScotiaGenerator.VisaCard();
+    Write(Path.Combine(dir, "Scotia visa 2026-05.pdf"), ScotiaGenerator.CardPdf(card));
+    Console.WriteLine($"card previous={card.Previous} new={card.New} credits={card.Credits} debits={card.Debits} lines={card.Lines.Count}");
+    return 0;
+}
+if (args.Length >= 2 && args[0] == "inspect")
+{
+    // inspect <file> [bank|card]: reads any file the import takes (PDF, picture, CSV, Excel, OFX...) as the app does, in a
+    // throw-away database, and prints the reading with the brand and category of every line.
+    var dir = Path.Combine(Path.GetTempPath(), "finances-inspect-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        using var db = new ProductivityApp.Finance.Storage.Database(Path.Combine(dir, "inspect.db"));
+        var txs = new ProductivityApp.Finance.Services.TransactionService(db, () => "CAD");
+        var imports = new ProductivityApp.Finance.Services.ImportService(db, () => "CAD", txs);
+        var draft = await imports.ParseAsync(Path.GetFileName(args[1]), await File.ReadAllBytesAsync(args[1]));
+        if (args.Length == 3)
+            draft = imports.Choose(draft.Id, null, args[2] == "card" ? ProductivityApp.Finance.Model.AccountKind.CreditCard : ProductivityApp.Finance.Model.AccountKind.Bank, db.Banks()[0].Id);
+        var p = draft.Parse;
+        Console.WriteLine($"{p.Method} {p.Status} diff={p.Difference} open={p.OpeningBalance} close={p.ClosingBalance} computed={p.ComputedClosing} rows={p.Rows.Count} kind={p.Kind} cur={p.Currency} period={p.PeriodStart}..{p.PeriodEnd} ocr={p.UsedOcr} rowchecks={p.RowBalanceChecks}/{p.RowBalanceMismatches} order={p.DateOrder}");
+        Console.WriteLine($"sum={p.Rows.Sum(r => r.Amount)} out={p.Rows.Where(r => r.Amount < 0).Sum(r => r.Amount)} in={p.Rows.Where(r => r.Amount > 0).Sum(r => r.Amount)}");
+        foreach (var r in draft.Rows) Console.WriteLine($"{r.Date:yyyy-MM-dd} {r.Amount,10} {r.Balance,10}  {r.Label,-58} | {r.Brand} | {r.CategoryId} ({r.CategorySource})");
+    }
+    finally
+    {
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        try { Directory.Delete(dir, true); } catch (IOException) { }
+    }
+    return 0;
+}
 if (args.Length == 5 && args[0] == "one")
 {
     // one <style> <count> <seed> <out.pdf|out-scan.pdf>
@@ -61,7 +100,8 @@ if (args.Length == 3 && args[0] == "render")
 }
 if (args.Length == 2 && args[0] == "words")
 {
-    var pages = await PdfReader.ReadAsync(await File.ReadAllBytesAsync(args[1]));
+    var raw = await File.ReadAllBytesAsync(args[1]);
+    var pages = await PdfReader.ReadAsync(PdfReader.IsImage(raw) ? await PdfReader.ImageToPdfAsync(raw) : raw);
     foreach (var page in pages)
         foreach (var line in LineBuilder.Build(page))
             Console.WriteLine($"p{line.Page} y={line.Top,6:0.0} | " + string.Join(" | ", line.Words.Select(w => $"{w.Text}@{w.Left:0}")));

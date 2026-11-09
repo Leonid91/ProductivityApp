@@ -12,7 +12,8 @@ import { useApp } from '../AppContext'
 import { formatDate, formatExample, plural } from '../format'
 import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill, MenuDivider, Money } from './common'
-import { choiceItems, countChoices, hiding } from './filters'
+import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './filters'
+import { TagCell, useTagName } from './tags'
 import { useKept } from '../keep'
 
 const NONE_HIDDEN = new Set<string>()
@@ -96,8 +97,8 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: strin
 }
 
 /**
- * The operations of one period: Date, Category, Brand Name, (how often it comes back), Amount. Dates, categories and
- * brands each have a filter (all, none, one or any of them); the dates also their format and order.
+ * The operations of one period: Date, Category, Brand Name, Tags, (how often it comes back), Amount. Dates, categories,
+ * brands and tags each have a filter (all, none, one or any of them); the dates also their format and order.
  */
 export function TransactionTable({ keep, transactions, currency, paged, onEdit, frequency = false, empty = 'No operations in this period' }: {
   /** Where the table's filters, order and page are kept while the period is away from the screen. */
@@ -114,6 +115,9 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
   const [catMenu, setCatMenu] = useState<HTMLElement | null>(null)
   const [brandMenu, setBrandMenu] = useState<HTMLElement | null>(null)
+  const [tagMenu, setTagMenu] = useState<HTMLElement | null>(null)
+  const [hiddenTags, setHiddenTags] = useKept(keep + ':tags', NONE_HIDDEN)
+  const tagName = useTagName()
   const [newestFirst, setNewestFirst] = useKept(keep + ':newestFirst', true)
   const [hiddenCategories, setHiddenCategories] = useKept(keep + ':categories', NONE_HIDDEN)
   const [hiddenBrands, setHiddenBrands] = useKept(keep + ':brands', NONE_HIDDEN)
@@ -127,13 +131,14 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
   const dateChoices = useMemo(() => countChoices(transactions, (t) => t.date, (d) => formatDate(d, settings.dateFormat))
     .sort((a, b) => (newestFirst ? b.key.localeCompare(a.key) : a.key.localeCompare(b.key))), [transactions, settings.dateFormat, newestFirst])
 
+  const tagFilter = useMemo(() => tagChoices(transactions, (t) => t.tags, tagName), [transactions, tagName])
   const brands = useMemo(() => brandChoices.map((c) => c.key), [brandChoices])
 
   const rows = useMemo(() => {
-    let list = transactions.filter((t) => !hiddenCategories.has(t.categoryId) && !hiddenBrands.has(t.brand) && !hiddenDates.has(t.date))
+    let list = transactions.filter((t) => !hiddenCategories.has(t.categoryId) && !hiddenBrands.has(t.brand) && !hiddenDates.has(t.date) && shownByTags(t.tags, hiddenTags))
     if (newestFirst) list = [...list].reverse()
     return list
-  }, [transactions, hiddenCategories, hiddenBrands, hiddenDates, newestFirst])
+  }, [transactions, hiddenCategories, hiddenBrands, hiddenDates, hiddenTags, newestFirst])
 
   const pages = Math.max(1, Math.ceil(rows.length / pageSize))
   const visible = paged ? rows.slice((Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize) : rows
@@ -164,11 +169,12 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
     <Box>
       <Table size="small" sx={{ tableLayout: 'fixed', '& td, & th': { px: 1.5 }, '& tr > *:first-of-type': { pl: 0.5 } }}>
         <colgroup>
-          <col style={{ width: frequency ? '19%' : '22%' }} />
-          <col style={{ width: frequency ? '24%' : '27%' }} />
+          <col style={{ width: frequency ? '16%' : '18%' }} />
+          <col style={{ width: frequency ? '20%' : '22%' }} />
           <col />
-          {frequency && <col style={{ width: '13%' }} />}
-          <col style={{ width: '17%' }} />
+          <col style={{ width: frequency ? '15%' : '18%' }} />
+          {frequency && <col style={{ width: '12%' }} />}
+          <col style={{ width: '15%' }} />
           <col style={{ width: 44 }} />
         </colgroup>
         <TableHead>
@@ -176,6 +182,7 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
             <TableCell><HeaderButton label="Date" active={hiding(hiddenDates, dateChoices)} onClick={(e) => setDateMenu(e.currentTarget)} /></TableCell>
             <TableCell><HeaderButton label="Category" active={hiding(hiddenCategories, categoryChoices)} onClick={(e) => setCatMenu(e.currentTarget)} /></TableCell>
             <TableCell><HeaderButton label="Brand Name" active={hiding(hiddenBrands, brandChoices)} onClick={(e) => setBrandMenu(e.currentTarget)} /></TableCell>
+            <TableCell><HeaderButton label="Tags" active={hiding(hiddenTags, tagFilter)} onClick={(e) => setTagMenu(e.currentTarget)} /></TableCell>
             {frequency && <TableCell>Comes back</TableCell>}
             <TableCell align="right">Amount ({currency})</TableCell>
             <TableCell />
@@ -189,6 +196,7 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
                 <TableCell className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(t.date, settings.dateFormat)}</TableCell>
                 <TableCell><CategoryPill id={t.categoryId} onChange={(id) => void setCategory(t, id)} /></TableCell>
                 <TableCell><BrandCell tx={t} brands={brands} onSaved={(n, b) => learned(n, b)} /></TableCell>
+                <TableCell><TagCell operationId={t.id} own={t.ownTags} all={t.tags} categoryName={category(t.categoryId).name} /></TableCell>
                 {frequency && <TableCell sx={{ color: 'text.secondary' }}>{t.recurring}</TableCell>}
                 <TableCell align="right"><Money value={t.amount} currency={currency} sign muted={transfer} /></TableCell>
                 <TableCell padding="none" align="right">
@@ -201,7 +209,7 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
           })}
           {visible.length === 0 && (
             <TableRow>
-              <TableCell colSpan={frequency ? 6 : 5} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>
+              <TableCell colSpan={frequency ? 7 : 6} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>
                 {transactions.length === 0 ? empty : 'No operations match these filters'}
               </TableCell>
             </TableRow>
@@ -237,6 +245,10 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
 
       <Menu anchorEl={catMenu} open={catMenu !== null} onClose={() => setCatMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
         {choiceItems({ choices: categoryChoices, hidden: hiddenCategories, onChange: filtered(setHiddenCategories), all: 'All categories' })}
+      </Menu>
+
+      <Menu anchorEl={tagMenu} open={tagMenu !== null} onClose={() => setTagMenu(null)} slotProps={{ paper: { sx: { minWidth: 280, maxWidth: 380, maxHeight: 480 } } }}>
+        {choiceItems({ choices: tagFilter, hidden: hiddenTags, onChange: filtered(setHiddenTags), all: 'All tags' })}
       </Menu>
 
       <Menu anchorEl={brandMenu} open={brandMenu !== null} onClose={() => setBrandMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>

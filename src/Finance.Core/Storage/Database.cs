@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 9;
+    private const int SchemaVersion = 10;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -135,6 +135,18 @@ public sealed class Database : IDisposable
                 DELETE FROM categories WHERE id = 'exceptional';
                 DELETE FROM settings WHERE key = 'section.exceptional';
                 PRAGMA user_version = 9;
+                """);
+        }
+        if (version < 10)
+        {
+            // Tags the person makes, on operations and on categories (every operation of the category carries them).
+            Exec("""
+                CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, color TEXT, seq INTEGER NOT NULL);
+                CREATE TABLE operation_tags (operation_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY (operation_id, tag_id));
+                CREATE TABLE category_tags (category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY (category_id, tag_id));
+                PRAGMA user_version = 10;
                 """);
         }
     }
@@ -371,6 +383,54 @@ public sealed class Database : IDisposable
     }
 
     public void DeleteAccount(long id) => Exec("DELETE FROM accounts WHERE id = $id", ("$id", id));
+
+    // ---------------------------------------------------------------- tags
+
+    private (long Version, TagIndex Index)? _tags;
+
+    /// <summary>Every tag and what carries it, read again only after a write.</summary>
+    public TagIndex TagIndex()
+    {
+        lock (_gate)
+        {
+            if (_tags is { } t && t.Version == Version) return t.Index;
+            var tags = Query("SELECT id, name, color FROM tags ORDER BY seq, id", r => new Tag(r.GetInt64(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2)));
+            var ops = Query("SELECT operation_id, tag_id FROM operation_tags ORDER BY operation_id, tag_id", r => (Op: r.GetInt64(0), Tag: r.GetInt64(1)))
+                .GroupBy(x => x.Op).ToDictionary(g => g.Key, g => g.Select(x => x.Tag).ToArray());
+            var cats = Query("SELECT category_id, tag_id FROM category_tags ORDER BY category_id, tag_id", r => (Cat: r.GetString(0), Tag: r.GetInt64(1)))
+                .GroupBy(x => x.Cat).ToDictionary(g => g.Key, g => g.Select(x => x.Tag).ToArray());
+            var index = new TagIndex(tags, ops, cats);
+            _tags = (Version, index);
+            return index;
+        }
+    }
+
+    public long AddTag(string name, string? color) => (long)Scalar(
+        "INSERT INTO tags(name, color, seq) VALUES($n, $c, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tags)) RETURNING id", ("$n", name), ("$c", color))!;
+
+    public void UpdateTag(long id, string name, string? color) =>
+        Exec("UPDATE tags SET name = $n, color = $c WHERE id = $i", ("$i", id), ("$n", name), ("$c", color));
+
+    /// <summary>Deletes a tag: it leaves every operation and category that carried it.</summary>
+    public void DeleteTag(long id) => Patch(() => Exec("DELETE FROM tags WHERE id = $i", ("$i", id)), _ => { });
+
+    public bool TagExists(long id) => Scalar("SELECT 1 FROM tags WHERE id = $i", ("$i", id)) is not null;
+
+    public bool TagNameTaken(string name, long exceptId) => Scalar("SELECT 1 FROM tags WHERE name = $n AND id <> $i", ("$n", name), ("$i", exceptId)) is not null;
+
+    /// <summary>The tags put on one operation itself (its category's tags are not stored on it).</summary>
+    public void SetOperationTags(long operationId, IReadOnlyCollection<long> tagIds) => Patch(() => InTransaction(() =>
+    {
+        Exec("DELETE FROM operation_tags WHERE operation_id = $o", ("$o", operationId));
+        foreach (var t in tagIds.Distinct()) Exec("INSERT INTO operation_tags(operation_id, tag_id) VALUES($o, $t)", ("$o", operationId), ("$t", t));
+    }), _ => { });
+
+    /// <summary>The tags a category gives to every one of its operations.</summary>
+    public void SetCategoryTags(string categoryId, IReadOnlyCollection<long> tagIds) => Patch(() => InTransaction(() =>
+    {
+        Exec("DELETE FROM category_tags WHERE category_id = $c", ("$c", categoryId));
+        foreach (var t in tagIds.Distinct()) Exec("INSERT INTO category_tags(category_id, tag_id) VALUES($c, $t)", ("$c", categoryId), ("$t", t));
+    }), _ => { });
 
     // ---------------------------------------------------------------- statements
 

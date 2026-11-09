@@ -81,7 +81,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         t.AccountId = input.AccountId is { } id && db.Accounts().Any(a => a.Id == id) ? id : throw new ArgumentException("Choose the account of the operation.");
         t.Currency = db.Accounts().First(a => a.Id == t.AccountId).Currency;
         t.Id = db.AddTransaction(t);
-        return SummaryService.View(t);
+        return SummaryService.View(t, db.TagIndex());
     }
 
     /// <summary>Saves the edits of one operation. A new category goes to the whole brand only with <paramref name="allOfBrand"/>.</summary>
@@ -104,7 +104,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
             });
             ReapplyRules();
         }
-        return SummaryService.View(db.GetTransaction(id)!);
+        return SummaryService.View(db.GetTransaction(id)!, db.TagIndex());
     }
 
     public void Delete(long id) => db.DeleteTransaction(id);

@@ -12,15 +12,20 @@ import { useApp } from '../AppContext'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { ConfirmDialog, SectionCard, useCategoryColor, useCategorySections } from '../components/common'
 import { useRowOrder, type TreeEntry } from '../components/order'
+import { TagSelect } from '../components/tags'
 
-const palette = ['#e53935', '#d81b60', '#8e24aa', '#5e35b1', '#3949ab', '#1e88e5', '#0288d1', '#00897b', '#43a047', '#689f38', '#afb42b', '#f9a825', '#fb8c00', '#f4511e', '#6d4c41', '#757575']
+export const palette = ['#e53935', '#d81b60', '#8e24aa', '#5e35b1', '#3949ab', '#1e88e5', '#0288d1', '#00897b', '#43a047', '#689f38', '#afb42b', '#f9a825', '#fb8c00', '#f4511e', '#6d4c41', '#757575']
 
 type Editing = { id: string | null; name: string; parentId: string | null; kind: CategoryKind; color: string | null }
 
-/** Create or edit a category: its name, the category it is in, its colour. */
+/**
+ * Create or edit a category: its name, the category it is in, its colour, and its tags (every operation of the
+ * category, and of the categories nested in it, carries them).
+ */
 function CategoryDialog({ editing, onClose }: { editing: Editing; onClose: () => void }) {
-  const { tree, setCategories, notify, fail } = useApp()
+  const { tree, setCategories, categoryTags, setTagData, notify, fail } = useApp()
   const [v, setV] = useState<Editing>(editing)
+  const [tagIds, setTagIds] = useState<number[]>(editing.id ? categoryTags[editing.id] ?? [] : [])
 
   // A category goes in one of the same kind, never in itself or one of its own subcategories.
   const inside = (e: TreeEntry) => {
@@ -31,9 +36,14 @@ function CategoryDialog({ editing, onClose }: { editing: Editing; onClose: () =>
   const save = async () => {
     try {
       const name = v.name.trim()
-      setCategories(v.id === null
+      const before = new Set((v.id && categoryTags[v.id]) || [])
+      const list = v.id === null
         ? await api.categories.create({ name, parentId: v.parentId, kind: v.kind, color: v.color })
-        : await api.categories.update({ id: v.id, name, parentId: v.parentId, color: v.color }))
+        : await api.categories.update({ id: v.id, name, parentId: v.parentId, color: v.color })
+      setCategories(list)
+      // A new category is the last one of its name made; its tags are set once it exists.
+      const id = v.id ?? [...list].reverse().find((c) => c.name === name && !c.builtIn)?.id
+      if (id && (tagIds.length !== before.size || tagIds.some((t) => !before.has(t)))) setTagData(await api.tags.setForCategory(id, tagIds))
       notify(v.id === null ? `${name} created` : `${name} saved`)
       onClose()
     } catch (e) {
@@ -55,6 +65,7 @@ function CategoryDialog({ editing, onClose }: { editing: Editing; onClose: () =>
             </MenuItem>
           ))}
         </TextField>
+        <TagSelect value={tagIds} onChange={setTagIds} />
         <Box>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>Colour</Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
@@ -77,7 +88,7 @@ function CategoryDialog({ editing, onClose }: { editing: Editing; onClose: () =>
   )
 }
 
-const swatch = (selected: boolean, color: string) => (t: Theme) => ({
+export const swatch = (selected: boolean, color: string) => (t: Theme) => ({
   width: 30, height: 30, borderRadius: '50%', border: 0, p: 0, cursor: 'pointer', display: 'grid', placeItems: 'center', bgcolor: color,
   boxShadow: selected ? `0 0 0 2px ${t.palette.background.paper}, 0 0 0 4px ${t.palette.primary.main}` : `inset 0 0 0 1px ${t.palette.divider}`,
 })

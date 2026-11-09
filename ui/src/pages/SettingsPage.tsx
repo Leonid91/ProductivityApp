@@ -15,6 +15,7 @@ import { ConfirmDialog, EmptyState, PageHeader, SectionCard } from '../component
 import { useRowOrder } from '../components/order'
 import { BrandsPanel } from './BrandsPage'
 import { CategoriesPanel } from './CategoriesPage'
+import { TagsPanel } from './TagsPage'
 
 const systems: { value: BankingSystem; label: string }[] = [
   // Credit cards are accounts of their own, paid from the current account; or cards are debited once a month
@@ -381,7 +382,8 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
 export function SettingsPage() {
   const { refreshAccounts, refreshBanks, fail } = useApp()
   const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>('general')
-  const [definition, setDefinition] = useState<'bank' | 'brands' | 'categories'>('bank')
+  const [definition, setDefinition] = useState<'bank' | 'brands' | 'categories' | 'tags'>('bank')
+  const [addingTag, setAddingTag] = useState(false)
   const [confirm, setConfirm] = useState<Confirm>(null)
   const [addingBank, setAddingBank] = useState(false)
 
@@ -398,14 +400,16 @@ export function SettingsPage() {
       {tab === 'definitions' && (
         <>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-            <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }]} />
+            <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }, { value: 'tags', label: 'Tags' }]} />
             <Box sx={{ flex: 1 }} />
             {definition === 'bank' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingBank(true)}>Add bank</Button>}
+            {definition === 'tags' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingTag(true)}>Add tag</Button>}
           </Box>
           <AddBankDialog open={addingBank} onClose={() => setAddingBank(false)} />
           {definition === 'bank' && <BanksTable confirm={setConfirm} />}
           {definition === 'brands' && <BrandsPanel />}
           {definition === 'categories' && <CategoriesPanel />}
+          {definition === 'tags' && <TagsPanel adding={addingTag} onAdded={() => setAddingTag(false)} />}
         </>
       )}
       <ConfirmDialog

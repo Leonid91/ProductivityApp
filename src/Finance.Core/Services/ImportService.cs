@@ -60,9 +60,20 @@ public sealed record CommitRequest(Guid DraftId, long? AccountId, string? NewAcc
 
 public sealed record CommitResult(long StatementId, long AccountId, int Added, int SkippedDuplicates, string? FirstDate, string? LastDate);
 
-/// <summary>Turns a statement PDF into a draft the person reviews, then saves it.</summary>
+/// <summary>
+/// Turns a statement into a draft the person reviews, then saves it. Statements come as PDF (with text, or scanned),
+/// as a picture of the page, or as the files banks let people download: CSV, Excel, OpenDocument, Word, web pages,
+/// OFX / QFX / QBO and QIF.
+/// </summary>
 public sealed class ImportService(Database db, Func<string> defaultCurrency, TransactionService transactions)
 {
+    /// <summary>Every kind of file the import takes, by extension.</summary>
+    public static readonly string[] Extensions =
+    [
+        ".pdf", ".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".ods", ".odt", ".docx", ".htm", ".html", ".ofx", ".qfx", ".qbo", ".qif",
+        ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
+    ];
+
     private readonly ConcurrentDictionary<Guid, ImportDraft> _drafts = new();
 
     public ImportDraft? Get(Guid id) => _drafts.GetValueOrDefault(id);
@@ -71,20 +82,23 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
 
     public async Task<ImportDraft> ParseAsync(string fileName, byte[] bytes, CancellationToken ct = default)
     {
-        var isPdf = bytes.Length >= 5 && bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F';
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
+        // A picture of a statement (a photo, a screenshot) becomes a one-page PDF and is read like a scanned statement.
+        if (PdfReader.IsImage(bytes)) bytes = await PdfReader.ImageToPdfAsync(bytes).ConfigureAwait(false);
+        var isPdf = bytes.Length >= 5 && bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F';
         if (!isPdf)
         {
-            if (!CsvStatementReader.LooksLikeCsv(bytes, fileName)) throw new InvalidDataException("This file is neither a PDF statement nor a CSV export.");
-            var csv = new ImportDraft
+            if (TableFiles.Kind(bytes, fileName) is null && MoneyFiles.Kind(bytes, fileName) is null && !CsvStatementReader.LooksLikeCsv(bytes, fileName))
+                throw new InvalidDataException("This file is not a statement the app can read: PDF, picture, CSV, Excel, OpenDocument, Word, OFX, QFX, QBO or QIF.");
+            var file = new ImportDraft
             {
                 FileName = fileName, FileHash = hash, Bytes = bytes, Pages = [],
-                Parse = CsvStatementReader.Parse(bytes, fileName, defaultCurrency(), null),
+                Parse = ReadFile(bytes, fileName, null),
                 AlreadyImported = db.HasStatementHash(hash),
             };
-            Fill(csv);
-            _drafts[csv.Id] = csv;
-            return csv;
+            Fill(file);
+            _drafts[file.Id] = file;
+            return file;
         }
         var pages = await PdfReader.ReadAsync(bytes, ct).ConfigureAwait(false);
 
@@ -130,7 +144,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
     private void Read(ImportDraft draft)
     {
         if (draft.Pages.Count == 0)
-            draft.Parse = CsvStatementReader.Parse(draft.Bytes, draft.FileName, defaultCurrency(), draft.Kind);
+            draft.Parse = ReadFile(draft.Bytes, draft.FileName, draft.Kind);
         else
         {
             var hint = draft.Kind switch
@@ -145,6 +159,19 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         }
         if (draft.Kind is { } k) draft.Parse.Kind = k;
         Fill(draft);
+    }
+
+    /// <summary>Reads a file that is not a PDF: a table file (Excel, OpenDocument, Word, web page), OFX / QFX / QBO, QIF or CSV.</summary>
+    private StatementParse ReadFile(byte[] bytes, string fileName, AccountKind? kind)
+    {
+        if (TableFiles.Kind(bytes, fileName) is { } table)
+            return CsvStatementReader.ParseTable(TableFiles.Read(bytes, fileName), fileName, defaultCurrency(), kind, table);
+        return MoneyFiles.Kind(bytes, fileName) switch
+        {
+            "OFX" => MoneyFiles.ParseOfx(bytes, defaultCurrency(), kind),
+            "QIF" => MoneyFiles.ParseQif(bytes, fileName, defaultCurrency(), kind),
+            _ => CsvStatementReader.Parse(bytes, fileName, defaultCurrency(), kind),
+        };
     }
 
     private void Fill(ImportDraft draft)

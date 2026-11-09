@@ -13,6 +13,7 @@ internal sealed class AppServices : IDisposable
     public TransactionService Transactions { get; private set; } = null!;
     public ImportService Imports { get; private set; } = null!;
     public CategoryService Categories { get; private set; } = null!;
+    public TagService Tags { get; private set; } = null!;
     public string DataDir { get; }
     public string LogPath { get; }
 
@@ -66,6 +67,7 @@ internal sealed class AppServices : IDisposable
         Transactions = new TransactionService(Db, () => Setting("currency"));
         Imports = new ImportService(Db, () => Setting("currency"), Transactions);
         Categories = new CategoryService(Db);
+        Tags = new TagService(Db);
         if (Db.GetSetting("rulesVersion") != RulesVersion)
         {
             Transactions.ReapplyRules();

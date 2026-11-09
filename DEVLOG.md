@@ -339,3 +339,37 @@ real app with `tools/e2e/perf.mjs`.
 ### Added
 - The table of transfers, card payments and investments has a category filter (all, none, one or any), next to its
   date and description filters; it is kept while the period is away from the screen.
+
+## November 9th, 2026 - Tags, Summary, every download format, Scotiabank statements - Commit 16
+
+### Added
+- Tags (none come with the app): made, renamed, coloured and deleted in Settings > Definitions > Tags. A tag goes on
+  single operations (from the Tags column of every table of a period, and of the PDF) or on a category in its dialog:
+  every operation of that category, and of the categories nested in it, then carries it. Several tags per operation
+  and per category. Every table has a Tags filter (all, none, one or any, "No tag").
+- Analytics: a Tags pie. An operation with several tags is in one slice named after all of them ("Travel + Work"),
+  so no money is counted twice; the slices add up to the tagged expenses. In the PDF too.
+- Summary, left of Statements: only the balance, month by month (year by year for periods longer than a year), each
+  with its dates, then the period's balance. Works for months, years, all time and custom periods.
+- Import of every format Canadian banks offer: Excel (.xlsx, .xls, and ".xls" web pages), OpenDocument (.ods, .odt),
+  Word (.docx), web pages, OFX / QFX / QBO (Money, Quicken, QuickBooks), QIF, and pictures of statements (PNG, JPEG,
+  WebP, BMP, GIF, TIFF), read like scans.
+
+### Changed
+- Scanned pages and pictures are read from the page's own picture, smoothly enlarged, instead of the page drawn
+  again: small digits and decimal points come out right far more often. Decimal points lost by the recognition are put
+  back on amounts aligned with columns of money; numbers split in two are joined; a misread digit is corrected when
+  the running balances around it prove the right amount.
+- Categories for a bank never seen before: e-mail money transfers, wires, ABM withdrawals, line-of-credit card
+  payments and service charges are recognised; "Point of sale purchase", "Opos", "Fpos" no longer pass for a shop.
+- A statement whose running balances disagree with its amounts is shown as off even when it prints no opening or
+  closing balance.
+
+### Fixed
+- Scotiabank chequing statements: the "Amounts / withdrawn ($)" and "Amounts / deposited ($)" headings on two lines
+  were read as one amount column (every deposit was lost or counted as spending).
+- Scotiabank card statements: lines starting with a reference number ("001") were not read; "SUB-TOTAL CREDITS" and
+  "SUB-TOTAL DEBITS" were counted as operations.
+- The code printed down the margin of Scotiabank statements broke two-line descriptions; it is left out.
+- A description split by a page break ("Continued on next page") keeps its second line.
+- CSV exports without a header keep every text column in the label ("Point of sale purchase" and the shop).

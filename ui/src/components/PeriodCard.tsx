@@ -15,9 +15,9 @@ import { FlowChart } from './FlowChart'
 import { MovementsTable } from './MovementsTable'
 import { TransactionTable } from './TransactionTable'
 
-function Stat({ label, value, color, bg, note }: { label: string; value: string; color?: string; bg: string; note?: string }) {
+function Stat({ label, value, color, bg, note, ...rest }: { label: string; value: string; color?: string; bg: string; note?: string; 'data-part'?: string }) {
   return (
-    <Box data-stat={label} sx={{ flex: '1 1 180px', borderRadius: '18px', bgcolor: bg, px: 2.5, py: 2 }}>
+    <Box data-stat={label} {...rest} sx={{ flex: '1 1 180px', borderRadius: '18px', bgcolor: bg, px: 2.5, py: 2 }}>
       <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 520 }}>{label}</Typography>
       <Typography className="tnum" sx={{ fontSize: 26, fontWeight: 650, letterSpacing: '-0.02em', mt: 0.25, color }}>{value}</Typography>
       {note && <Typography variant="body2" color="text.secondary" className="tnum" sx={{ mt: 0.25 }}>{note}</Typography>}
@@ -43,8 +43,11 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
   )
 }
 
-/** What a period shows: its statements (the tables) or its analytics (the charts); the totals are under both. */
-export type PeriodView = 'statements' | 'analytics'
+/**
+ * What a period shows: its summary (only the balance, month by month, or year by year beyond a year), its statements
+ * (the tables) or its analytics (the charts); the totals are under the statements and the analytics.
+ */
+export type PeriodView = 'summary' | 'statements' | 'analytics'
 
 /**
  * One period, in two views. Statements: operations, recurring payments, income, transfers (From / To). Analytics: the pies,
@@ -121,6 +124,11 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
     : theme.palette.money.zero
   const balanceBg = !summary || summary.balance === 0 ? 'surface.sunken'
     : summary.balance > 0 ? theme.palette.money.positiveStrong : theme.palette.money.negativeStrong
+  // A balance in green above zero, red below, plain at zero (the same as the period's Balance).
+  const tone = (v: number) => ({
+    color: v > 0 ? theme.palette.money.positive : v < 0 ? theme.palette.money.negative : theme.palette.money.zero,
+    bg: v === 0 ? 'surface.sunken' : v > 0 ? theme.palette.money.positiveStrong : theme.palette.money.negativeStrong,
+  })
   const ratioBg = !summary ? 'surface.sunken'
     : summary.expensesShare === null ? (summary.expenses > 0 ? theme.palette.money.expenseSoft : 'surface.sunken')
     : summary.expensesShare > 1 ? theme.palette.money.expenseSoft
@@ -159,7 +167,18 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
             </Typography>
           </Box>
-          {view === 'statements' ? (
+          {view === 'summary' ? (
+            <Box data-summary sx={{ display: 'grid', gap: 1.5 }}>
+              {summary.breakdown.length > 1 && (
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 1.5 }}>
+                  {summary.breakdown.map((b) => (
+                    <Stat key={b.from} label={b.title} value={money(b.balance, currency, { sign: true })} color={tone(b.balance).color} bg={tone(b.balance).bg} data-part={b.from} />
+                  ))}
+                </Box>
+              )}
+              <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
+            </Box>
+          ) : view === 'statements' ? (
             <>
             <TransactionTable keep={keep + ':main'} transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
 
@@ -210,6 +229,11 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
               <ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
               <ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
             </Box>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
+              {/* Each tagged expense in the slice of its whole set of tags: no money is counted twice. */}
+              <ExpensePie title="Tags" slices={fold(summary.tagPie)} currency={currency} empty="No tagged expenses" />
+              <Box sx={{ flex: '1 1 340px', minWidth: 0 }} />
+            </Box>
             <Box sx={{ mt: 1.5 }}>
               <ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
             </Box>
@@ -222,6 +246,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
             </>
           )}
 
+          {view !== 'summary' && (<>
           <Box data-totals sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 3.5 }}>
             <Stat label="Expenses" value={money(summary.expenses, currency)} bg={theme.palette.money.expenseSoft} />
             <Stat label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
@@ -253,6 +278,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
             currency={currency}
             title={summary.title}
           />
+          </>)}
         </>
       )}
     </Box>

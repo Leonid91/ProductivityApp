@@ -59,3 +59,23 @@ export function countChoices<T>(rows: T[], keyOf: (r: T) => string, label: (key:
   rows.forEach((r) => counts.set(keyOf(r), (counts.get(keyOf(r)) ?? 0) + 1))
   return [...counts.entries()].map(([key, count]) => ({ key, count, label: label(key), icon: icon?.(key) }))
 }
+
+/** The "No tag" value of a Tags filter. */
+export const NO_TAG = '__none'
+
+/** The tags of a column with how many rows carry each, by name, and "No tag" last. */
+export function tagChoices<T>(rows: T[], tagsOf: (r: T) => number[], name: (id: number) => string): Choice[] {
+  const counts = new Map<number, number>()
+  let untagged = 0
+  for (const r of rows) {
+    const tags = tagsOf(r)
+    if (tags.length === 0) untagged++
+    for (const t of tags) counts.set(t, (counts.get(t) ?? 0) + 1)
+  }
+  const list: Choice[] = [...counts.entries()].map(([id, count]) => ({ key: String(id), label: name(id), count })).sort((a, b) => a.label.localeCompare(b.label))
+  if (untagged > 0) list.push({ key: NO_TAG, label: 'No tag', count: untagged })
+  return list
+}
+
+/** A row stays when one of its tags is ticked, or when it has none and "No tag" is ticked. */
+export const shownByTags = (tags: number[], hidden: Set<string>) => (tags.length === 0 ? !hidden.has(NO_TAG) : tags.some((t) => !hidden.has(String(t))))

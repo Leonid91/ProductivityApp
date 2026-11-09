@@ -3,7 +3,7 @@
 // browser, exercises the main features and saves screenshots.
 //
 //   node tools/e2e/run.mjs <ProductivityApp.exe> <samples folder> <output folder>
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { launch, sleep } from './cdp.mjs'
 
@@ -232,7 +232,7 @@ try {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   await sleep(400)
   const mvOne = await mvRows()
-  check('transfers table: date, category and description filters; one category shown', mvHeaders.join() === 'Date,Category,Description' && mvCats.length > 1
+  check('transfers table: date, category, description and tag filters; one category shown', mvHeaders.join() === 'Date,Category,Description,Tags' && mvCats.length > 1
     && mvOne.length > 0 && mvOne.length < mvAll.length && mvOne.every((r) => r[1] === mvOne[0][1]), `${mvOne.length}/${mvAll.length} rows of ${mvOne[0]?.[1]}`)
   await p.eval(`[...document.querySelectorAll('${mv} th button')].find(b => b.innerText.trim() === 'Category').click()`)
   await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'transfers category filter')
@@ -595,6 +595,162 @@ try {
   await p.clickText('Periods', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods again')
 
+  // ---- tags (test data, deleted after): none come with the app; made in Definitions > Tags; put on a category
+  // (every operation of it carries them) and on single operations; a column and a filter in every table; a Tags pie in
+  // Analytics for every kind of period, where an operation with several tags is counted once.
+  check('no tags come with the app', (await p.engine('app.init')).tags.tags.length === 0)
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('Definitions', { selector: 'button' })
+  await p.clickText('Tags', { selector: 'main [role=group] button' })
+  await p.waitFor(`document.body.innerText.includes('No tags yet')`, 5000, 'tags page')
+  await shot(p, '22a-tags-empty.png')
+  const makeTag = async (name, color) => {
+    await p.clickText('Add tag', { selector: 'main button' })
+    await p.waitFor(`document.querySelector('[data-tag-dialog] [data-field="name"]') !== null`, 5000, 'tag dialog')
+    await p.send('Input.insertText', { text: name })
+    if (color) await p.eval(`document.querySelector('[data-tag-dialog] [data-color="${color}"]').click()`)
+    await p.clickText('Create', { selector: '[role=dialog] button' })
+    await p.waitFor(`document.querySelector('[data-tag-row="${name}"]') !== null`, 5000, 'tag ' + name)
+  }
+  await makeTag('Trip (test)', '#1e88e5')
+  await makeTag('Work (test)', '#8e24aa')
+  await makeTag('Family (test)', '#43a047')
+  const tagIds = Object.fromEntries((await p.engine('app.init')).tags.tags.map((t) => [t.name, t.id]))
+  check('tags made in Definitions > Tags', Object.keys(tagIds).length === 3)
+  // Restaurants & cafés carries two tags: every one of its operations has both.
+  await p.clickText('Categories', { selector: 'main [role=group] button' })
+  await p.waitFor(`document.querySelector('[data-categories]') !== null`, 10000, 'categories')
+  await p.eval(`document.querySelector('[data-category="Restaurants & cafés"] [aria-label="Edit"]').click()`)
+  await p.waitFor(`document.querySelector('[data-category-dialog] [data-field="tags"] input') !== null`, 5000, 'category tags field')
+  await p.mouseClick('[data-category-dialog] [data-field="tags"] input')
+  for (const name of ['Trip (test)', 'Work (test)']) {
+    await p.waitFor(`document.querySelector('[data-tag-option="${name}"]') !== null`, 5000, 'tag option')
+    await p.eval(`document.querySelector('[data-tag-option="${name}"]').click()`)
+    await sleep(200)
+  }
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(200)
+  await shot(p, '22b-category-tags.png')
+  await p.clickText('Save', { selector: '[role=dialog] button' })
+  await p.waitFor(`document.querySelector('[data-category-dialog]') === null`, 5000, 'category saved')
+  const catTags = (await p.engine('app.init')).tags.categoryTags.restaurants ?? []
+  check('two tags put on a category', catTags.length === 2 && catTags.includes(tagIds['Trip (test)']) && catTags.includes(tagIds['Work (test)']))
+  // In the tables: the restaurant operations carry both; one other operation gets its own tag from its Tags cell.
+  await p.clickText('Periods', { selector: 'nav button' })
+  await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods')
+  await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
+  await p.waitFor(`document.querySelector('${sec} table [data-tag-cell]') !== null`, 20000, 'tags column')
+  await sleep(500)
+  const tagRows = () => p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].map(r => ({ cat: r.children[1].innerText, tags: [...r.querySelectorAll('[data-tag]')].map(t => t.dataset.tag) }))`)
+  const tagBefore = await tagRows()
+  const restaurantRows = tagBefore.filter((r) => r.cat === 'Restaurants & cafés')
+  check('Tags column: a category\'s tags on every one of its operations', restaurantRows.length > 0 && restaurantRows.every((r) => r.tags.join() === 'Trip (test),Work (test)')
+    && tagBefore.filter((r) => r.cat !== 'Restaurants & cafés').every((r) => r.tags.length === 0), `${restaurantRows.length} restaurant rows`)
+  const target = tagBefore.findIndex((r) => r.cat !== 'Restaurants & cafés')
+  await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')][${target}].querySelector('[data-tag-cell]').click()`)
+  await p.waitFor(`document.querySelector('[data-tag-choice="Family (test)"]') !== null`, 5000, 'tag menu')
+  await p.eval(`document.querySelector('[data-tag-choice="Family (test)"]').click()`)
+  await sleep(300)
+  await p.eval(`document.querySelector('[data-tag-choice="Work (test)"]').click()`)
+  await sleep(300)
+  await shot(p, '22c-tag-cell.png')
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await p.waitFor(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')][${target}].querySelectorAll('[data-tag]').length === 2`, 10000, 'own tags shown')
+  const augTagged = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
+  const ownOp = augTagged.transactions.find((t) => t.ownTags.length > 0)
+  check('two tags put on one operation', ownOp?.ownTags.length === 2 && ownOp.tags.includes(tagIds['Family (test)']) && ownOp.tags.includes(tagIds['Work (test)']))
+  // The Tags filter: none, then one tag.
+  await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
+  await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'tags filter')
+  await shot(p, '22d-tags-filter.png')
+  await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === 'none').click()`)
+  await sleep(250)
+  await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === '${tagIds['Family (test)']}').click()`)
+  await sleep(250)
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(400)
+  const familyRows = await tagRows()
+  check('Tags filter: one tag', familyRows.length === 1 && familyRows[0].tags.includes('Family (test)'))
+  await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
+  await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'tags filter')
+  await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === 'all').click()`)
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(400)
+  check('Tags column in the transfers table too', await p.eval(`(() => { const s = document.querySelector('${sec}'); if (!s.querySelector('[data-movements]')) s.querySelector('.MuiAccordionSummary-root')?.click(); return true })()`)
+    && await p.waitFor(`[...document.querySelectorAll('${sec} [data-movements] th')].some(th => th.innerText.trim() === 'Tags')`, 5000, 'transfers tags').then(() => true, () => false))
+  // The Tags pie: every tagged expense once, in the slice of its set of tags.
+  const tagged = augTagged.transactions.filter((t) => t.amount < 0 && t.tags.length > 0 && !isMoveCat(t.categoryId)).reduce((s, t) => s - t.amount, 0)
+  check('Tags pie adds up to the tagged expenses, counted once', cents(augTagged.tagPie.reduce((s, x) => s + x.amount, 0)) === cents(tagged)
+    && augTagged.tagPie.some((x) => x.label === 'Trip (test) + Work (test)') && augTagged.tagPie.some((x) => x.label === 'Family (test) + Trip (test) + Work (test)' || x.label === 'Family (test) + Work (test)'),
+    augTagged.tagPie.map((x) => `${x.label} ${x.amount}`).join(' | '))
+  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.waitFor(`document.querySelector('${sec} [data-pie="Tags"]') !== null`, 20000, 'tags pie')
+  await p.eval(`(() => { const t = document.querySelector('${sec} [data-pie="Tags"]'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 200 }) })()`)
+  await sleep(600)
+  await shot(p, '22e-tags-pie.png')
+  const piePerMode = {}
+  for (const mode of ['Year', 'All time', 'Custom']) {
+    await p.clickText(mode, { selector: 'button' })
+    await p.waitFor(`document.querySelector('section [data-pie="Tags"]') !== null || document.querySelector('section')?.innerText.includes('No tagged expenses')`, 20000, mode + ' tags pie')
+    await sleep(500)
+    piePerMode[mode] = await p.eval(`document.querySelector('section [data-pie="Tags"]') ? [...document.querySelectorAll('section [data-pie="Tags"] li')].length : 0`)
+  }
+  check('Tags pie in Year, All time and Custom periods', Object.values(piePerMode).every((n) => n >= 1), JSON.stringify(piePerMode))
+  await p.clickText('Month', { selector: 'button' })
+  await sleep(600)
+
+  // ---- Summary (left of Statements): only the balance, by month (or by year beyond a year), every kind of period.
+  await p.clickText('Summary', { selector: '[data-period-view] button' })
+  await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
+  await p.waitFor(`document.querySelector('${sec} [data-summary]') !== null`, 20000, 'month summary')
+  await sleep(400)
+  const viewOrder = await p.eval(`[...document.querySelectorAll('[data-period-view] button')].map(b => b.innerText.trim()).join()`)
+  const monthSummary = await p.eval(`(() => { const s = document.querySelector('${sec}'); return { stats: [...s.querySelectorAll('[data-stat]')].map(x => x.dataset.stat), text: s.innerText, tables: s.querySelectorAll('table').length, pies: s.querySelectorAll('[data-pie]').length } })()`)
+  const augBalance = (await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })).balance
+  check('Summary first, a month shows only its balance under its title and days', viewOrder === 'Summary,Statements,Analytics' && monthSummary.stats.join() === 'Balance' && monthSummary.tables === 0 && monthSummary.pies === 0
+    && monthSummary.text.includes('August, from Friday 1 to Sunday 31, 2025') && monthSummary.text.includes('31 days') && monthSummary.text.includes(Math.abs(augBalance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), monthSummary.stats.join())
+  await shot(p, '23a-summary-month.png')
+  await p.clickText('Year', { selector: 'button' })
+  await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'year summary')
+  await sleep(500)
+  const yearParts = await p.eval(`[...document.querySelector('section [data-summary]').querySelectorAll('[data-part]')].map(x => x.dataset.stat)`)
+  const yearSum = await p.engine('periods.summary', { from: '2025-01-01', to: '2025-12-31', granularity: 'year', currency: 'CAD' })
+  check('Summary of a year: its twelve months with their dates and balances', yearParts.length === 12 && yearParts[0] === 'January, from Wednesday 1 to Friday 31, 2025' && yearParts[11].startsWith('December, from Monday 1 to Wednesday 31')
+    && cents(yearSum.breakdown.reduce((s, b) => s + b.balance, 0)) === cents(yearSum.balance), yearParts.slice(0, 2).join(' | '))
+  await shot(p, '23b-summary-year.png')
+  await p.clickText('All time', { selector: 'button' })
+  await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'all time summary')
+  await sleep(500)
+  const allParts = await p.eval(`[...document.querySelector('section [data-summary]').querySelectorAll('[data-part]')].map(x => x.dataset.stat)`)
+  check('Summary of more than a year: by year', allParts.length >= 2 && allParts.every((t) => /^\d{4}, from /.test(t)), allParts.join(' | '))
+  await shot(p, '23c-summary-all-time.png')
+  await p.clickText('Custom', { selector: 'button' })
+  await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'custom summary')
+  check('Summary of a custom period', await p.eval(`document.querySelector('section [data-summary] [data-stat="Balance"]') !== null`))
+  await p.clickText('Month', { selector: 'button' })
+  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await sleep(600)
+
+  // Clean up the test tags: off the category, then deleted (they leave every operation).
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('Definitions', { selector: 'button' })
+  await p.clickText('Tags', { selector: 'main [role=group] button' })
+  await p.waitFor(`document.querySelector('[data-tag-row="Trip (test)"]') !== null`, 5000, 'tags list')
+  await shot(p, '22f-tags-list.png')
+  check('Tags page: categories carrying each tag, operations counted', await p.eval(`(() => { const r = document.querySelector('[data-tag-row="Work (test)"]').innerText; return r.includes('Restaurants & cafés') && r.trim().endsWith('1') })()`))
+  for (const name of ['Trip (test)', 'Work (test)', 'Family (test)']) {
+    await p.eval(`document.querySelector('[data-tag-row="${name}"] button[aria-label="Delete"]').click()`)
+    await p.waitFor(`document.querySelector('[role=dialog]') !== null`, 5000, 'delete tag')
+    await p.clickText('Delete', { selector: '[role=dialog] button' })
+    await p.waitFor(`document.querySelector('[data-tag-row="${name}"]') === null`, 5000, 'deleted ' + name)
+  }
+  const afterTags = await p.engine('app.init')
+  const augClean = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
+  check('test tags deleted: off every operation and category', afterTags.tags.tags.length === 0 && Object.keys(afterTags.tags.categoryTags).length === 0
+    && augClean.transactions.every((t) => t.tags.length === 0) && augClean.tagPie.length === 0)
+  await p.clickText('Periods', { selector: 'nav button' })
+  await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods again')
+
   // custom period
   await p.scrollMain(0)
   await p.clickText('Custom', { selector: 'button' })
@@ -693,7 +849,7 @@ try {
   check('account added at its bank', added?.bankId === contoso?.id && added?.kind === 'bank' && added?.currency === 'CAD', JSON.stringify(added))
   await shot(p, '19f-account-added.png')
   await p.clickText('Definitions', { selector: 'button' })
-  check('definitions in order Bank, Brands, Categories', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Brands Categories')
+  check('definitions in order Bank, Brands, Categories, Tags', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Brands Categories Tags')
   await p.clickText('Brands', { selector: 'main button' })
   await sleep(1000)
   await shot(p, '18-brands.png')
@@ -726,6 +882,29 @@ try {
   await shot(p, '19d-settings-categories.png')
   check('label renamed', (await p.engine('app.init')).settings['section.transfer'] === 'Between accounts')
   await p.engine('settings.set', { key: 'section.transfer', value: 'Transfers' })
+
+  // ---- other formats, read by the app itself (drafts discarded after): a picture of a statement page, OFX / QFX,
+  // QIF and a web page saved as ".xls".
+  const pdfName = readdirSync(samples).find((f) => f.startsWith('Northwind Bank') && f.endsWith('.pdf'))
+  const pdfDraft = await p.engine('import.parseBytes', { name: pdfName, base64: readFileSync(join(samples, pdfName)).toString('base64') })
+  const page = await p.engine('import.page', { draftId: pdfDraft.id, page: 0, width: 1700 })
+  const photo = await p.engine('import.parseBytes', { name: 'statement photo.png', base64: page.png })
+  check('a picture of a statement is read like a scan', photo.usedOcr && photo.rows.length === pdfDraft.rows.length && photo.status === pdfDraft.status
+    && cents(photo.rows.reduce((s, r) => s + r.amount, 0)) === cents(pdfDraft.rows.reduce((s, r) => s + r.amount, 0)), `${photo.rows.length}/${pdfDraft.rows.length} lines, ${photo.status}`)
+  const ofx = 'OFXHEADER:100\r\nDATA:OFXSGML\r\n\r\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>CAD<BANKACCTFROM><ACCTID>0000123456<ACCTTYPE>CHECKING</BANKACCTFROM><BANKTRANLIST>'
+    + '<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260302<TRNAMT>-4.85<FITID>1<NAME>TIM HORTONS #2345</STMTTRN>'
+    + '<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20260305<TRNAMT>2140.55<FITID>2<NAME>PAYROLL DEPOSIT EXAMPLE</STMTTRN>'
+    + '</BANKTRANLIST><LEDGERBAL><BALAMT>3135.70<DTASOF>20260331</LEDGERBAL></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>'
+  const ofxDraft = await p.engine('import.parseBytes', { name: 'activity.qfx', base64: Buffer.from(ofx).toString('base64') })
+  const qif = '!Type:Bank\nD03/02/2026\nT-4.85\nPTIM HORTONS #2345\n^\nD03/05/2026\nT2,140.55\nPPAYROLL DEPOSIT EXAMPLE\n^\n'
+  const qifDraft = await p.engine('import.parseBytes', { name: 'activity.qif', base64: Buffer.from(qif).toString('base64') })
+  const html = '<html><body><table><tr><td>Date</td><td>Description</td><td>Amount</td><td>Balance</td></tr><tr><td>2026-03-02</td><td>TIM HORTONS #2345</td><td>-4.85</td><td>995.15</td></tr>'
+    + '<tr><td>2026-03-05</td><td>PAYROLL DEPOSIT EXAMPLE</td><td>2140.55</td><td>3135.70</td></tr></table></body></html>'
+  const xlsDraft = await p.engine('import.parseBytes', { name: 'activity.xls', base64: Buffer.from(html).toString('base64') })
+  const two = (d) => d.rows.length === 2 && d.rows[0].amount === -4.85 && d.rows[1].amount === 2140.55 && d.rows[0].date === '2026-03-02'
+  check('OFX / QFX, QIF and ".xls" web pages read by the app', two(ofxDraft) && ofxDraft.closing === 3135.70 && two(qifDraft) && two(xlsDraft) && xlsDraft.status === 'verified',
+    `${ofxDraft.method} ${qifDraft.method} ${xlsDraft.method} ${xlsDraft.status}`)
+  for (const d of [pdfDraft, photo, ofxDraft, qifDraft, xlsDraft]) await p.engine('import.discard', { draftId: d.id })
 
   // dark theme, from the icon above the settings
   await p.click('nav [aria-label="Dark mode"]')

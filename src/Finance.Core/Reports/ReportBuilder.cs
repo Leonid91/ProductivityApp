@@ -79,16 +79,16 @@ public static class ReportBuilder
             page.Content().Column(col =>
             {
                 col.Spacing(16);
-                col.Item().Element(c => OperationsTable(c, main, s.Currency, dateFormat, "No other operations in this period."));
+                col.Item().Element(c => OperationsTable(c, main, s, dateFormat, "No other operations in this period."));
                 if (recurringOut.Count > 0)
                     col.Item().Element(c => Section(c, "Recurring payments & subscriptions", s.RecurringExpenses, s, Palette.NegativeSoft,
-                        x => OperationsTable(x, recurringOut, s.Currency, dateFormat, "", frequency: true)));
+                        x => OperationsTable(x, recurringOut, s, dateFormat, "", frequency: true)));
                 if (income.Count > 0)
                     col.Item().Element(c => Section(c, "Income", s.Earnings, s, Palette.PositiveSoft,
-                        x => OperationsTable(x, income, s.Currency, dateFormat, "", frequency: true)));
+                        x => OperationsTable(x, income, s, dateFormat, "", frequency: true)));
                 if (o.Transfers is "separate" or "table" && s.Movements.Count > 0)
                     col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s, Palette.Surface,
-                        x => MovementsTable(x, s.Movements, s.Currency, dateFormat)));
+                        x => MovementsTable(x, s.Movements, s, dateFormat)));
                 col.Item().ShowEntire().Column(t =>
                 {
                     t.Spacing(8);
@@ -101,6 +101,7 @@ public static class ReportBuilder
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Recurring payments & subscriptions",
                     o.PieShowAll ? s.RecurringExpensePie : SummaryService.FoldPie(s.RecurringExpensePie), s.Currency, "No recurring payments in this period."));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Income", o.PieShowAll ? s.IncomePie : SummaryService.FoldPie(s.IncomePie), s.Currency, "No income in this period."));
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Tags", o.PieShowAll ? s.TagPie : SummaryService.FoldPie(s.TagPie), s.Currency, "No tagged expenses in this period."));
                 col.Item().ShowEntire().Element(c => SeriesBlock(c, s));
                 if (s.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
             });
@@ -140,8 +141,13 @@ public static class ReportBuilder
         });
     }
 
-    private static void OperationsTable(IContainer container, List<TransactionView> rows, string currency, string dateFormat, string empty, bool frequency = false)
+    /// <summary>The names of the tags an operation carries (its own and its category's), joined.</summary>
+    private static string TagText(long[]? ids, PeriodSummary s) =>
+        ids is null or { Length: 0 } ? "" : string.Join(", ", ids.Select(id => s.Tags.FirstOrDefault(t => t.Id == id)?.Name).Where(n => n is not null));
+
+    private static void OperationsTable(IContainer container, List<TransactionView> rows, PeriodSummary s, string dateFormat, string empty, bool frequency = false)
     {
+        var currency = s.Currency;
         container.Table(table =>
         {
             table.ColumnsDefinition(c =>
@@ -149,16 +155,18 @@ public static class ReportBuilder
                 c.ConstantColumn(108);
                 c.RelativeColumn(1.1f);
                 c.RelativeColumn(1.4f);
+                c.RelativeColumn(0.8f);
                 if (frequency) c.ConstantColumn(72);
                 c.ConstantColumn(92);
             });
-            var columns = frequency ? 5u : 4u;
+            var columns = frequency ? 6u : 5u;
             table.Header(h =>
             {
                 IContainer Head(IContainer c) => c.BorderBottom(0.8f).BorderColor("#c9c8c3").PaddingVertical(5).PaddingHorizontal(4);
                 h.Cell().Element(Head).Text("Date").SemiBold().FontSize(8);
                 h.Cell().Element(Head).Text("Category").SemiBold().FontSize(8);
                 h.Cell().Element(Head).Text("Brand Name").SemiBold().FontSize(8);
+                h.Cell().Element(Head).Text("Tags").SemiBold().FontSize(8);
                 if (frequency) h.Cell().Element(Head).Text("Comes back").SemiBold().FontSize(8);
                 h.Cell().Element(Head).AlignRight().Text($"Amount ({currency})").SemiBold().FontSize(8);
             });
@@ -175,6 +183,7 @@ public static class ReportBuilder
                 table.Cell().Element(Cell).Text(Day(t.Date, dateFormat)).EnableFontFeature("tnum");
                 table.Cell().Element(Cell).Text(cat.Name).FontColor(transfer ? Palette.InkMuted : Palette.Ink);
                 table.Cell().Element(Cell).Text(t.Brand).ClampLines(1);
+                table.Cell().Element(Cell).Text(TagText(t.Tags, s)).FontColor(Palette.InkSecondary).ClampLines(1);
                 if (frequency) table.Cell().Element(Cell).Text(t.Recurring ?? "").FontColor(Palette.InkSecondary);
                 table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(t.Amount, currency, sign: true)).EnableFontFeature("tnum")
                     .FontColor(transfer ? Palette.InkMuted : t.Amount > 0 ? Palette.Positive : Palette.Ink);
@@ -182,8 +191,10 @@ public static class ReportBuilder
         });
     }
 
-    private static void MovementsTable(IContainer container, List<MovementView> rows, string currency, string dateFormat)
+    private static void MovementsTable(IContainer container, List<MovementView> rows, PeriodSummary s, string dateFormat)
     {
+        var currency = s.Currency;
+        var byId = s.Transactions.ToDictionary(t => t.Id);
         container.Table(table =>
         {
             table.ColumnsDefinition(c =>
@@ -193,6 +204,7 @@ public static class ReportBuilder
                 c.RelativeColumn(0.9f);
                 c.RelativeColumn(0.8f);
                 c.RelativeColumn(1.45f);
+                c.RelativeColumn(0.6f);
                 c.ConstantColumn(66);
             });
             table.Header(h =>
@@ -203,6 +215,7 @@ public static class ReportBuilder
                 h.Cell().Element(Head).Text("Description").SemiBold().FontSize(8);
                 h.Cell().Element(Head).Text("From").SemiBold().FontSize(8);
                 h.Cell().Element(Head).Text("To").SemiBold().FontSize(8);
+                h.Cell().Element(Head).Text("Tags").SemiBold().FontSize(8);
                 h.Cell().Element(Head).AlignRight().Text($"Amount ({currency})").SemiBold().FontSize(8);
             });
             foreach (var m in rows)
@@ -213,6 +226,7 @@ public static class ReportBuilder
                 table.Cell().Element(Cell).Text(m.Label).FontSize(8f).ClampLines(1);
                 table.Cell().Element(Cell).Text(m.From).FontSize(8f).SemiBold().FontColor(m.FromOutside ? Palette.OutsideInk : Palette.Ink).ClampLines(1);
                 table.Cell().Element(Cell).Text("→ " + m.To).FontSize(8f).SemiBold().FontColor(m.ToOutside ? Palette.OutsideInk : Palette.Ink).ClampLines(1);
+                table.Cell().Element(Cell).Text(TagText(byId.GetValueOrDefault(m.EditId)?.Tags, s)).FontSize(8f).FontColor(Palette.InkSecondary).ClampLines(1);
                 table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(m.Amount, currency)).EnableFontFeature("tnum").FontSize(8f);
             }
         });

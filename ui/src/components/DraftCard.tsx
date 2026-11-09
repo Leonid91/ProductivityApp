@@ -12,6 +12,7 @@ import { useApp } from '../AppContext'
 import { formatDate, money, plural, shortDate } from '../format'
 import { CategoryPill, Money } from './common'
 import { TemplateEditor } from './TemplateEditor'
+import { TagList, useCategoryTags } from './tags'
 
 export function StatusChip({ draft }: { draft: Draft }) {
   if (draft.alreadyImported) return <Chip size="small" color="default" label="Already imported" />
@@ -79,6 +80,7 @@ function BalanceCheck({ draft }: { draft: Draft }) {
 /** A statement read from a PDF, waiting for the person to check it and save it. */
 export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (saved: boolean) => void }) {
   const { accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
+  const categoryTagsOf = useCategoryTags()
   const [draft, setDraft] = useState(initial)
   // Nothing is chosen for the person: the file waits until they say which account it belongs to.
   const [accountId, setAccountId] = useState<number | 'new' | ''>('')
@@ -274,6 +276,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
                   <TableCell>Statement label</TableCell>
                   <TableCell>Brand Name</TableCell>
                   <TableCell>Category</TableCell>
+                  <TableCell>Tags</TableCell>
                   <TableCell align="right">Amount</TableCell>
                 </TableRow>
               </TableHead>
@@ -300,6 +303,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
                         />
                       </TableCell>
                       <TableCell><CategoryPill id={e?.categoryId ?? r.categoryId} onChange={(id) => void changeCategory(r.index, id)} /></TableCell>
+                      <TableCell><TagList ids={categoryTagsOf(e?.categoryId ?? r.categoryId)} /></TableCell>
                       <TableCell align="right"><Money value={r.amount} currency={currency} sign /></TableCell>
                     </TableRow>
                   )

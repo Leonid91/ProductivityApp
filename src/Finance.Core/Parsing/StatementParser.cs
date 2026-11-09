@@ -1,3 +1,4 @@
+using System.Globalization;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Pdf;
 using ProductivityApp.Finance.Text;
@@ -11,7 +12,7 @@ namespace ProductivityApp.Finance.Parsing;
 /// against the opening, closing and running balances printed on the statement. Several readings are
 /// tried and the one that balances wins.
 /// </summary>
-public static class StatementParser
+public static partial class StatementParser
 {
     public static StatementParse Parse(IReadOnlyList<PageWords> pages, BankTemplate? template, string defaultCurrency, StatementKindHint forcedKind = StatementKindHint.Auto)
     {
@@ -164,15 +165,19 @@ public static class StatementParser
         for (var i = 0; i < lines.Count; i++)
         {
             var cells = HeaderCells(lines[i].Words);
+            var stacked = i + 1 < lines.Count && lines[i + 1].Top - lines[i].Bottom < lines[i].Height * 1.2;
+            var merged = stacked ? HeaderCells(lines[i].Words.Concat(lines[i + 1].Words).ToList()) : null;
+            // A heading on two lines ("Amounts" over "withdrawn ($)" and "deposited ($)"): its second line says
+            // what each column is, so the two lines are read together when that tells more columns apart.
+            if (merged is not null && IsHeader(merged) && (!IsHeader(cells) || Distinct(merged) > Distinct(cells)))
+                return (Finish(merged), lines[i + 1].Bottom);
             if (IsHeader(cells)) return (Finish(cells), lines[i].Bottom);
-            if (i + 1 < lines.Count && lines[i + 1].Top - lines[i].Bottom < lines[i].Height * 1.2)
-            {
-                var merged = HeaderCells(lines[i].Words.Concat(lines[i + 1].Words).ToList());
-                if (IsHeader(merged)) return (Finish(merged), lines[i + 1].Bottom);
-            }
         }
         return null;
     }
+
+    /// <summary>How many different kinds of column a heading names.</summary>
+    private static int Distinct(List<HeaderCell> cells) => cells.Where(c => c.Role is not null).Select(c => c.Role).Distinct().Count();
 
     private static List<HeaderCell> HeaderCells(IReadOnlyList<Word> words)
     {
@@ -210,7 +215,7 @@ public static class StatementParser
         if (HasWord(f, "CATEGORIE", "CATEGORIES", "CATEGORY", "CATEGORY")) return ColumnRole.Category;
         if (HasWord(f, "DATE", "JOUR", "DATES"))
             return HasWord(f, "VALEUR", "VALUE", "POST", "POSTED", "POSTING", "INSCRIPTION", "COMPTABILISATION", "COMPTABLE") ? ColumnRole.ValueDate : ColumnRole.Date;
-        if (HasWord(f, "DEBIT", "DEBITS", "RETRAIT", "RETRAITS", "WITHDRAWAL", "WITHDRAWALS", "SORTIE", "SORTIES", "CHEQUES", "PAIEMENTS", "CHARGES", "DEPENSES")) return ColumnRole.Debit;
+        if (HasWord(f, "DEBIT", "DEBITS", "RETRAIT", "RETRAITS", "WITHDRAW", "WITHDRAWAL", "WITHDRAWALS", "SORTIE", "SORTIES", "CHEQUES", "PAIEMENTS", "CHARGES", "DEPENSES")) return ColumnRole.Debit;
         if (HasWord(f, "CREDIT", "CREDITS", "DEPOT", "DEPOTS", "DEPOSIT", "DEPOSITS", "ENTREE", "ENTREES", "VERSEMENTS", "RECETTES")) return ColumnRole.Credit;
         if (HasWord(f, "MONTANT", "AMOUNT", "SOMME", "MONTANTS", "AMOUNTS")) return ColumnRole.Amount;
         if (HasWord(f, "DESCRIPTION", "LIBELLE", "OPERATION", "OPERATIONS", "DETAIL", "DETAILS", "TRANSACTION", "TRANSACTIONS", "NATURE", "PARTICULARS", "MERCHANT", "COMMERCANT", "REFERENCE"))
@@ -284,9 +289,10 @@ public static class StatementParser
         foreach (var line in ctx.Lines)
         {
             var tokens = line.Tokens;
-            if (!DateParser.TryParseTokens(tokens, 0, out _, out var consumed) || consumed >= tokens.Count) continue;
+            var first = RefOffset(tokens);
+            if (!DateParser.TryParseTokens(tokens, first, out _, out var consumed) || first + consumed >= tokens.Count) continue;
             var any = false;
-            foreach (var w in line.Words.Skip(consumed))
+            foreach (var w in line.Words.Skip(first + consumed))
             {
                 if (!AmountParser.TryParse(w.Text, out _)) continue;
                 edges.Add((w.Left, w.Right));
@@ -370,12 +376,13 @@ public static class StatementParser
             return cells;
         }
 
-        var index = 0;
-        if (words.Count > 0 && words[0].Left < pl.DescLeft - 0.5 && TryDate(words, 0, ctx, out var date, out var consumed))
+        // A line number before the date ("001  May 14  May 14  PAYMENT..." on card statements) is left out.
+        var index = RefOffset(words.Select(w => w.Text).ToList());
+        if (words.Count > index && words[index].Left < pl.DescLeft - 0.5 && TryDate(words, index, ctx, out var date, out var consumed))
         {
             cells.Date = date;
-            cells.DateWords.AddRange(words.Take(consumed));
-            index = consumed;
+            cells.DateWords.AddRange(words.Skip(index).Take(consumed));
+            index += consumed;
             // Value date column, or a second date printed right after the first.
             if (index < words.Count && (pl.ValueDate?.Contains(words[index].CenterX) == true || pl.SkipSecondDate)
                 && TryDate(words, index, ctx, out _, out var c2))
@@ -405,6 +412,14 @@ public static class StatementParser
         }
         return cells;
     }
+
+    /// <summary>
+    /// 1 when the line starts with a short line number (a reference such as "001" or "12") followed by a date; 0
+    /// otherwise.
+    /// </summary>
+    private static int RefOffset(IReadOnlyList<string> tokens) =>
+        tokens.Count > 2 && tokens[0].Length <= 4 && tokens[0].All(char.IsDigit)
+        && !DateParser.TryParseTokens(tokens, 0, out _, out _) && DateParser.TryParseTokens(tokens, 1, out _, out _) ? 1 : 0;
 
     private static bool TryDate(IReadOnlyList<Word> words, int start, DocumentContext ctx, out PrintedDate date, out int consumed)
     {
@@ -465,6 +480,9 @@ public static class StatementParser
         }
     }
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(CONTINUED|SUITE|PAGE \d+(\s*(OF|DE|SUR|/)\s*\d+)?$|\(?CONTINUED\b|.*\bCONTINUED ON NEXT PAGE|.*\bSUITE AU VERSO)")]
+    private static partial System.Text.RegularExpressions.Regex PageFurniture();
+
     private static bool SameBlock(TextLine? previous, TextLine line) =>
         previous is not null && previous.Page == line.Page && line.Top - previous.Bottom < Math.Max(line.Height, previous.Height) * 1.3;
 
@@ -488,6 +506,9 @@ public static class StatementParser
         foreach (var c in allCells)
         {
             var desc = c.Description;
+            // Page furniture between two parts of the table ("Continued on next page", "Page 1 of 5") neither ends
+            // the operation being read nor starts one: the rest of its label can be at the top of the next page.
+            if (c.Date is null && !c.HasMovement && PageFurniture().IsMatch(TextNorm.Fold(desc))) continue;
             var summary = Keywords.ClassifySummary(TextNorm.Fold(desc));
             if (c.Date is not null) lastDate = c.Date;
 
@@ -520,7 +541,7 @@ public static class StatementParser
                 continuation = 0;
             }
             else if (c.Date is null && current is not null && desc.Length > 0 && !c.Amounts.ContainsKey(ColumnRole.Balance)
-                     && SameBlock(previous, c.Line) && continuation < 4
+                     && (SameBlock(previous, c.Line) || (previous is not null && c.Line.Page > previous.Page)) && continuation < 4
                      && (double.IsNaN(current.LabelLeft) || Math.Abs(c.DescLeft - current.LabelLeft) < c.Line.Height * 6))
             {
                 current.Label += " " + desc;
@@ -600,6 +621,7 @@ public static class StatementParser
         ResolveUnknownSigns(rows, opening, closing, polarity);
 
         var parsed = rows.Select(r => r.Row).ToList();
+        if (ctx.UsedOcr) CorrectFromBalances(parsed, opening, polarity);
 
         // Running balance checks.
         decimal? prev = opening;
@@ -673,8 +695,44 @@ public static class StatementParser
                 ? VerificationStatus.Verified
                 : VerificationStatus.Mismatch;
         }
-        else result.Status = VerificationStatus.NoBalances;
+        // No opening or closing balance printed, but the running balances disagree with the amounts read: off, not unchecked.
+        else result.Status = checks > 0 && mismatches > 0 ? VerificationStatus.Mismatch : VerificationStatus.NoBalances;
         return result;
+    }
+
+    /// <summary>
+    /// On a scanned statement a digit of an amount can be misread (13.62 for 13.52) while the running balances around
+    /// it are read right. An amount is replaced by the one the balances prove when: it is the only line between two
+    /// balances, the next balance agrees with this line's balance (so that balance was read right), and the two
+    /// amounts differ by one digit, or only by their sign. A statement that is itself wrong stays wrong.
+    /// </summary>
+    private static void CorrectFromBalances(List<ParsedRow> rows, decimal? opening, decimal polarity)
+    {
+        decimal? prev = opening;
+        var since = 0;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            since++;
+            if (rows[i].Balance is not { } bal) continue;
+            if (prev is { } p && since == 1)
+            {
+                var proved = (bal - p) * polarity;
+                var next = rows.Skip(i + 1).Select((r, k) => (r, k)).FirstOrDefault(x => x.r.Balance is not null);
+                var confirmed = next.r is null || (next.k == 0 && bal + polarity * next.r.Amount == next.r.Balance);
+                if (proved != rows[i].Amount && proved != 0 && confirmed && LooksAlike(rows[i].Amount, proved)) rows[i].Amount = proved;
+            }
+            prev = bal;
+            since = 0;
+        }
+    }
+
+    /// <summary>Two amounts that differ by one digit (or only by their sign).</summary>
+    private static bool LooksAlike(decimal read, decimal proved)
+    {
+        if (Math.Abs(read) == Math.Abs(proved)) return true;
+        var a = Math.Abs(read).ToString("0.00", CultureInfo.InvariantCulture);
+        var b = Math.Abs(proved).ToString("0.00", CultureInfo.InvariantCulture);
+        return a.Length == b.Length && a.Zip(b).Count(x => x.First != x.Second) == 1;
     }
 
     private static decimal BalanceValue(PrintedAmount a, AccountKind kind) => kind == AccountKind.CreditCard

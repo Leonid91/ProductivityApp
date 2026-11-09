@@ -13,6 +13,11 @@ export interface Category { id: string; name: string; kind: CategoryKind; icon: 
 
 export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'periodTransfers' | 'calendarHideCardPayments' | 'calendarHideTransfers' | 'calendarHideInvestments' | 'pieShowAll' | 'chartsTopLevel', string> & Record<string, string>
 
+/** A tag the person made; operations counts the operations that carry it themselves (not through a category). */
+export interface Tag { id: number; name: string; color: string | null; operations: number }
+/** Every tag, and the tags each category gives to its operations (and to those of the categories nested in it). */
+export interface TagData { tags: Tag[]; categoryTags: Record<string, number[]> }
+
 export type BankingSystem = 'northAmerica' | 'france'
 export interface Bank { id: number; name: string; country: string; system: BankingSystem; currency: string }
 
@@ -29,6 +34,7 @@ export interface InitInfo {
   version: string
   settings: Settings
   categories: Category[]
+  tags: TagData
   dateFormats: string[]
   ocrAvailable: boolean
   nonClientRegions: boolean
@@ -57,7 +63,14 @@ export interface TransactionView {
   linkedId: number | null
   /** For money back from an investment: the part entered as earned (gain), counted as income. */
   earned: number | null
+  /** Tags put on the operation itself. */
+  ownTags: number[]
+  /** Every tag it carries: its own and its category's. */
+  tags: number[]
 }
+
+/** One part of a period (a month, or a year for ranges longer than a year) and its balance. */
+export interface PeriodBalance { from: string; to: string; title: string; expenses: number; earnings: number; balance: number }
 
 /** One movement of money, once, from an account (or the outside) to another (or the outside). */
 export interface MovementView {
@@ -103,6 +116,10 @@ export interface PeriodSummary {
   byTopCategory: Slice[]
   byBrand: Slice[]
   brandPie: Slice[]
+  /** Expenses per set of tags: each tagged expense in one slice ("Travel + Work"), never twice. */
+  tagPie: Slice[]
+  /** The period in months (years for ranges longer than a year), each with its balance. */
+  breakdown: PeriodBalance[]
   series: Bar[]
   seriesUnit: 'day' | 'month' | 'year'
   recurringExpenses: number
@@ -243,6 +260,14 @@ export const api = {
     create: (c: { name: string; parentId: string | null; kind: CategoryKind; color: string | null }) => invoke<Category[]>('categories.create', c),
     update: (c: { id: string; name: string; parentId: string | null; color: string | null }) => invoke<Category[]>('categories.update', c),
     remove: (id: string) => invoke<Category[]>('categories.delete', { id }),
+  },
+  tags: {
+    list: () => invoke<TagData>('tags.list'),
+    create: (t: { name: string; color: string | null }) => invoke<TagData>('tags.create', t),
+    update: (t: { id: number; name: string; color: string | null }) => invoke<TagData>('tags.update', t),
+    remove: (id: number) => invoke<TagData>('tags.delete', { id }),
+    setForOperation: (id: number, tagIds: number[]) => invoke<TagData>('tags.setForOperation', { id, tagIds }),
+    setForCategory: (categoryId: string, tagIds: number[]) => invoke<TagData>('tags.setForCategory', { categoryId, tagIds }),
   },
   banks: {
     list: () => invoke<Bank[]>('banks.list'),

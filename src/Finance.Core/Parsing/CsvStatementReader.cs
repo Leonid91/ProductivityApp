@@ -160,8 +160,17 @@ public static partial class CsvStatementReader
     {
         var text = Decode(bytes);
         var delimiter = DetectDelimiter(text);
-        var table = Rows(text, delimiter).ToList();
-        if (table.Count == 0) return Empty("CSV", defaultCurrency);
+        return ParseTable(Rows(text, delimiter).ToList(), fileName, defaultCurrency, forcedKind, "CSV", delimiter == ',' ? '.' : null);
+    }
+
+    /// <summary>
+    /// Reads a table of cells, whatever file it came from (CSV, Excel, OpenDocument, Word, a web page): the columns are
+    /// found by their names or by what they contain, as for a CSV export.
+    /// </summary>
+    /// <param name="decimalSeparator">Known separator of decimals, or null to find it from the numbers.</param>
+    public static StatementParse ParseTable(List<List<string>> table, string fileName, string defaultCurrency, AccountKind? forcedKind, string method, char? decimalSeparator = null)
+    {
+        if (table.Count == 0) return Empty(method, defaultCurrency);
         var width = table.GroupBy(r => r.Count).OrderByDescending(g => g.Count()).First().Key;
 
         // Header: the first row whose cells are column names rather than data.
@@ -173,8 +182,8 @@ public static partial class CsvStatementReader
             if (named >= 2 && dated == 0) { headerIndex = i; break; }
         }
         var data = table.Skip(headerIndex + 1).Where(r => r.Count >= Math.Min(width, 3) && r.Any(c => c.Length > 0)).ToList();
-        if (data.Count == 0) return Empty("CSV", defaultCurrency);
-        var decimalSep = delimiter == ',' ? '.' : DecimalSeparator(data.SelectMany(r => r));
+        if (data.Count == 0) return Empty(method, defaultCurrency);
+        var decimalSep = decimalSeparator ?? DecimalSeparator(data.SelectMany(r => r));
 
         var cols = new Dictionary<Col, int>();
         var descExtra = new List<int>();
@@ -191,9 +200,13 @@ public static partial class CsvStatementReader
                 cols.TryAdd(role, i);
             }
         }
-        InferMissingColumns(cols, data, decimalSep);
+        InferMissingColumns(cols, data, decimalSep, descExtra);
+        // Without a header, every text column says something ("Point of sale purchase", then the shop): in their order.
+        var labelColumns = (cols.TryGetValue(Col.Description, out var mainText) ? new[] { mainText } : []).Concat(descExtra);
+        if (headerIndex < 0) labelColumns = labelColumns.OrderBy(i => i);
+        var labelIndexes = labelColumns.ToList();
         if (!cols.ContainsKey(Col.Date) || !(cols.ContainsKey(Col.Amount) || cols.ContainsKey(Col.Debit) || cols.ContainsKey(Col.Credit)))
-            return Empty("CSV", defaultCurrency);
+            return Empty(method, defaultCurrency);
 
         string Cell(List<string> r, Col c) => cols.TryGetValue(c, out var i) && i < r.Count ? r[i] : "";
 
@@ -234,7 +247,7 @@ public static partial class CsvStatementReader
             else if (type is "CREDIT" or "CR" or "C" or "DEPOSIT" or "DEPOT") amount = Math.Abs(amount);
 
             decimal? balance = TryNumber(Cell(r, Col.Balance), decimalSep, out var b) ? b : null;
-            var label = TextNorm.CollapseSpaces(string.Join(' ', new[] { Cell(r, Col.Description) }.Concat(descExtra.Select(x => x < r.Count ? r[x] : "")).Where(x => x.Length > 0)));
+            var label = TextNorm.CollapseSpaces(string.Join(' ', labelIndexes.Select(x => x < r.Count ? r[x] : "").Where(x => x.Length > 0 && x != "-")));
             if (amount == 0) { skippedZero++; if (balance is null) continue; }
             rows.Add(new ParsedRow { Date = date.Value, Label = label, Amount = amount, Balance = balance, BankCategory = Cell(r, Col.Category), Page = 0, Top = i });
         }
@@ -309,7 +322,7 @@ public static partial class CsvStatementReader
             Status = status,
             RowBalanceChecks = checks,
             RowBalanceMismatches = mismatches,
-            Method = "CSV",
+            Method = method,
             DateOrder = order,
             Profile = profile,
             NewestFirst = newestFirst,
@@ -333,7 +346,7 @@ public static partial class CsvStatementReader
     }
 
     /// <summary>Files without a header row: the date, money and text columns are recognised by their content.</summary>
-    private static void InferMissingColumns(Dictionary<Col, int> cols, List<List<string>> data, char decimalSep)
+    private static void InferMissingColumns(Dictionary<Col, int> cols, List<List<string>> data, char decimalSep, List<int> descExtra)
     {
         var width = data.Max(r => r.Count);
         var sample = data.Take(200).ToList();
@@ -362,7 +375,14 @@ public static partial class CsvStatementReader
         {
             var text = Enumerable.Range(0, width).Where(i => !used.Contains(i))
                 .OrderByDescending(i => sample.Average(r => i < r.Count ? r[i].Count(char.IsLetter) : 0)).FirstOrDefault(-1);
-            if (text >= 0) cols[Col.Description] = text;
+            if (text >= 0)
+            {
+                cols[Col.Description] = text;
+                used.Add(text);
+                // Other columns of words (the kind of operation, a second description) go in the label too.
+                foreach (var i in Enumerable.Range(0, width).Where(i => !used.Contains(i) && !descExtra.Contains(i)))
+                    if (sample.Average(r => i < r.Count ? r[i].Count(char.IsLetter) : 0) >= 2) descExtra.Add(i);
+            }
         }
     }
 

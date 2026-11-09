@@ -10,6 +10,7 @@ import Download from '@mui/icons-material/DownloadRounded'
 import Folder from '@mui/icons-material/FolderRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfRounded'
+import ImageIcon from '@mui/icons-material/ImageOutlined'
 import Search from '@mui/icons-material/SearchRounded'
 import TableChart from '@mui/icons-material/TableChartRounded'
 import Storage from '@mui/icons-material/StorageRounded'
@@ -31,7 +32,7 @@ function remember(path: string) {
 }
 
 /**
- * In-app file browser (the app shows no Windows dialogs). Picks PDF statements, or a folder.
+ * In-app file browser (the app shows no Windows dialogs). Picks statements (PDF, pictures, CSV, Excel, OFX...), or a folder.
  */
 export function FileBrowser({ open, mode, title, initialPath, onClose, onPick }: {
   open: boolean
@@ -150,7 +151,7 @@ export function FileBrowser({ open, mode, title, initialPath, onClose, onPick }:
                     <Checkbox size="small" disableRipple checked={selected.has(e.path)} sx={{ p: 0.5, mr: 1, visibility: e.isFolder ? 'hidden' : 'visible' }} />
                   )}
                   <ListItemIcon sx={{ minWidth: 34 }}>
-                    {e.isFolder ? <Folder sx={{ color: '#d9a531' }} /> : e.name.toLowerCase().endsWith('.csv') ? <TableChart sx={{ color: '#1f8a5b' }} /> : <PictureAsPdf sx={{ color: '#d0483b' }} />}
+                    {e.isFolder ? <Folder sx={{ color: '#d9a531' }} /> : /.pdf$/i.test(e.name) ? <PictureAsPdf sx={{ color: '#d0483b' }} /> : /.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(e.name) ? <ImageIcon sx={{ color: '#5e6ad2' }} /> : <TableChart sx={{ color: '#1f8a5b' }} />}
                   </ListItemIcon>
                   <ListItemText primary={e.name} slotProps={{ primary: { noWrap: true, sx: { fontSize: 13.5 } } }} />
                   {!e.isFolder && (

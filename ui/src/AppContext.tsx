@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Snackbar, Typography } from '@mui/material'
-import { api, type Account, type Bank, type Category, type InitInfo, type Settings } from './api'
+import { api, type Account, type Bank, type Category, type InitInfo, type Settings, type Tag, type TagData } from './api'
 import { categoryTree, savedOrder, type TreeEntry } from './components/order'
 
 export type Page = 'periods' | 'calendar' | 'import' | 'settings'
@@ -21,6 +21,12 @@ interface AppState {
   /** Every category as a tree, in the person's order. */
   tree: TreeEntry[]
   category: (id: string) => Category
+  /** Every tag, in the person's order, and the tags of each category itself. */
+  tags: Tag[]
+  categoryTags: Record<string, number[]>
+  tag: (id: number) => Tag | undefined
+  /** Takes the tags the engine sends back after a change, and lets every view reload. */
+  setTagData: (data: TagData) => void
   accounts: Account[]
   refreshAccounts: () => Promise<void>
   banks: Bank[]
@@ -55,6 +61,7 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const [accounts, setAccounts] = useState<Account[]>([])
   const [banks, setBanks] = useState<Bank[]>([])
   const [categories, setCategories] = useState<Category[]>(info.categories)
+  const [tagData, setTagDataState] = useState<TagData>(info.tags)
   const [dataFolder, setDataFolder] = useState(info.dataFolder)
   const [dataVersion, setDataVersion] = useState(0)
   const [page, setPage] = useState<Page>('periods')
@@ -68,6 +75,8 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const answer = (v: boolean | null) => { scope?.resolve(v); setScope(null) }
 
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
+  const tagById = useMemo(() => new Map(tagData.tags.map((t) => [t.id, t])), [tagData])
+  const setTagData = useCallback((data: TagData) => { setTagDataState(data); setDataVersion((v) => v + 1) }, [])
   const tree = useMemo(() => categoryTree(categories, savedOrder(settings, 'categories')), [categories, settings])
 
   const notify = useCallback((message: string, severity: Toast['severity'] = 'success', actions?: Toast['actions']) => {
@@ -110,6 +119,10 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     setCategories,
     tree,
     category: (id) => byId.get(id) ?? byId.get('other') ?? categories[0],
+    tags: tagData.tags,
+    categoryTags: tagData.categoryTags,
+    tag: (id) => tagById.get(id),
+    setTagData,
     accounts,
     refreshAccounts,
     banks,

@@ -30,6 +30,9 @@ type Job = { name: string; run: () => Promise<Draft> }
 /** Selects inside table rows: same height as the text rows around them. */
 const compact = { '& .MuiSelect-select': { py: 0.6, fontSize: 13.5 } }
 
+/** Every kind of file the import reads (the same list as the engine, ImportService.Extensions). */
+export const statementFile = /\.(pdf|csv|tsv|txt|xlsx|xlsm|xls|ods|odt|docx|html?|ofx|qfx|qbo|qif|png|jpe?g|webp|bmp|gif|tiff?)$/i
+
 export function ImportPage() {
   const { fail, dataVersion, dataChanged, notify, accounts, banks, refreshAccounts, refreshBanks } = useApp()
   const theme = useTheme()
@@ -88,8 +91,8 @@ export function ImportPage() {
   }, [queue, fail])
 
   const addFiles = (files: File[]) => {
-    const pdfs = files.filter((f) => /\.(pdf|csv)$/i.test(f.name))
-    if (pdfs.length < files.length) notify('Only PDF statements and CSV exports can be imported', 'warning')
+    const pdfs = files.filter((f) => statementFile.test(f.name))
+    if (pdfs.length < files.length) notify('Statements are read from PDF, pictures, CSV, Excel, OpenDocument, Word, OFX, QFX, QBO or QIF files', 'warning')
     setQueue((q) => [...q, ...pdfs.map((f) => ({ name: f.name, run: async () => api.imports.parseBytes(f.name, await toBase64(f)) }))])
   }
 
@@ -121,7 +124,7 @@ export function ImportPage() {
         <Box sx={{ width: 64, height: 64, mx: 'auto', borderRadius: '20px', display: 'grid', placeItems: 'center', bgcolor: alpha(theme.palette.primary.main, 0.1), color: 'primary.main', mb: 2 }}>
           <CloudUpload sx={{ fontSize: 32 }} />
         </Box>
-        <Typography variant="h6">Drop PDF statements or CSV exports here</Typography>
+        <Typography variant="h6">Drop statements or exports here</Typography>
         <Button variant="contained" sx={{ mt: 2 }} onClick={() => setBrowsing(true)}>Choose files</Button>
         {(current || queue.length > 0) && (
           <Box sx={{ maxWidth: 420, mx: 'auto', mt: 3 }}>

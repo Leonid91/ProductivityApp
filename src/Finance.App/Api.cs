@@ -20,6 +20,7 @@ internal static class Api
             version = typeof(Api).Assembly.GetName().Version?.ToString(3),
             settings = s.Settings(),
             categories = CategoryList(),
+            tags = TagList(s),
             dateFormats = Formatting.DateFormats,
             ocrAvailable = Finance.Pdf.PdfReader.OcrAvailable,
             nonClientRegions,
@@ -77,6 +78,14 @@ internal static class Api
             return CategoryList();
         });
         b.Register("categories.delete", p => { s.Categories.Delete(p.Get<string>("id")); return CategoryList(); });
+
+        // ------------------------------------------------------------ tags
+        b.Register("tags.list", _ => TagList(s));
+        b.Register("tags.create", p => { s.Tags.Create(p.Get<string>("name"), p.Opt<string>("color")); return TagList(s); });
+        b.Register("tags.update", p => { s.Tags.Update(p.Get<long>("id"), p.Get<string>("name"), p.Opt<string>("color")); return TagList(s); });
+        b.Register("tags.delete", p => { s.Tags.Delete(p.Get<long>("id")); return TagList(s); });
+        b.Register("tags.setForOperation", p => { s.Tags.SetOperationTags(p.Get<long>("id"), p.Get<long[]>("tagIds")); return TagList(s); });
+        b.Register("tags.setForCategory", p => { s.Tags.SetCategoryTags(p.Get<string>("categoryId"), p.Get<long[]>("tagIds")); return TagList(s); });
 
         // ------------------------------------------------------------ banks
         b.Register("banks.list", _ => s.Db.Banks());
@@ -166,7 +175,8 @@ internal static class Api
             var path = p.Get<string>("path");
             if (!File.Exists(path)) throw new FileNotFoundException("This file no longer exists.");
             if (new FileInfo(path).Length > 60 * 1024 * 1024) throw new InvalidDataException("This file is larger than 60 MB.");
-            if (Path.GetExtension(path).ToLowerInvariant() is not (".pdf" or ".csv" or ".txt" or ".tsv")) throw new InvalidDataException("Only PDF statements and CSV exports can be imported.");
+            if (!ImportService.Extensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
+                throw new InvalidDataException("This file is not a statement the app can read: PDF, picture, CSV, Excel, OpenDocument, Word, OFX, QFX, QBO or QIF.");
             var draft = await s.Imports.ParseAsync(Path.GetFileName(path), await File.ReadAllBytesAsync(path));
             return DraftView(draft, s);
         });
@@ -349,6 +359,21 @@ internal static class Api
         return line is null ? "" : line.Length > 40 ? line[..40] : line;
     }
 
+    /// <summary>Every tag, with the categories that carry it and how many operations carry it themselves.</summary>
+    private static object TagList(AppServices s)
+    {
+        var index = s.Db.TagIndex();
+        return new
+        {
+            tags = index.Tags.Select(t => new
+            {
+                t.Id, t.Name, t.Color,
+                operations = index.ByTransaction.Count(kv => kv.Value.Contains(t.Id)),
+            }),
+            categoryTags = index.ByCategory,
+        };
+    }
+
     private static object CategoryList() =>
         Categories.All.Select(c => new { c.Id, c.Name, kind = c.Kind, c.Icon, parentId = c.Parent, c.Color, c.BuiltIn });
 
@@ -413,7 +438,7 @@ internal static class Api
             .Select(d => new { name = d.Name, path = d.FullName, isFolder = true, size = 0L, modified = d.LastWriteTime.ToString("O") });
         var files = foldersOnly
             ? []
-            : dir.EnumerateFiles("*", options).Where(f => f.Extension.ToLowerInvariant() is ".pdf" or ".csv").OrderByDescending(f => f.LastWriteTime)
+            : dir.EnumerateFiles("*", options).Where(f => ImportService.Extensions.Contains(f.Extension.ToLowerInvariant())).OrderByDescending(f => f.LastWriteTime)
                 .Select(f => new { name = f.Name, path = f.FullName, isFolder = false, size = f.Length, modified = f.LastWriteTime.ToString("O") });
         return new { path = dir.FullName, parent = dir.Parent?.FullName, entries = folders.Concat(files).Take(2000).ToList() };
     }

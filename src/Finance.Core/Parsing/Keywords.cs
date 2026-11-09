@@ -22,7 +22,8 @@ internal static class Keywords
 
     public static readonly string[] Intermediate =
     [
-        "CARRIED FORWARD", "A REPORTER", "REPORT A NOUVEAU", "SOLDE INTERMEDIAIRE", "SOUS-TOTAL", "SUBTOTAL", "SOLDE DU JOUR", "DAILY BALANCE",
+        "CARRIED FORWARD", "A REPORTER", "REPORT A NOUVEAU", "SOLDE INTERMEDIAIRE", "SOUS-TOTAL", "SOUS TOTAL", "SUBTOTAL", "SUB-TOTAL", "SUB TOTAL",
+        "SOLDE DU JOUR", "DAILY BALANCE", "TOTAL AMOUNT", "TOTAL DEBITS", "TOTAL CREDITS", "NO. OF DEBITS", "NO. OF CREDITS", "NO OF DEBITS", "NO OF CREDITS",
     ];
 
     public static readonly string[] BalanceAsOf = ["SOLDE AU", "SOLDE LE", "BALANCE AS OF", "BALANCE AS AT", "BALANCE ON"];

@@ -13,7 +13,13 @@ public sealed record Bar(string Key, string Label, decimal Expenses, decimal Ear
 public sealed record TransactionView(
     long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, string CategorySource,
     string BrandSource, string RawLabel, string Note, long AccountId, long? StatementId,
-    string? Recurring = null, long? LinkedId = null, decimal? Earned = null);
+    string? Recurring = null, long? LinkedId = null, decimal? Earned = null, long[]? OwnTags = null, long[]? Tags = null);
+
+/// <summary>
+/// One part of a period at the best resolution (years for more than a year, months otherwise) and its balance:
+/// what was earned minus what was spent, as in the period's totals.
+/// </summary>
+public sealed record PeriodBalance(string From, string To, string Title, decimal Expenses, decimal Earnings, decimal Balance);
 
 public sealed class PeriodSummary
 {
@@ -36,6 +42,15 @@ public sealed class PeriodSummary
     /// (Groceries and Restaurants under Food make one Food slice).
     /// </summary>
     public required List<Slice> ByTopCategory { get; init; }
+    /// <summary>
+    /// Expenses per tag. An operation with several tags (its own and its category's) is in one slice named after all of
+    /// them ("Travel + Work"), so no money is counted twice; operations without a tag are left out.
+    /// </summary>
+    public required List<Slice> TagPie { get; init; }
+    /// <summary>The period in years (more than a year) or months, each with its balance (the Summary view).</summary>
+    public required List<PeriodBalance> Breakdown { get; init; }
+    /// <summary>Every tag (names for the tag ids of the operations).</summary>
+    public required List<Tag> Tags { get; init; }
     public required List<Slice> ByBrand { get; init; }
     public required List<Slice> BrandPie { get; init; }
     public required List<Bar> Series { get; init; }
@@ -106,6 +121,7 @@ public sealed class SummaryService(Database db)
         if (to < from) throw new ArgumentException("The period ends before it starts.");
         var txs = db.Transactions(from, to).Where(t => t.Currency == currency).ToList();
         var (recurring, byId) = History(currency);
+        var tags = db.TagIndex();
         var accounts = db.Accounts().ToDictionary(a => a.Id);
         var movements = Movements.Build(txs, byId, accounts);
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -159,6 +175,20 @@ public sealed class SummaryService(Database db)
 
         var (series, unit) = Series(txs, from, to, g);
 
+        // Tags: each tagged expense once, in the slice of its whole set of tags.
+        var tagged = new Dictionary<string, (string Label, decimal Amount)>(StringComparer.Ordinal);
+        foreach (var t in txs)
+        {
+            if (t.Amount >= 0 || Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer) continue;
+            var set = tags.Of(t.Id, t.CategoryId).Where(tags.ById.ContainsKey).ToArray();
+            if (set.Length == 0) continue;
+            var key = string.Join('+', set);
+            var label = string.Join(" + ", set.Select(id => tags.ById[id]).OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).Select(x => x.Name));
+            var prev = tagged.GetValueOrDefault(key, (Label: label, Amount: 0m));
+            tagged[key] = (label, prev.Amount - t.Amount);
+        }
+        var tagSlices = Slices(tagged.Select(kv => (kv.Key, kv.Value.Label, kv.Value.Amount)), tagged.Values.Sum(x => x.Amount));
+
         return new PeriodSummary
         {
             From = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
@@ -171,10 +201,13 @@ public sealed class SummaryService(Database db)
             Balance = earnings - expenses,
             TransfersOut = transfersOut,
             TransfersIn = transfersIn,
-            Transactions = txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => View(t, recurring.GetValueOrDefault(t.Id))).ToList(),
+            Transactions = txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => View(t, recurring.GetValueOrDefault(t.Id), tags)).ToList(),
             ByCategory = categorySlices,
             CategoryPie = FoldPie(categorySlices),
             ByTopCategory = topSlices,
+            TagPie = tagSlices,
+            Tags = [.. tags.Tags],
+            Breakdown = Breakdown(txs, from, to),
             ByBrand = brandSlices,
             BrandPie = FoldPie(brandSlices),
             Series = series,
@@ -191,12 +224,48 @@ public sealed class SummaryService(Database db)
         };
     }
 
-    public static TransactionView View(Transaction t) => View(t, null);
+    public static TransactionView View(Transaction t, TagIndex? tags = null) => View(t, null, tags);
 
-    public static TransactionView View(Transaction t, string? recurring) => new(
+    public static TransactionView View(Transaction t, string? recurring, TagIndex? tags) => new(
         t.Id, t.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), t.Amount, t.Currency, t.Brand, t.CategoryId,
         t.CategorySource.ToString(), t.BrandSource.ToString(), t.RawLabel, t.Note, t.AccountId, t.StatementId,
-        recurring, t.LinkedId, t.Earned);
+        recurring, t.LinkedId, t.Earned, tags?.Own(t.Id) ?? [], tags?.Of(t.Id, t.CategoryId) ?? []);
+
+    /// <summary>What was spent and earned, counted as in the period's totals (an investment's earned part is income).</summary>
+    private static (decimal Expenses, decimal Earnings) Totals(IEnumerable<Transaction> txs)
+    {
+        decimal expenses = 0, earnings = 0;
+        foreach (var t in txs)
+        {
+            if (Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer)
+            {
+                if (t.Amount > 0 && t.Earned is > 0 and var gain) earnings += gain;
+                continue;
+            }
+            if (t.Amount < 0) expenses -= t.Amount; else earnings += t.Amount;
+        }
+        return (expenses, earnings);
+    }
+
+    /// <summary>The period cut in years when it is longer than a year, in months otherwise, each part kept inside the period.</summary>
+    public static List<PeriodBalance> Breakdown(List<Transaction> txs, DateOnly from, DateOnly to)
+    {
+        var years = to.DayNumber - from.DayNumber + 1 > 366;
+        var parts = new List<PeriodBalance>();
+        var start = from;
+        while (start <= to)
+        {
+            var end = years ? new DateOnly(start.Year, 12, 31) : new DateOnly(start.Year, start.Month, DateTime.DaysInMonth(start.Year, start.Month));
+            if (end > to) end = to;
+            var (a, b) = (start, end);
+            var (expenses, earnings) = Totals(txs.Where(t => t.Date >= a && t.Date <= b));
+            var title = Formatting.PeriodTitle(a, b, years ? Granularity.Year : Granularity.Month);
+            parts.Add(new PeriodBalance(a.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), b.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                title, expenses, earnings, earnings - expenses));
+            start = end.AddDays(1);
+        }
+        return parts;
+    }
 
     private static List<Slice> Slices(IEnumerable<(string Key, string Label, decimal Amount)> items, decimal total) =>
         items.OrderByDescending(x => x.Amount).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase)

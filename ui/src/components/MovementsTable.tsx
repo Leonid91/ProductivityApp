@@ -7,7 +7,8 @@ import { useApp } from '../AppContext'
 import { formatDate, money, plural } from '../format'
 import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill } from './common'
-import { choiceItems, countChoices, hiding } from './filters'
+import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './filters'
+import { TagCell, useTagName } from './tags'
 import { HeaderButton } from './TransactionTable'
 import { useKept } from '../keep'
 
@@ -16,7 +17,7 @@ const NONE_HIDDEN = new Set<string>()
 /**
  * Transfers, card payments and investments, each movement once: from which account (or the outside) to which account
  * (or the outside). Places outside the app (accounts not imported, other people, investments) are in orange.
- * Dates, categories and descriptions each have a filter (all, none, one or any of them).
+ * Dates, categories, descriptions and tags each have a filter (all, none, one or any of them).
  */
 export function MovementsTable({ keep, movements, transactions, currency, paged, onEdit }: {
   /** Where the table's filters and page are kept while the period is away from the screen. */
@@ -49,6 +50,9 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
   const [hiddenLabels, setHiddenLabels] = useKept(keep + ':labels', NONE_HIDDEN)
   const [hiddenCategories, setHiddenCategories] = useKept(keep + ':categories', NONE_HIDDEN)
   const [catMenu, setCatMenu] = useState<HTMLElement | null>(null)
+  const [hiddenTags, setHiddenTags] = useKept(keep + ':tags', NONE_HIDDEN)
+  const [tagMenu, setTagMenu] = useState<HTMLElement | null>(null)
+  const tagName = useTagName()
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
   const [labelMenu, setLabelMenu] = useState<HTMLElement | null>(null)
   const pageSize = 25
@@ -57,8 +61,11 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
   const labelChoices = useMemo(() => countChoices(movements, (m) => m.label, (l) => l).sort((a, b) => a.label.localeCompare(b.label)), [movements])
   const categoryChoices = useMemo(() => countChoices(movements, (m) => m.categoryId, (id) => category(id).name,
     (id) => <CategoryIcon name={category(id).icon} sx={{ fontSize: 18 }} />).sort((a, b) => b.count - a.count), [movements, category])
-  const rows = useMemo(() => [...movements].reverse().filter((m) => !hiddenDates.has(m.date) && !hiddenCategories.has(m.categoryId) && !hiddenLabels.has(m.label)),
-    [movements, hiddenDates, hiddenCategories, hiddenLabels])
+  const tagsOf = (m: MovementView) => byId.get(m.editId)?.tags ?? []
+  const tagFilter = useMemo(() => tagChoices(movements, (m) => byId.get(m.editId)?.tags ?? [], tagName), [movements, byId, tagName])
+  const rows = useMemo(() => [...movements].reverse().filter((m) => !hiddenDates.has(m.date) && !hiddenCategories.has(m.categoryId) && !hiddenLabels.has(m.label)
+    && shownByTags(byId.get(m.editId)?.tags ?? [], hiddenTags)),
+    [movements, byId, hiddenDates, hiddenCategories, hiddenLabels, hiddenTags])
   const filtered = (set: (hidden: Set<string>) => void) => (hidden: Set<string>) => { set(hidden); setPage(1) }
   const pages = Math.max(1, Math.ceil(rows.length / pageSize))
   const visible = paged ? rows.slice((Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize) : rows
@@ -78,9 +85,10 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
           <col style={{ width: '14%' }} />
           <col style={{ width: 196 }} />
           <col />
-          <col style={{ width: '16%' }} />
+          <col style={{ width: '14%' }} />
           <col style={{ width: 22 }} />
-          <col style={{ width: '19%' }} />
+          <col style={{ width: '16%' }} />
+          <col style={{ width: '12%' }} />
           <col style={{ width: '10%' }} />
           <col style={{ width: 40 }} />
         </colgroup>
@@ -92,6 +100,7 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
             <TableCell>From</TableCell>
             <TableCell padding="none" />
             <TableCell>To</TableCell>
+            <TableCell><HeaderButton label="Tags" active={hiding(hiddenTags, tagFilter)} onClick={(e) => setTagMenu(e.currentTarget)} /></TableCell>
             <TableCell align="right">Amount ({currency})</TableCell>
             <TableCell />
           </TableRow>
@@ -111,6 +120,7 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
                 <TableCell>{place(m.from, m.fromOutside, m.fromType)}</TableCell>
                 <TableCell padding="none"><East sx={{ fontSize: 16, color: 'text.disabled', display: 'block' }} /></TableCell>
                 <TableCell>{place(m.to, m.toOutside, m.toType)}</TableCell>
+                <TableCell>{tx && <TagCell operationId={tx.id} own={tx.ownTags} all={tagsOf(m)} categoryName={category(tx.categoryId).name} />}</TableCell>
                 <TableCell align="right" className="tnum" sx={{ fontWeight: 560, whiteSpace: 'nowrap' }}>{money(m.amount, currency)}</TableCell>
                 <TableCell padding="none" align="right">
                   {tx && (
@@ -126,7 +136,7 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
           })}
           {visible.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>No movements match these filters</TableCell>
+              <TableCell colSpan={9} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>No movements match these filters</TableCell>
             </TableRow>
           )}
         </TableBody>
@@ -142,6 +152,9 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
       </Menu>
       <Menu anchorEl={catMenu} open={catMenu !== null} onClose={() => setCatMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
         {choiceItems({ choices: categoryChoices, hidden: hiddenCategories, onChange: filtered(setHiddenCategories), all: 'All categories' })}
+      </Menu>
+      <Menu anchorEl={tagMenu} open={tagMenu !== null} onClose={() => setTagMenu(null)} slotProps={{ paper: { sx: { minWidth: 280, maxWidth: 380, maxHeight: 480 } } }}>
+        {choiceItems({ choices: tagFilter, hidden: hiddenTags, onChange: filtered(setHiddenTags), all: 'All tags' })}
       </Menu>
       <Menu anchorEl={labelMenu} open={labelMenu !== null} onClose={() => setLabelMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
         {choiceItems({ choices: labelChoices, hidden: hiddenLabels, onChange: filtered(setHiddenLabels), all: 'All descriptions' })}
