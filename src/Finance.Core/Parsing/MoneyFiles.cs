@@ -102,7 +102,10 @@ public static partial class MoneyFiles
             switch (line[0])
             {
                 case 'D': date = v; break;
-                case 'T' or 'U': amount ??= Number(v.Replace(",", "")); break;
+                // "-1,234.56" (thousands comma) or "-1 234,56" / "-1.234,56" (French software: decimal comma).
+                case 'T' or 'U':
+                    amount ??= Regex.IsMatch(v, @",\d{1,2}$") ? Number(v.Replace(" ", "").Replace(" ", "").Replace(".", "").Replace(',', '.')) : Number(v.Replace(",", ""));
+                    break;
                 case 'P': payee = v; break;
                 case 'M': memo = v; break;
                 case 'L': category = v.Trim('[', ']'); break;

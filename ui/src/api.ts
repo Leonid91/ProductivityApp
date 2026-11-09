@@ -26,7 +26,7 @@ export const currencies = ['CAD', 'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'JPY', 'MXN
 /** Account types, named the way the bank's banking system names them. */
 export function accountKinds(system: string): { value: AccountKind; label: string }[] {
   return system === 'france'
-    ? [{ value: 'bank', label: 'Current account' }, { value: 'savings', label: 'Savings (livret)' }, { value: 'creditCard', label: 'Deferred debit card' }]
+    ? [{ value: 'bank', label: 'Current account (debit card)' }, { value: 'savings', label: 'Savings (livret)' }, { value: 'creditCard', label: 'Deferred debit card' }]
     : [{ value: 'bank', label: 'Chequing account' }, { value: 'savings', label: 'Savings account' }, { value: 'creditCard', label: 'Credit card' }]
 }
 
@@ -67,6 +67,11 @@ export interface TransactionView {
   ownTags: number[]
   /** Every tag it carries: its own and its category's. */
   tags: number[]
+  /** Converted operations (all banks together): the amount as the bank wrote it, its currency, the rate and the day of the rate. */
+  original?: number | null
+  originalCurrency?: string | null
+  rate?: number | null
+  rateDay?: string | null
 }
 
 /** One part of a period (a month, or a year for ranges longer than a year) and its balance. */
@@ -137,6 +142,47 @@ export interface PeriodSummary {
 }
 
 export interface MonthEntry { year: number; month: number; count: number }
+/** One bank's part of a period, in the bank's currency ("other": cash and manual entries). */
+export interface BankPart { key: string; name: string; currency: string; system: BankingSystem | null; summary: PeriodSummary }
+export interface RateUse { day: string; rateDay: string; rate: number }
+/** How the operations of one bank in one currency were converted to another. */
+export interface ConversionLine {
+  group: string; from: string; to: string; operations: number
+  expenses: number; earnings: number; convertedExpenses: number; convertedEarnings: number
+  lowestRate: number | null; highestRate: number | null; effectiveRate: number | null
+  rates: RateUse[]; unconverted: number; unconvertedAmount: number; oldRates: number
+}
+export interface Conversion { to: string; source: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; lines: ConversionLine[] }
+export interface ConvertedView { amount: number; rate: number; rateDay: string; earned: number | null }
+/**
+ * A period bank by bank, then every bank together in the global display currency. The operations are in the banks'
+ * parts only (global holds the totals and charts): globalTransactions() gives them all in the global currency.
+ */
+export interface PeriodReport {
+  from: string; to: string; title: string; granularity: Granularity; currency: string; banks: BankPart[]; global: PeriodSummary; conversion: Conversion
+  /** Operations in another currency than the global one, by id: converted amount, rate and day of the rate. */
+  converted: Record<string, ConvertedView>
+  /** Operations left out of all banks together (no rate known for their day). */
+  unconverted: number[]
+}
+
+/** Every operation of every bank in the global currency (converted ones keep the amount the bank wrote, and the rate). */
+export function globalTransactions(r: PeriodReport): TransactionView[] {
+  const left = new Set(r.unconverted)
+  return r.banks.flatMap((b) => b.summary.transactions)
+    .filter((t) => !left.has(t.id))
+    .map((t) => {
+      // A bank part may show an account in another currency converted to the bank's: start from what the bank wrote.
+      const amount = t.original ?? t.amount
+      const currency = t.originalCurrency ?? t.currency
+      const c = r.converted[t.id]
+      if (c) return { ...t, amount: c.amount, currency: r.currency, original: amount, originalCurrency: currency, rate: c.rate, rateDay: c.rateDay, earned: c.earned }
+      return { ...t, amount, currency, original: null, originalCurrency: null, rate: null, rateDay: null }
+    })
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
+}
+export interface RatesStatus { source: string; pageUrl: string; dataUrl: string; updatedAt: string | null; latest: string | null; first: string | null; currencies: number; error: string | null }
+
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
 export interface Account { id: number; name: string; currency: string; kind: AccountKind; bank: string | null; last4: string | null; bankId: number | null; system: BankingSystem }
@@ -161,6 +207,8 @@ export interface DraftRow {
 
 export interface Draft {
   id: string
+  /** The other accounts of the same file, each its own draft. */
+  others?: Draft[]
   fileName: string
   alreadyImported: boolean
   status: Verification
@@ -243,6 +291,14 @@ export const api = {
     index: (currency?: string) => invoke<PeriodIndex>('periods.index', { currency }),
     summary: (from: string, to: string, granularity: Granularity, currency?: string) =>
       invoke<PeriodSummary>('periods.summary', { from, to, granularity, currency }),
+    /** Every bank on its own, then all of them in the global display currency. */
+    report: (from: string, to: string, granularity: Granularity) => invoke<PeriodReport>('periods.report', { from, to, granularity }),
+  },
+  rates: {
+    status: () => invoke<RatesStatus>('rates.status'),
+    update: () => invoke<RatesStatus>('rates.update'),
+    /** Downloads the rates when they are needed and missing or behind; says whether anything changed. */
+    ensure: () => invoke<{ updated: boolean; status: RatesStatus }>('rates.ensure'),
   },
   tx: {
     setCategory: (id: number, categoryId: string, allOfBrand: boolean) => invoke<{ changed: number }>('tx.setCategory', { id, categoryId, allOfBrand }),
@@ -287,6 +343,7 @@ export const api = {
     remove: (id: number) => invoke<null>('statements.delete', { id }),
   },
   imports: {
+    /** A file of several accounts (a French statement of every account) gives one draft per account: the others in "others". */
     parseFile: (path: string) => invoke<Draft>('import.parseFile', { path }),
     parseBytes: (name: string, base64: string) => invoke<Draft>('import.parseBytes', { name, base64 }),
     choose: (draftId: string, accountId: number | null, kind: AccountKind | null, bankId: number | null) => invoke<Draft>('import.choose', { draftId, accountId, kind, bankId }),
@@ -308,6 +365,8 @@ export const api = {
   shell: {
     open: (path: string) => invoke<null>('shell.open', { path }),
     reveal: (path: string) => invoke<null>('shell.reveal', { path }),
+    /** Opens the page of the exchange rates' source in the browser (the only web page the app opens). */
+    openRatesPage: () => invoke<null>('shell.openRatesPage'),
   },
   report: {
     defaults: (from: string, to: string, granularity: Granularity, currency: string) =>

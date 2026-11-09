@@ -45,6 +45,8 @@ public sealed class ImportDraft
     public BankTemplate? Template { get; set; }
     /// <summary>Banking system of the chosen account's bank (or of the bank chosen for a new account).</summary>
     public BankingSystem System { get; set; }
+    /// <summary>The other accounts of the same file (a statement of several accounts gives one draft per account).</summary>
+    public List<ImportDraft> Others { get; } = [];
 }
 
 /// <summary>
@@ -101,7 +103,19 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             return file;
         }
         var pages = await PdfReader.ReadAsync(bytes, ct).ConfigureAwait(false);
+        // One statement of several accounts (current account and savings books): one draft per account.
+        var sections = AccountSections.Split(pages);
+        if (sections.Count > 1)
+        {
+            var drafts = sections.Select((sec, i) => PdfDraft($"{fileName} · {sec.Title}", $"{hash}#{i + 1}", bytes, sec.Pages, sec)).ToList();
+            drafts[0].Others.AddRange(drafts.Skip(1));
+            return drafts[0];
+        }
+        return PdfDraft(fileName, hash, bytes, pages);
+    }
 
+    private ImportDraft PdfDraft(string fileName, string hash, byte[] bytes, IReadOnlyList<PageWords> pages, AccountSections.Section? section = null)
+    {
         var firstPage = TextNorm.Fold(string.Join(' ', pages[0].Words.Select(w => w.Text)));
         var template = db.Templates()
             .Where(t => t.MatchText.Trim().Length > 0 && firstPage.Contains(TextNorm.Fold(t.MatchText.Trim()), StringComparison.Ordinal))
@@ -113,6 +127,13 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         {
             var auto = StatementParser.Parse(pages, null, defaultCurrency());
             if (auto.Verified) { parse = auto; template = null; }
+        }
+        // One account of a statement of several: its own number, and its type from its own title (a savings book or not).
+        if (section is not null)
+        {
+            if (section.Number.Length >= 4) parse.Last4 = section.Number[^4..];
+            if (parse.Kind != AccountKind.CreditCard)
+                parse.Kind = Keywords.ContainsAny(TextNorm.Fold(section.Title), Keywords.Savings) ? AccountKind.Savings : AccountKind.Bank;
         }
 
         var draft = new ImportDraft

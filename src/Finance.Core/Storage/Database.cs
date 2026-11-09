@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 10;
+    private const int SchemaVersion = 11;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -149,6 +149,14 @@ public sealed class Database : IDisposable
                 PRAGMA user_version = 10;
                 """);
         }
+        if (version < 11)
+        {
+            // Euro reference rates of the European Central Bank, one row per currency: "date=rate;..." (units per euro).
+            Exec("CREATE TABLE rates (currency TEXT PRIMARY KEY, data TEXT NOT NULL); PRAGMA user_version = 11;");
+            // Card categories named for both banking systems (France has no credit cards), unless the person renamed them.
+            Exec("UPDATE categories SET name = 'Card statement payments' WHERE id = 'cardpayments' AND name = 'Credit card payments'");
+            Exec("UPDATE categories SET name = 'Card statement spending' WHERE id = 'cardspending' AND name = 'Credit card spending'");
+        }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -272,6 +280,16 @@ public sealed class Database : IDisposable
 
     public void SetSetting(string key, string value) =>
         Exec("INSERT INTO settings(key, value) VALUES($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ("$k", key), ("$v", value));
+
+    /// <summary>Exchange rates per currency, as stored by <see cref="Services.ExchangeRates"/>.</summary>
+    public Dictionary<string, string> LoadRates() =>
+        Query("SELECT currency, data FROM rates", r => (r.GetString(0), r.GetString(1))).ToDictionary(x => x.Item1, x => x.Item2);
+
+    public void SaveRates(IReadOnlyDictionary<string, string> series) => InTransaction(() =>
+    {
+        foreach (var (currency, data) in series)
+            Exec("INSERT INTO rates(currency, data) VALUES($c, $d) ON CONFLICT(currency) DO UPDATE SET data = excluded.data", ("$c", currency), ("$d", data));
+    });
 
     public Dictionary<string, string> AllSettings() =>
         Query("SELECT key, value FROM settings", r => (r.GetString(0), r.GetString(1))).ToDictionary(x => x.Item1, x => x.Item2);

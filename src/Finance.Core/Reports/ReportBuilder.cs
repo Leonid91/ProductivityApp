@@ -44,20 +44,41 @@ public static class ReportBuilder
     /// <param name="TopLevelCategories">Charts by first-level category (nested categories counted in theirs), or by the categories themselves.</param>
     public sealed record Options(bool PieShowAll = true, string Transfers = "separate", bool TopLevelCategories = true);
 
-    public static byte[] Build(PeriodSummary s, string dateFormat, DateTime generatedAt, Options? options = null)
+    /// <summary>A period in one currency (one bank, or a single-currency summary).</summary>
+    public static byte[] Build(PeriodSummary s, string dateFormat, DateTime generatedAt, Options? options = null) =>
+        Document(s.Title, $"{s.Transactions.Count} operation{(s.Transactions.Count == 1 ? "" : "s")} · amounts in {s.Currency}", generatedAt,
+            col => Part(col, s, options ?? new Options(), dateFormat, tables: true));
+
+    /// <summary>
+    /// A period bank by bank (statements, totals and charts in the bank's currency), then every bank together in the
+    /// global currency (totals and charts), with how each amount was converted.
+    /// </summary>
+    public static byte[] Build(PeriodReport r, string dateFormat, DateTime generatedAt, Options? options = null)
+    {
+        var o = options ?? new Options();
+        var count = r.Banks.Sum(b => b.Summary.Transactions.Count);
+        return Document(r.Title, $"{count} operation{(count == 1 ? "" : "s")} · {r.Banks.Count} bank{(r.Banks.Count == 1 ? "" : "s")} · global amounts in {r.Currency}", generatedAt, col =>
+        {
+            foreach (var bank in r.Banks)
+            {
+                col.Item().PaddingTop(4).Text($"{bank.Name} · {bank.Currency}").FontSize(14).SemiBold();
+                Part(col, bank.Summary, o, dateFormat, tables: true);
+            }
+            if (!ShowsGlobal(r)) return;
+            col.Item().PageBreak();
+            col.Item().Text($"All banks · {r.Currency}").FontSize(14).SemiBold();
+            Part(col, r.Global, o, dateFormat, tables: false);
+            col.Item().ShowEntire().Element(c => ConversionBlock(c, r.Conversion, dateFormat));
+        });
+    }
+
+    /// <summary>The global part is shown when there is more than one bank, or anything converted.</summary>
+    public static bool ShowsGlobal(PeriodReport r) => r.Banks.Count > 1 || r.Conversion.Lines.Count > 0;
+
+    private static byte[] Document(string title, string subtitle, DateTime generatedAt, Action<ColumnDescriptor> content)
     {
         Initialize();
-        var o = options ?? new Options();
-        bool IsMove(TransactionView t) => Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;
-        // Same split as the screen: recurring payments and income, then movements, are shown apart from the rest.
-        // Same split as the screen: every income in its own table (the earned part of an investment coming back
-        // included), recurring payments apart, then movements; the main table keeps the other spending.
-        var income = s.Transactions.Where(t => t.Amount > 0 && !IsMove(t))
-            .Concat(s.Transactions.Where(t => IsMove(t) && t.Earned is > 0).Select(t => t with { Amount = t.Earned!.Value, Brand = t.Brand + " (earned part)" }))
-            .OrderBy(t => t.Date).ToList();
-        var main = s.Transactions.Where(t => t.Recurring is null && !(t.Amount > 0 && !IsMove(t)) && (o.Transfers == "inline" || !IsMove(t))).ToList();
-        var recurringOut = s.Transactions.Where(t => t.Recurring is not null && t.Amount < 0).ToList();
-        var doc = Document.Create(container => container.Page(page =>
+        var doc = QuestPDF.Fluent.Document.Create(container => container.Page(page =>
         {
             page.Size(PageSizes.Letter);
             page.MarginHorizontal(40);
@@ -72,13 +93,45 @@ public static class ReportBuilder
                     row.RelativeItem().Text("FINANCES · PERIOD REPORT").FontSize(7.5f).LetterSpacing(0.08f).SemiBold().FontColor(Palette.InkMuted);
                     row.AutoItem().Text($"Generated {generatedAt.ToString("dd MMMM yyyy", Formatting.English)}").FontSize(7.5f).FontColor(Palette.InkMuted);
                 });
-                col.Item().PaddingTop(6).Text(s.Title).FontSize(17).SemiBold();
-                col.Item().PaddingTop(2).Text($"{s.Transactions.Count} operation{(s.Transactions.Count == 1 ? "" : "s")} · amounts in {s.Currency}").FontSize(8.5f).FontColor(Palette.InkSecondary);
+                col.Item().PaddingTop(6).Text(title).FontSize(17).SemiBold();
+                col.Item().PaddingTop(2).Text(subtitle).FontSize(8.5f).FontColor(Palette.InkSecondary);
             });
 
             page.Content().Column(col =>
             {
                 col.Spacing(16);
+                content(col);
+            });
+
+            page.Footer().PaddingTop(10).Row(row =>
+            {
+                row.RelativeItem().Text(title).FontSize(7).FontColor(Palette.InkMuted);
+                row.AutoItem().Text(t =>
+                {
+                    t.DefaultTextStyle(x => x.FontSize(7).FontColor(Palette.InkMuted));
+                    t.Span("Page ");
+                    t.CurrentPageNumber();
+                    t.Span(" of ");
+                    t.TotalPages();
+                });
+            });
+        }));
+        return doc.GeneratePdf();
+    }
+
+    /// <summary>One currency's statements (when asked), totals and charts.</summary>
+    private static void Part(ColumnDescriptor col, PeriodSummary s, Options o, string dateFormat, bool tables)
+    {
+        bool IsMove(TransactionView t) => Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;
+        // Same split as the screen: every income in its own table (the earned part of an investment coming back
+        // included), recurring payments apart, then movements; the main table keeps the other spending.
+        var income = s.Transactions.Where(t => t.Amount > 0 && !IsMove(t))
+            .Concat(s.Transactions.Where(t => IsMove(t) && t.Earned is > 0).Select(t => t with { Amount = t.Earned!.Value, Brand = t.Brand + " (earned part)" }))
+            .OrderBy(t => t.Date).ToList();
+        var main = s.Transactions.Where(t => t.Recurring is null && !(t.Amount > 0 && !IsMove(t)) && (o.Transfers == "inline" || !IsMove(t))).ToList();
+        var recurringOut = s.Transactions.Where(t => t.Recurring is not null && t.Amount < 0).ToList();
+        if (tables)
+        {
                 col.Item().Element(c => OperationsTable(c, main, s, dateFormat, "No other operations in this period."));
                 if (recurringOut.Count > 0)
                     col.Item().Element(c => Section(c, "Recurring payments & subscriptions", s.RecurringExpenses, s, Palette.NegativeSoft,
@@ -89,6 +142,7 @@ public static class ReportBuilder
                 if (o.Transfers is "separate" or "table" && s.Movements.Count > 0)
                     col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s, Palette.Surface,
                         x => MovementsTable(x, s.Movements, s, dateFormat)));
+        }
                 col.Item().ShowEntire().Column(t =>
                 {
                     t.Spacing(8);
@@ -104,22 +158,41 @@ public static class ReportBuilder
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Tags", o.PieShowAll ? s.TagPie : SummaryService.FoldPie(s.TagPie), s.Currency, "No tagged expenses in this period."));
                 col.Item().ShowEntire().Element(c => SeriesBlock(c, s));
                 if (s.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
-            });
+    }
 
-            page.Footer().PaddingTop(10).Row(row =>
+    /// <summary>How the global figures were converted: the source of the rates, the method, and every bank's currency before and after.</summary>
+    private static void ConversionBlock(IContainer container, Conversion c, string dateFormat)
+    {
+        container.Background(Palette.Surface).CornerRadius(8).Padding(12).Column(col =>
+        {
+            col.Spacing(6);
+            col.Item().Text("How amounts are converted").FontSize(10).SemiBold();
+            col.Item().Text($"Rates: {c.Source} ({c.PageUrl}){(c.Latest is { } latest ? $", published up to {Day(latest, dateFormat)}" : "")}.").FontSize(8);
+            col.Item().Text("Each operation is converted at the rate published for its own day (on a weekend or holiday, the last rate published before it). "
+                + "Between two currencies other than the euro the rate goes through the euro, the same day. Each converted amount is rounded to the cent; totals add the rounded amounts.").FontSize(8);
+            if (c.Lines.Count == 0)
             {
-                row.RelativeItem().Text(s.Title).FontSize(7).FontColor(Palette.InkMuted);
-                row.AutoItem().Text(t =>
+                col.Item().Text($"Nothing to convert: every amount is in {c.To}.").FontSize(8);
+                return;
+            }
+            col.Item().Table(table =>
+            {
+                table.ColumnsDefinition(d => { d.RelativeColumn(2.2f); d.RelativeColumn(1.1f); d.RelativeColumn(0.8f); d.RelativeColumn(2.4f); d.RelativeColumn(2.4f); d.RelativeColumn(2.2f); });
+                foreach (var h in new[] { "Bank", "Currency", "Operations", "Expenses", "Earnings", "Rate (lowest to highest)" })
+                    table.Cell().PaddingBottom(4).Text(h).FontSize(7.5f).SemiBold().FontColor(Palette.InkSecondary);
+                foreach (var l in c.Lines)
                 {
-                    t.DefaultTextStyle(x => x.FontSize(7).FontColor(Palette.InkMuted));
-                    t.Span("Page ");
-                    t.CurrentPageNumber();
-                    t.Span(" of ");
-                    t.TotalPages();
-                });
+                    table.Cell().Text(l.Group).FontSize(8);
+                    table.Cell().Text($"{l.From} to {l.To}").FontSize(8);
+                    table.Cell().Text(l.Operations.ToString(CultureInfo.InvariantCulture)).FontSize(8);
+                    table.Cell().Text($"{Formatting.Money(l.Expenses, l.From)} = {Formatting.Money(l.ConvertedExpenses, l.To)}").FontSize(8).EnableFontFeature("tnum");
+                    table.Cell().Text($"{Formatting.Money(l.Earnings, l.From)} = {Formatting.Money(l.ConvertedEarnings, l.To)}").FontSize(8).EnableFontFeature("tnum");
+                    table.Cell().Text(l.LowestRate is { } lo ? $"1 {l.From} = {lo.ToString("0.######", CultureInfo.InvariantCulture)}{(l.HighestRate != lo ? " to " + l.HighestRate!.Value.ToString("0.######", CultureInfo.InvariantCulture) : "")} {l.To}" : "-").FontSize(8);
+                }
             });
-        }));
-        return doc.GeneratePdf();
+            foreach (var l in c.Lines.Where(l => l.Unconverted > 0))
+                col.Item().Text($"{l.Group}: {l.Unconverted} operation{(l.Unconverted == 1 ? "" : "s")} in {l.From} ({Formatting.Money(l.UnconvertedAmount, l.From)}) left out, no rate known for their day.").FontSize(8).FontColor(Palette.Negative);
+        });
     }
 
     private static string Day(string iso, string dateFormat) => Formatting.FormatDate(DateOnly.ParseExact(iso, "yyyy-MM-dd"), dateFormat);

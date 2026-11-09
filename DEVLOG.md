@@ -384,3 +384,55 @@ real app with `tools/e2e/perf.mjs`.
 - Summary: after scrolling down (or switching to Summary from far down in Statements), scrolling up jumped back down
   again and again. Every month (or year) in Summary is now as tall as the others whether loaded or not, so nothing
   above the screen changes size while scrolling.
+
+## November 9th, 2026 - Banks side by side, a global currency, Caisse d'Epargne statements - Commit 18
+
+### Added
+- Periods, bank by bank: Statements and Analytics show one block per bank (its tables or charts and its totals, in
+  the bank's currency), then "All banks" (totals and charts) in the global display currency. The Summary stays
+  global. The calendar shows every bank together, a converted amount with the amount the bank wrote and its rate.
+- Global display currency, in the title of Settings > Display, followed by the link to the source of the exchange
+  rates (European Central Bank euro reference rates) and a button to download them again.
+- Exchange rates: the European Central Bank's whole history (every working day since 1999, about 30 currencies) is
+  downloaded for free when some accounts are in another currency, kept in the database (works offline afterwards),
+  and refreshed when it falls behind. Each operation is converted at the rate of its own day (the last rate before
+  it on weekends and holidays), through the euro between two other currencies, rounded to the cent; totals add the
+  rounded amounts. "All banks" shows how: the source, the method, each bank's currency before and after, the lowest
+  and highest rates, the rate of every day, and any operation left out for want of a rate. The PDF report has the
+  same sections and conversions.
+- Caisse d'Epargne: the monthly PDF of every account (current account and Livret A in one file) gives one balanced
+  statement per account; the CSV export since 2020, the older CSV export (balances above and below the table), the
+  Money (OFX) and Quicken (QIF) exports, decimal commas included.
+- `SampleStatements caisse <folder>` and `twobanks <folder>`: invented Caisse d'Epargne files in every format, and a
+  Canadian bank (CAD) with a French bank (EUR) over the same months.
+
+### Changed
+- French banking system named "Debit card system": card purchases come out of the current account; only a
+  deferred-debit card is settled by a monthly debit. No credit card wording is applied to French banks.
+- Livret A, LDDS, LEP and Livret Jeune are savings moved between one's own accounts, not investments.
+- "Credit card payments" and "Credit card spending" are named "Card statement payments" and "Card statement
+  spending" (true of both banking systems).
+- The periods are listed for every bank together (no currency to pick).
+- The automated check that scrolled the Summary up and down is gone (too narrow); the app tests now wait for the
+  periods on screen to be loaded before reading them, and click without scrolling when the button is already in view.
+
+### Fixed
+- "Caisse d'Epargne" in a file name made every account a savings account.
+- QIF amounts with a decimal comma ("-64,23") were read a hundred times too large.
+- French transfers without a payee were named "Interac e-Transfer"; a transfer paying rent ("VIR SEPA LOYER") or
+  returning money ("REMBOURSEMENT") was a plain transfer.
+- CSV exports repeated the simplified label and added the bank's tick ("0") to every label.
+- Periods: switching view far down the page, or periods loading above the screen, moved the page: the month on
+  screen went away, and scrolling up could pass over a month still drawn at its old height. The month at the top of
+  the screen now stays put whatever changes height above it; periods load when they come within 1,500 pixels of the
+  screen (that margin was measured against the window instead of the page's scrolling area, so it never applied),
+  and each period is drawn in full once whenever its content changes, so its real height is known before it is reached.
+- Tags menu of an operation: ticking two tags quickly kept only the second.
+- Calendar: the amounts of a day no longer overflow the panel.
+
+### Speed (41,000 operations over ten years, a Canadian and a French bank)
+- Each period now shows both banks and all banks together; all banks send the conversion of each operation instead
+  of the operations a second time (a year: 3 MB of data down to 1.7 MB). Exchange rates are read only for the
+  currencies used.
+- Previous version, then this one: scrolling months 110 fps, 106 fps; scrolling years 233 fps, 154 fps; switching to
+  years 240 fps, 193 fps; ten years 219 fps, 207 fps; calendar, category picker and brands 240 fps, 240 fps.

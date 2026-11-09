@@ -81,7 +81,7 @@ export function ImportPage() {
     const [job, ...rest] = queue
     setCurrent(job.name)
     job.run()
-      .then((d) => setDrafts((list) => [...list, d]))
+      .then((d) => setDrafts((list) => [...list, d, ...(d.others ?? [])]))
       .catch((e) => fail(new Error(`${job.name}: ${e instanceof Error ? e.message : String(e)}`)))
       .finally(() => {
         working.current = false

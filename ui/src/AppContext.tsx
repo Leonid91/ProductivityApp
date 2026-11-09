@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Snackbar, Typography } from '@mui/material'
 import { api, type Account, type Bank, type Category, type InitInfo, type Settings, type Tag, type TagData } from './api'
 import { categoryTree, savedOrder, type TreeEntry } from './components/order'
@@ -110,6 +110,12 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     void refreshAccounts()
     void refreshBanks()
   }, [refreshAccounts, refreshBanks])
+
+  // Exchange rates: downloaded at start when some accounts are in another currency than the global one and the rates
+  // kept are missing or behind; the periods are drawn again with them.
+  useEffect(() => {
+    api.rates.ensure().then((r) => { if (r.updated) setDataVersion((v) => v + 1) }, () => undefined)
+  }, [settings.currency, accounts.length])
 
   const value: AppState = {
     info,

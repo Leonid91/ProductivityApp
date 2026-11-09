@@ -15,8 +15,8 @@ public enum AccountKind { Bank = 0, CreditCard = 1, Savings = 2 }
 
 /// <summary>
 /// North America: chequing, savings and credit card accounts are separate, and paying the card from chequing is a
-/// movement between own accounts. France: purchases with the bank card come out of the current account directly;
-/// a deferred-debit card is settled by one monthly debit.
+/// movement between own accounts. France has no credit cards: purchases with the debit card come out of the current
+/// account directly; a deferred-debit card (an option of the debit card) is settled by one monthly debit.
 /// </summary>
 public enum BankingSystem { NorthAmerica = 0, France = 1 }
 
@@ -27,7 +27,7 @@ public static class AccountTypes
     {
         (AccountKind.CreditCard, BankingSystem.France) => "Deferred debit card",
         (AccountKind.Savings, BankingSystem.France) => "Savings (livret)",
-        (AccountKind.Bank, BankingSystem.France) => "Current account",
+        (AccountKind.Bank, BankingSystem.France) => "Current account (debit card)",
         (AccountKind.CreditCard, _) => "Credit card",
         (AccountKind.Savings, _) => "Savings account",
         _ => "Chequing account",

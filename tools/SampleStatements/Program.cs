@@ -55,6 +55,41 @@ if (args.Length == 2 && args[0] == "scotia")
     Console.WriteLine($"card previous={card.Previous} new={card.New} credits={card.Credits} debits={card.Debits} lines={card.Lines.Count}");
     return 0;
 }
+if (args.Length == 2 && args[0] == "twobanks")
+{
+    // twobanks <folder>: a Canadian bank and a French bank over the same months (fictitious): Banque Nationale-style
+    // statements in CAD (Mastercard, chequing, savings) and Caisse d'Epargne statements in EUR (current account and
+    // Livret A in one PDF), August to October 2025
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    for (var m = 8; m <= 10; m++)
+    {
+        var bnc = BncGenerator.Sample(2025, m, 40 + m);
+        foreach (var a in new[] { BncGenerator.BncAccount.Card, BncGenerator.BncAccount.Chequing, BncGenerator.BncAccount.Savings })
+            Write(Path.Combine(dir, $"National Bank {a} 2025-{m:D2}.pdf"), BncGenerator.Pdf(bnc, a));
+        Write(Path.Combine(dir, $"Caisse d'Epargne releve 2025-{m:D2}.pdf"), CaisseEpargneGenerator.Pdf(CaisseEpargneGenerator.Sample(2025, m, 20 + m)));
+    }
+    return 0;
+}
+if (args.Length == 2 && args[0] == "caisse")
+{
+    // caisse <folder>: fictitious statements in Caisse d'Epargne layouts (PDF with every account, CSV since 2020, older
+    // CSV, OFX and QIF), three months
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    for (var m = 8; m <= 10; m++)
+    {
+        var st = CaisseEpargneGenerator.Sample(2025, m, 20 + m);
+        Write(Path.Combine(dir, $"Caisse d'Epargne releve 2025-{m:D2}.pdf"), CaisseEpargneGenerator.Pdf(st));
+        foreach (var a in st.Accounts) Console.WriteLine($"{m:D2} {a.Title} open={a.Opening} close={a.Closing} debits={a.Debits} credits={a.Credits} lines={a.Lines.Count}");
+        if (m != 10) continue;
+        var cur = st.Accounts[0];
+        Write(Path.Combine(dir, "Caisse d'Epargne export 2025-10.csv"), CaisseEpargneGenerator.Csv(cur));
+        Write(Path.Combine(dir, "Caisse d'Epargne export 2025-10 virgule.csv"), CaisseEpargneGenerator.Csv(cur, decimalComma: true));
+        Write(Path.Combine(dir, "Caisse d'Epargne ancien export 2025-10.csv"), CaisseEpargneGenerator.OldCsv(st, cur));
+        Write(Path.Combine(dir, "Caisse d'Epargne 2025-10.ofx"), CaisseEpargneGenerator.Ofx(st, cur));
+        Write(Path.Combine(dir, "Caisse d'Epargne 2025-10.qif"), CaisseEpargneGenerator.Qif(cur));
+    }
+    return 0;
+}
 if (args.Length >= 2 && args[0] == "inspect")
 {
     // inspect <file> [bank|card]: reads any file the import takes (PDF, picture, CSV, Excel, OFX...) as the app does, in a
@@ -72,6 +107,13 @@ if (args.Length >= 2 && args[0] == "inspect")
         Console.WriteLine($"{p.Method} {p.Status} diff={p.Difference} open={p.OpeningBalance} close={p.ClosingBalance} computed={p.ComputedClosing} rows={p.Rows.Count} kind={p.Kind} cur={p.Currency} period={p.PeriodStart}..{p.PeriodEnd} ocr={p.UsedOcr} rowchecks={p.RowBalanceChecks}/{p.RowBalanceMismatches} order={p.DateOrder}");
         Console.WriteLine($"sum={p.Rows.Sum(r => r.Amount)} out={p.Rows.Where(r => r.Amount < 0).Sum(r => r.Amount)} in={p.Rows.Where(r => r.Amount > 0).Sum(r => r.Amount)}");
         foreach (var r in draft.Rows) Console.WriteLine($"{r.Date:yyyy-MM-dd} {r.Amount,10} {r.Balance,10}  {r.Label,-58} | {r.Brand} | {r.CategoryId} ({r.CategorySource})");
+        // A file of several accounts: each other account read on its own.
+        foreach (var o in draft.Others)
+        {
+            var q = o.Parse;
+            Console.WriteLine($"--- {o.FileName}: {q.Method} {q.Status} diff={q.Difference} open={q.OpeningBalance} close={q.ClosingBalance} computed={q.ComputedClosing} rows={q.Rows.Count} kind={q.Kind} cur={q.Currency} period={q.PeriodStart}..{q.PeriodEnd}");
+            foreach (var r in o.Rows) Console.WriteLine($"{r.Date:yyyy-MM-dd} {r.Amount,10} {r.Balance,10}  {r.Label,-58} | {r.Brand} | {r.CategoryId} ({r.CategorySource})");
+        }
     }
     finally
     {

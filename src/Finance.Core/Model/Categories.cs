@@ -45,7 +45,7 @@ public static class Categories
         new("taxes", "Taxes", CategoryKind.Expense, "AccountBalance"),
         new("cash", "Cash withdrawals", CategoryKind.Expense, "LocalAtm"),
         new(Bills, "Bill payments", CategoryKind.Expense, "Receipt"),
-        new(CardSpending, "Credit card spending", CategoryKind.Expense, "CreditCard"),
+        new(CardSpending, "Card statement spending", CategoryKind.Expense, "CreditCard"),
         new(OtherExpense, "Other expenses", CategoryKind.Expense, "MoreHoriz"),
 
         new("exc-flights", "Flights", CategoryKind.Expense, "FlightTakeoff"),
@@ -61,7 +61,7 @@ public static class Categories
         new(OtherIncome, "Other income", CategoryKind.Income, "Savings"),
 
         new(Transfers, "Transfers", CategoryKind.Transfer, "SwapHoriz"),
-        new(CardPayments, "Credit card payments", CategoryKind.Transfer, "CreditScore"),
+        new(CardPayments, "Card statement payments", CategoryKind.Transfer, "CreditScore"),
         new(Investments, "Savings & investments", CategoryKind.Transfer, "TrendingUp"),
     ];
 

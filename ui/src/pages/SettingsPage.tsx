@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
+  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, Link, MenuItem, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
   Tooltip, Typography,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
-import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem } from '../api'
+import Refresh from '@mui/icons-material/RefreshRounded'
+import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem, type RatesStatus } from '../api'
 import { useApp } from '../AppContext'
-import { formatExample } from '../format'
+import { formatDate, formatExample } from '../format'
 import { FileBrowser } from '../components/FileBrowser'
 import { ConfirmDialog, EmptyState, PageHeader, SectionCard } from '../components/common'
 import { useRowOrder } from '../components/order'
@@ -18,10 +19,10 @@ import { CategoriesPanel } from './CategoriesPage'
 import { TagsPanel } from './TagsPage'
 
 const systems: { value: BankingSystem; label: string }[] = [
-  // Credit cards are accounts of their own, paid from the current account; or cards are debited once a month
-  // straight from the current account.
+  // Credit cards are accounts of their own, paid from the chequing account; or (France) debit cards only: purchases
+  // come out of the current account, once a month for a deferred-debit card.
   { value: 'northAmerica', label: 'Credit card system' },
-  { value: 'france', label: 'Deferred debit system' },
+  { value: 'france', label: 'Debit card system' },
 ]
 
 type Confirm = { title: string; body?: string; confirm?: string; run: () => Promise<void> } | null
@@ -65,11 +66,41 @@ function Tabs<T extends string>({ value, onChange, tabs, size }: { value: T; onC
 
 const inlineInput = { flex: 1, fontWeight: 520, px: 1, mx: -1, borderRadius: 2, fontSize: 14, '&:hover, &.Mui-focused': { bgcolor: 'action.hover' } }
 
-function CurrencySelect({ value, onChange, label }: { value: string; onChange: (c: string) => void; label?: string }) {
+function CurrencySelect({ value, onChange, label, width = 110 }: { value: string; onChange: (c: string) => void; label?: string; width?: number }) {
   return (
-    <TextField select size="small" label={label} value={value} onChange={(e) => onChange(e.target.value)} sx={{ width: 110 }}>
+    <TextField select size="small" label={label} value={value} onChange={(e) => onChange(e.target.value)} sx={{ width }}>
       {[...new Set([value, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
     </TextField>
+  )
+}
+
+/**
+ * The global display currency (every bank together is converted to it and shown in it), then the source of the
+ * exchange rates: a link to its page, and the button that downloads the rates again.
+ */
+function GlobalCurrency() {
+  const { settings, setSetting, fail, notify, dataChanged } = useApp()
+  const [status, setStatus] = useState<RatesStatus | null>(null)
+  const [updating, setUpdating] = useState(false)
+  useEffect(() => { api.rates.status().then(setStatus, () => setStatus(null)) }, [])
+  const update = () => {
+    setUpdating(true)
+    api.rates.update().then((s) => {
+      setStatus(s)
+      if (s.error) fail(new Error(s.error))
+      else { notify('Exchange rates updated'); dataChanged() }
+    }, fail).finally(() => setUpdating(false))
+  }
+  return (
+    <Box data-global-currency sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+      <CurrencySelect label="Global display" width={150} value={settings.currency} onChange={(c) => void setSetting('currency', c)} />
+      <Link component="button" data-rates-link onClick={() => void api.shell.openRatesPage().catch(fail)}>European Central Bank exchange rates</Link>
+      <Tooltip title={status?.latest ? `Rates up to ${formatDate(status.latest, settings.dateFormat)}. Download again` : 'Download the rates'}>
+        <span>
+          <IconButton size="small" aria-label="Update exchange rates" disabled={updating} onClick={update}><Refresh fontSize="small" /></IconButton>
+        </span>
+      </Tooltip>
+    </Box>
   )
 }
 
@@ -89,7 +120,7 @@ function General({ confirm }: { confirm: (c: Confirm) => void }) {
 
   return (
     <>
-      <SectionCard title="Display">
+      <SectionCard title="Display" action={<GlobalCurrency />}>
         <Row label="Date format">
           <TextField select size="small" value={settings.dateFormat} onChange={(e) => void setSetting('dateFormat', e.target.value)} sx={{ width: 220 }}>
             {info.dateFormats.map((f) => <MenuItem key={f} value={f}>{formatExample(f)}</MenuItem>)}
@@ -109,7 +140,7 @@ function General({ confirm }: { confirm: (c: Confirm) => void }) {
         </Group>
         <Group title="Calendar">
           <Toggle label="Hide transfers" setting="calendarHideTransfers" />
-          <Toggle label="Hide credit card payments" setting="calendarHideCardPayments" />
+          <Toggle label="Hide card statement payments" setting="calendarHideCardPayments" />
           <Toggle label="Hide investments" setting="calendarHideInvestments" />
         </Group>
       </SectionCard>

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using ProductivityApp.Finance.Classification;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Text;
 
@@ -97,13 +98,18 @@ public static partial class CsvStatementReader
         }
     }
 
-    private enum Col { None, Date, ValueDate, Description, Description2, Category, Debit, Credit, Amount, Balance, Card, Account, Currency, Type }
+    private enum Col { None, Date, ValueDate, Description, Description2, Category, SubCategory, Debit, Credit, Amount, Balance, Card, Account, Currency, Type }
 
     private static Col Classify(string header)
     {
         var f = " " + Regex.Replace(TextNorm.Fold(header), @"[^A-Z0-9]+", " ").Trim() + " ";
         bool Has(params string[] words) => words.Any(w => f.Contains(" " + w + " ", StringComparison.Ordinal));
+        // "Name : value" cells above the table (bank, branch, account, currency of the export) are not column names.
+        if (header.Contains(" : ", StringComparison.Ordinal) || header.TrimEnd().EndsWith(" :", StringComparison.Ordinal)) return Col.None;
+        if (Has("POINTAGE", "RAPPROCHEMENT")) return Col.None;
+        if (Has("NUMERO", "NUMBER", "NO", "REF", "REFERENCE") && Has("OPERATION", "TRANSACTION", "CHEQUE")) return Col.None;
         if (Has("SOLDE", "BALANCE")) return Col.Balance;
+        if (Has("SOUS") && Has("CATEGORIE", "CATEGORY")) return Col.SubCategory;
         if (Has("CATEGORIE", "CATEGORY", "CATEGORIES")) return Col.Category;
         if (Has("CARTE", "CARD")) return Has("DATE") ? Col.Date : Col.Card;
         if (Has("DATE", "POSTED", "POSTE", "JOUR"))
@@ -116,7 +122,7 @@ public static partial class CsvStatementReader
         if (Has("COMPTE", "ACCOUNT", "NUMERO", "NUMBER")) return Col.Account;
         if (Has("DESCRIPTION", "LIBELLE", "DETAILS", "DETAIL", "MERCHANT", "COMMERCANT", "PAYEE", "BENEFICIAIRE", "NAME", "NOM", "MEMO",
                 "TRANSACTION", "OPERATION", "NARRATIVE", "REFERENCE", "LABEL", "INFORMATIONS"))
-            return Has("2") || Has("MEMO") ? Col.Description2 : Col.Description;
+            return Has("2") || Has("MEMO") || Has("SIMPLIFIE", "SIMPLIFIED", "SHORT") ? Col.Description2 : Col.Description;
         return Col.None;
     }
 
@@ -177,7 +183,7 @@ public static partial class CsvStatementReader
         var headerIndex = -1;
         for (var i = 0; i < Math.Min(table.Count, 15); i++)
         {
-            var named = table[i].Count(c => Classify(c) != Col.None);
+            var named = table[i].Count(c => Classify(c) != Col.None && !c.Contains(" : ", StringComparison.Ordinal));
             var dated = table[i].Count(c => DateParser.TryParse(c, out _));
             if (named >= 2 && dated == 0) { headerIndex = i; break; }
         }
@@ -220,7 +226,11 @@ public static partial class CsvStatementReader
             : french ? DateOrder.DayMonth : DateOrder.MonthDay;
         var year = DateTime.Today.Year;
 
-        var name = TextNorm.Fold(Path.GetFileNameWithoutExtension(fileName));
+        var name = TextNorm.Fold(Path.GetFileNameWithoutExtension(fileName)).Replace("CAISSE D'EPARGNE", "").Replace("CAISSE D EPARGNE", "").Replace("CAISSE DEPARGNE", "");
+        // Lines above the table: "Numéro de compte : ...", "Nom du compte : LIVRET A", "Devise : EUR", and balance lines
+        // ("Solde en fin de période;;;;+1 996,33") above or below it.
+        var about = Metadata(table, headerIndex, decimalSep);
+        name += " " + about.AccountName;
         var hasCard = cols.ContainsKey(Col.Card) || Regex.IsMatch(name, @"(VISA|MASTERCARD|CREDIT|CARTE|CARD|AMEX)");
         var savings = Regex.IsMatch(name, @"(EPARGNE|SAVINGS|HIGHINV|HISA|CELI|TFSA|REER|RRSP|LIVRET)");
 
@@ -247,9 +257,11 @@ public static partial class CsvStatementReader
             else if (type is "CREDIT" or "CR" or "C" or "DEPOSIT" or "DEPOT") amount = Math.Abs(amount);
 
             decimal? balance = TryNumber(Cell(r, Col.Balance), decimalSep, out var b) ? b : null;
-            var label = TextNorm.CollapseSpaces(string.Join(' ', labelIndexes.Select(x => x < r.Count ? r[x] : "").Where(x => x.Length > 0 && x != "-")));
+            var label = Label(labelIndexes.Select(x => x < r.Count ? r[x] : ""));
             if (amount == 0) { skippedZero++; if (balance is null) continue; }
-            rows.Add(new ParsedRow { Date = date.Value, Label = label, Amount = amount, Balance = balance, BankCategory = Cell(r, Col.Category), Page = 0, Top = i });
+            // The bank's sub-category says more ("Revenus" / "Salaire") when the app knows it.
+            var bankCategory = Cell(r, Col.SubCategory) is { Length: > 0 } sub && BankCategories.Map(sub, amount) is not null ? sub : Cell(r, Col.Category);
+            rows.Add(new ParsedRow { Date = date.Value, Label = label, Amount = amount, Balance = balance, BankCategory = bankCategory, Page = 0, Top = i });
         }
 
         // Newest first (most online exports): put the lines in time order, keeping the order of a same day reversed too.
@@ -290,20 +302,23 @@ public static partial class CsvStatementReader
             else prev = prev is { } p2 ? p2 + x.Amount : null;
         }
         var withBalance = rows.Where(x => x.Balance is not null).ToList();
-        decimal? opening = withBalance.Count > 0 && rows[0].Balance is { } fb ? fb - rows[0].Amount : null;
-        decimal? closing = withBalance.Count > 0 ? rows[^1].Balance ?? withBalance[^1].Balance : null;
+        decimal? opening = withBalance.Count > 0 && rows[0].Balance is { } fb ? fb - rows[0].Amount : about.Opening;
+        decimal? closing = withBalance.Count > 0 ? rows[^1].Balance ?? withBalance[^1].Balance : about.Closing;
         // Lines of zero (waived fees) are left out, but their dates still count for the period the balances cover:
         // they prove the balance on those days.
         var allDates = rows.Select(x => x.Date).ToList();
         rows = rows.Where(x => x.Amount != 0).ToList();
 
         var profile = IsBncHeader(headerIndex >= 0 ? table[headerIndex] : []) ? "bnc" : null;
-        var last4 = Regex.Match(Cell(data[0], Col.Card) + " " + Cell(data[0], Col.Account), @"(\d{4})\s*$") is { Success: true } m ? m.Groups[1].Value : null;
-        var currency = Cell(data[0], Col.Currency) is { Length: 3 } c3 && c3.All(char.IsAsciiLetter) ? c3.ToUpperInvariant() : defaultCurrency;
+        var last4 = Regex.Match(Cell(data[0], Col.Card) + " " + Cell(data[0], Col.Account), @"(\d{4})\s*$") is { Success: true } m ? m.Groups[1].Value : about.Last4;
+        var currency = Cell(data[0], Col.Currency) is { Length: 3 } c3 && c3.All(char.IsAsciiLetter) ? c3.ToUpperInvariant() : about.Currency ?? defaultCurrency;
 
+        // Without a balance on each line, the balances printed above or below the table prove the total.
+        var printedProof = checks == 0 && about.Opening is { } po && about.Closing is { } pc && rows.Count > 0;
         var status = rows.Count == 0 ? VerificationStatus.NoTransactions
             : checks > 0 && mismatches == 0 && checks >= withBalance.Count - 1 ? VerificationStatus.Verified
             : checks > 0 ? VerificationStatus.Mismatch
+            : printedProof ? (about.Opening!.Value + rows.Sum(x => x.Amount) == about.Closing!.Value ? VerificationStatus.Verified : VerificationStatus.Mismatch)
             : VerificationStatus.NoBalances;
         return new StatementParse
         {
@@ -311,7 +326,7 @@ public static partial class CsvStatementReader
             OpeningBalance = opening,
             ClosingBalance = closing,
             ComputedClosing = opening is { } o ? o + rows.Sum(x => x.Amount) : null,
-            Difference = status == VerificationStatus.Verified ? 0 : null,
+            Difference = status == VerificationStatus.Verified ? 0 : printedProof ? about.Closing - (about.Opening + rows.Sum(x => x.Amount)) : null,
             PeriodStart = rows.Count > 0 ? allDates.Min() : null,
             PeriodEnd = rows.Count > 0 ? allDates.Max() : null,
             Currency = currency,
@@ -329,6 +344,59 @@ public static partial class CsvStatementReader
             ZeroRowsSkipped = skippedZero,
             FirstPageText = headerIndex >= 0 ? string.Join(" · ", table[headerIndex]) : "",
         };
+    }
+
+    /// <summary>
+    /// The texts of one line, main one first: a text already said is left out, and a text that says more than the
+    /// one before replaces it ("CB X FACT 031025" then the detail "CB X FACT 031025 PARIS").
+    /// </summary>
+    private static string Label(IEnumerable<string> texts)
+    {
+        var label = "";
+        foreach (var raw in texts)
+        {
+            var t = TextNorm.CollapseSpaces(raw);
+            if (t.Length == 0 || t == "-") continue;
+            var (ft, fl) = (TextNorm.Fold(t), TextNorm.Fold(label));
+            if (fl.Contains(ft, StringComparison.Ordinal)) continue;
+            label = label.Length > 0 && ft.Contains(fl, StringComparison.Ordinal) ? t : label.Length == 0 ? t : label + " " + t;
+        }
+        return label;
+    }
+
+    private sealed record About(string AccountName, string? Last4, string? Currency, decimal? Opening, decimal? Closing);
+
+    /// <summary>What the lines around the table say: account name and number, currency, opening and closing balances.</summary>
+    private static About Metadata(List<List<string>> table, int headerIndex, char decimalSep)
+    {
+        string accountName = "";
+        string? last4 = null, currency = null;
+        decimal? opening = null, closing = null;
+        for (var i = 0; i < table.Count; i++)
+        {
+            if (i == headerIndex) continue;
+            var cells = table[i];
+            if (cells.Count == 0) continue;
+            foreach (var c in cells)
+            {
+                var kv = c.Split(" : ", 2);
+                if (kv.Length != 2) continue;
+                var key = TextNorm.Fold(kv[0]).Trim();
+                var value = kv[1].Trim();
+                if (key.StartsWith("NOM DU COMPTE", StringComparison.Ordinal) || key is "ACCOUNT NAME" or "INTITULE") accountName = TextNorm.Fold(value);
+                else if ((key.StartsWith("NUMERO DE COMPTE", StringComparison.Ordinal) || key is "ACCOUNT NUMBER" or "COMPTE") && Regex.Match(value, @"(\d{4})\s*$") is { Success: true } n) last4 = n.Groups[1].Value;
+                else if (key is "DEVISE" or "CURRENCY" && value.Length == 3 && value.All(char.IsAsciiLetter)) currency = value.ToUpperInvariant();
+            }
+            // Balance lines: no date, the first cell names the balance, one number in the line.
+            var first = TextNorm.Fold(cells[0]);
+            if (!first.StartsWith("SOLDE", StringComparison.Ordinal) && !first.Contains("BALANCE", StringComparison.Ordinal)) continue;
+            if (DateParser.TryParse(cells[0], out _)) continue;
+            var number = cells.Skip(1).Select(c => TryNumber(c, decimalSep, out var v) ? v : (decimal?)null).LastOrDefault(v => v is not null);
+            if (number is null) continue;
+            if (Regex.IsMatch(first, @"\b(FIN|FINAL|NOUVEAU|CLOSING|ENDING|END)\b")) closing = number;
+            else if (Regex.IsMatch(first, @"\b(DEBUT|INITIAL|PRECEDENT|OPENING|PREVIOUS|START|STARTING)\b")) opening = number;
+        }
+        return new About(accountName, last4, currency, opening, closing);
     }
 
     /// <summary>Banque Nationale exports: "Date;Numero de Carte;Description;Categorie;Debit;Credit" (Mastercard) and

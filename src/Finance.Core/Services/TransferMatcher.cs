@@ -93,7 +93,7 @@ public static class TransferMatcher
 
     /// <summary>
     /// With no credit card account imported, paying the card from chequing is the only trace of what was bought with
-    /// it: those payments count as "Credit card spending". Once a card account exists they are card payments again.
+    /// it: those payments count as "Card statement spending". Once a card account exists they are card payments again.
     /// </summary>
     private static int CardSpendingWithoutCard(Database db, Dictionary<long, Account> accounts)
     {

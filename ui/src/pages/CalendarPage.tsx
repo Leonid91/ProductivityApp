@@ -10,18 +10,21 @@ import classicThemePlugin from '@fullcalendar/react/themes/classic'
 import '@fullcalendar/react/skeleton.css'
 import '@fullcalendar/react/themes/classic/theme.css'
 import '@fullcalendar/react/themes/classic/palette.css'
-import { api, type PeriodSummary, type TransactionView } from '../api'
+import { api, globalTransactions, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, iso, money, monthName, parts, today } from '../format'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { Money, useCategoryColor } from '../components/common'
 import { TransactionDialog } from '../components/TransactionDialog'
 
-/** Month calendar: what went out and came in each day; a day opens its operations. */
+/**
+ * Month calendar of every bank together, in the global display currency: what went out and came in each day; a day
+ * opens its operations (an amount converted from another currency shows the amount the bank wrote).
+ */
 export function CalendarPage() {
   const { settings, dataVersion, fail, category } = useApp()
   const colorOf = useCategoryColor()
-  // Settings: transfers and credit card payments hidden by default, investments shown.
+  // Settings: transfers and card statement payments hidden by default, investments shown.
   const hideMoves = settings.calendarHideTransfers === 'true'
   const hideCard = settings.calendarHideCardPayments === 'true'
   const hideInvest = settings.calendarHideInvestments === 'true'
@@ -34,25 +37,28 @@ export function CalendarPage() {
   const [day, setDay] = useState<string>(today())
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
-  const [currency, setCurrency] = useState(settings.currency)
+  const currency = settings.currency
+  // The operations as their bank wrote them (editing changes those, never a converted amount).
+  const [originals, setOriginals] = useState<Map<number, TransactionView>>(new Map())
 
-  // Start on the latest month that has data, in the main currency of the data.
+  // Start on the latest month that has data, in any bank.
   useEffect(() => {
-    api.periods.index(settings.currency).then((ix) => {
-      const c = ix.currencies[0] ?? settings.currency
-      setCurrency(c)
+    api.periods.index().then((ix) => {
       if (ix.last) {
         const [y, m] = ix.last.split('-').map(Number)
         const t = parts(today())
         if (y * 12 + m < t.y * 12 + t.m) { setMonth({ y, m }); setDay(iso(y, m, 1)) }
       }
     }, fail)
-  }, [settings.currency, fail])
+  }, [fail])
 
   useEffect(() => {
     const from = iso(month.y, month.m, 1)
     const to = iso(month.y, month.m, daysInMonth(month.y, month.m))
-    api.periods.summary(from, to, 'month', currency).then(setSummary, fail)
+    api.periods.report(from, to, 'month').then((r) => {
+      setSummary({ ...r.global, transactions: globalTransactions(r) })
+      setOriginals(new Map(r.banks.flatMap((b) => b.summary.transactions.map((t) => [t.id, t] as const))))
+    }, fail)
   }, [month, currency, dataVersion, fail])
 
   const events = useMemo(() => {
@@ -165,7 +171,7 @@ export function CalendarPage() {
             return (
               <Box
                 key={t.id}
-                onClick={() => setEditing(t)}
+                onClick={() => setEditing(originals.get(t.id) ?? t)}
                 sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1, mx: -1, borderRadius: 2.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
               >
                 <Box sx={{ width: 36, height: 36, borderRadius: '12px', bgcolor: color ? `${color}22` : 'action.hover', display: 'grid', placeItems: 'center', flex: '0 0 36px' }}>
@@ -174,12 +180,17 @@ export function CalendarPage() {
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Typography variant="body2" noWrap sx={{ fontWeight: 560 }}>{t.brand}</Typography>
                   <Typography variant="caption" color="text.secondary" noWrap component="div">{c.name}</Typography>
+                  {t.original != null && t.originalCurrency && (
+                    <Typography data-original variant="caption" color="text.secondary" noWrap component="div" className="tnum">
+                      {money(t.original, t.originalCurrency, { sign: true })} at {t.rate}
+                    </Typography>
+                  )}
                 </Box>
                 <Money
                   value={t.amount}
                   currency={currency}
                   sign
-                  sx={{ color: c.kind === 'transfer' ? theme.palette.money.zero : t.amount < 0 ? theme.palette.money.negative : theme.palette.money.positive }}
+                  sx={{ flexShrink: 0, color: c.kind === 'transfer' ? theme.palette.money.zero : t.amount < 0 ? theme.palette.money.negative : theme.palette.money.positive }}
                 />
               </Box>
             )

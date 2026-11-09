@@ -14,6 +14,7 @@ internal sealed class AppServices : IDisposable
     public ImportService Imports { get; private set; } = null!;
     public CategoryService Categories { get; private set; } = null!;
     public TagService Tags { get; private set; } = null!;
+    public ExchangeRates Rates { get; private set; } = null!;
     public string DataDir { get; }
     public string LogPath { get; }
 
@@ -27,7 +28,7 @@ internal sealed class AppServices : IDisposable
 
     public static readonly Dictionary<string, string> DefaultSettings = new()
     {
-        // Currency the periods open in when the data has several.
+        // Global display currency: every bank together is converted to it and shown in it.
         ["currency"] = "CAD",
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
@@ -50,7 +51,7 @@ internal sealed class AppServices : IDisposable
     };
 
     /// <summary>Raised whenever classification rules change, so existing operations are classified again at start.</summary>
-    private const string RulesVersion = "5";
+    private const string RulesVersion = "6";
 
     public AppServices(string dataDir)
     {
@@ -68,6 +69,7 @@ internal sealed class AppServices : IDisposable
         Imports = new ImportService(Db, () => Setting("currency"), Transactions);
         Categories = new CategoryService(Db);
         Tags = new TagService(Db);
+        Rates = new ExchangeRates(Db);
         if (Db.GetSetting("rulesVersion") != RulesVersion)
         {
             Transactions.ReapplyRules();

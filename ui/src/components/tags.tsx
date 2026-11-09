@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Autocomplete, Box, Checkbox, Chip, ListItemText, Menu, MenuItem, TextField, Tooltip, useTheme } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import LocalOffer from '@mui/icons-material/LocalOfferOutlined'
@@ -35,11 +35,21 @@ export function TagChip({ tag, inherited = false }: { tag: Tag; inherited?: bool
 export function TagCell({ operationId, own, all, categoryName }: { operationId: number; own: number[]; all: number[]; categoryName: string }) {
   const { tags, tag, setTagData, fail } = useApp()
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
-  const ownSet = new Set(own)
-  const shown = all.map((id) => tag(id)).filter((t): t is Tag => !!t)
+  // The tags ticked so far, until the operation comes back with them: a second tick builds on the first even when
+  // the period has not been read again yet.
+  const [ticked, setTicked] = useState<number[] | null>(null)
+  const ownKey = [...own].sort().join()
+  useEffect(() => {
+    setTicked((t) => (t && [...t].sort().join() === ownKey ? null : t))
+  }, [ownKey])
+  const current = ticked ?? own
+  const ownSet = new Set(current)
+  const inheritedIds = all.filter((id) => !own.includes(id))
+  const shown = [...new Set([...current, ...inheritedIds])].map((id) => tag(id)).filter((t): t is Tag => !!t)
   const toggle = async (id: number) => {
-    const next = ownSet.has(id) ? own.filter((x) => x !== id) : [...own, id]
-    try { setTagData(await api.tags.setForOperation(operationId, next)) } catch (e) { fail(e) }
+    const next = ownSet.has(id) ? current.filter((x) => x !== id) : [...current, id]
+    setTicked(next)
+    try { setTagData(await api.tags.setForOperation(operationId, next)) } catch (e) { setTicked(null); fail(e) }
   }
   return (
     <>
@@ -62,7 +72,7 @@ export function TagCell({ operationId, own, all, categoryName }: { operationId: 
           <MenuItem disabled><ListItemText>No tags yet</ListItemText></MenuItem>
         )}
         {tags.map((t) => {
-          const inherited = all.includes(t.id) && !ownSet.has(t.id)
+          const inherited = inheritedIds.includes(t.id) && !ownSet.has(t.id)
           return (
             <Tooltip key={t.id} title={inherited ? `From ${categoryName}` : ''} placement="right">
               <span>

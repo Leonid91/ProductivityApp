@@ -77,6 +77,8 @@ public sealed class Classifier
         var movement = facts.Movement;
         var salaryWords = facts.Keyword(amount) == "salary";
         if (salaryWords && movement is Movement.MoneyTransfer) movement = Movement.None;
+        // A transfer that says what it pays or returns is that: rent ("VIR SEPA LOYER ..."), a refund ("VIR INST RECU ... REMBOURSEMENT").
+        if (movement is Movement.MoneyTransfer && facts.Keyword(amount) is "housing" or "refunds") movement = Movement.None;
 
         string? brand = null;
         var brandSource = ValueSource.Default;
@@ -96,10 +98,12 @@ public sealed class Classifier
 
         brand ??= movement switch
         {
-            Movement.CardPayment => "Credit card payment",
+            // France has no credit cards: the one monthly debit of a deferred-debit card.
+            Movement.CardPayment => _system == BankingSystem.France ? "Deferred debit card" : "Credit card payment",
             Movement.AccountTransfer => "Transfer between accounts",
             Movement.BillPayment => "Bill payment",
-            Movement.MoneyTransfer when key is "" or "VIREMENT" or "VIR" or "TRANSFER" or "TRANSFERT" or "E TRANSFER" or "ETRANSFER" || key.Contains("EMAIL MONEY", StringComparison.Ordinal) => "Interac e-Transfer",
+            Movement.MoneyTransfer when key is "" or "VIREMENT" or "VIR" or "TRANSFER" or "TRANSFERT" or "E TRANSFER" or "ETRANSFER" || key.Contains("EMAIL MONEY", StringComparison.Ordinal)
+                => _system == BankingSystem.France ? "Bank transfer" : "Interac e-Transfer",
             _ => null,
         };
         if (brand is null && builtIn is not null) { brand = builtIn.Brand; brandSource = ValueSource.BuiltIn; }
@@ -196,6 +200,8 @@ public sealed class Classifier
     [
         "TRANSFERT ENTRE COMPTES", "VIREMENT ENTRE COMPTES", "TRANSFER BETWEEN ACCOUNTS", "ONLINE TRANSFER", "TRANSFERT EN LIGNE", "VIR INTERNE",
         "VIREMENT INTERNE", "VERSEMENT LIVRET", "VIR LIVRET", "VIREMENT LIVRET", "VIR COMPTE EPARGNE", "INTERNAL TRANSFER",
+        // French savings books (Livret A, LDDS, LEP, Livret Jeune): a buffer of the person's own money, not an investment.
+        "LIVRET A", "LIVRET JEUNE", "LDDS", "LEP",
     ];
     private static readonly string[] MoneyTransferWords =
     [
@@ -211,14 +217,16 @@ public sealed class Classifier
         ["COTISATION REER", "COTISATION CELI", "TFSA CONTRIBUTION", "RRSP CONTRIBUTION", "WEALTHSIMPLE", "QUESTRADE", "DISNAT", "COURTAGE",
          // A term investment at the bank (placement, GIC / CPG, term deposit) and brokers.
          "PLACEMENT", "PLACEMENTS", "CPG", "GIC", "DEPOT A TERME", "TERM DEPOSIT", "INTERACTIVE BRO", "INTERACTIVE BROKERS", "IBKR"];
-    private static readonly string[] InvestmentWordsFrance = ["LIVRET A", "LDDS", "VERSEMENT PEA", "ASSURANCE VIE", "VERSEMENT PEL", "PLACEMENT", "PLACEMENTS"];
+    private static readonly string[] InvestmentWordsFrance = ["VERSEMENT PEA", "ASSURANCE VIE", "VERSEMENT PEL", "PLACEMENT", "PLACEMENTS"];
 
     public static Movement MovementOf(string padded, string bankCategory, BankingSystem system)
     {
         bool Has(string[] words) => words.Any(w => padded.Contains(" " + w + " ", StringComparison.Ordinal));
         var bank = TextNorm.Fold(bankCategory ?? "").Trim();
-        if (Has(CardPaymentWords) || bank is "PAIEMENT CARTE DE CREDIT" or "CREDIT CARD PAYMENT" or "CREDIT CARD PAYMENTS") return Movement.CardPayment;
-        if (system == BankingSystem.France && Has(DeferredCardWords)) return Movement.CardPayment;
+        // France has no credit cards: a card is a debit card, its purchases come out of the current account; only a
+        // deferred-debit card is settled by one monthly debit of its statement.
+        if (system == BankingSystem.France) { if (Has(DeferredCardWords)) return Movement.CardPayment; }
+        else if (Has(CardPaymentWords) || bank is "PAIEMENT CARTE DE CREDIT" or "CREDIT CARD PAYMENT" or "CREDIT CARD PAYMENTS") return Movement.CardPayment;
         if (Has(FeeWords)) return Movement.None;
         if (Has(BillPaymentWords)) return Movement.BillPayment;
         if (Has(AccountTransferWords)) return Movement.AccountTransfer;
@@ -293,6 +301,8 @@ public sealed class Classifier
         "DE", "DU", "DES", "LE", "LA", "LES", "THE", "OF", "AND", "ET", "A", "AU", "AUX", "EN", "PAR", "CHEZ", "MAG", "MAGASIN", "STORE",
         "CHQ", "FRAIS", "OPERATION", "OP", "TRANSACTION", "TRX", "RECU", "EMIS", "PRESENTE", "CARD", "CREDIT", "DEBITS", "ACH", "PPD", "BY",
         "POINT", "SALE", "OPOS", "APOS", "FPOS", "MISC", "AUTHORIZED", "PREAUTHORIZED", "MEMO", "ONCD", "ONC",
+        // French transfers: "VIR SEPA", "VIR INST RECU" (instant transfer received).
+        "VIR", "INST",
     ];
 
     private static readonly HashSet<string> Cities =
@@ -320,7 +330,7 @@ public sealed class Classifier
         ("cash", ["RETRAIT", "DAB", "GAB", "ATM", "ABM", "WITHDRAWAL", "GUICHET", "RETRAIT DAB", "CASH"], -1),
         ("otherincome", ["INTERET", "INTERETS", "INTEREST", "DIVIDENDE", "DIVIDEND", "ALLOCATION", "PENSION", "CASHBACK", "REMISE", "PRESTATION", "CAF", "GST", "TPS", "DEPOT", "DEPOSIT"], 1),
         ("refunds", ["REMBOURSEMENT", "REFUND", "RETOUR", "AVOIR", "RETURN"], 1),
-        ("fees", ["FRAIS", "FEE", "FEES", "SERVICE CHARGE", "INTERET", "INTERETS", "INTEREST", "COMMISSION", "COTISATION", "AGIOS", "ANNUAL FEE", "PENALITE", "NSF"], -1),
+        ("fees", ["FRAIS", "FEE", "FEES", "SERVICE CHARGE", "INTERET", "INTERETS", "INTEREST", "COMMISSION", "COTISATION", "COTIS", "AGIOS", "ANNUAL FEE", "PENALITE", "NSF"], -1),
         ("housing", ["LOYER", "RENT", "HYPOTHEQUE", "MORTGAGE", "CONDO", "SYNDIC", "COPROPRIETE"], 0),
         ("insurance", ["ASSURANCE", "ASSURANCES", "INSURANCE", "MUTUELLE"], 0),
         ("utilities", ["ELECTRICITE", "GAZ NATUREL", "EAU", "WATER", "HYDRO", "ENERGIE", "ENERGY"], 0),

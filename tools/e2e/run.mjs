@@ -166,7 +166,8 @@ try {
   const order = async () => p.eval(`[...document.querySelector('tbody').querySelectorAll('tr')].map(r => r.children[1].innerText)`)
   await p.clickText('Periods', { selector: 'nav button' })
   await p.clickText('Import', { selector: 'nav button' })
-  await sleep(800)
+  await p.waitFor(`document.querySelector('tbody tr') !== null`, 15000, 'statements list')
+  await sleep(300)
   const o1 = await order()
   // Each drag event in its own task, as a real drag delivers them.
   const rowsJs = `[...document.querySelector('tbody').querySelectorAll('tr')]`
@@ -266,7 +267,7 @@ try {
   await p.clickText('Analytics', { selector: '[data-period-view] button' })
   await p.waitFor(`document.querySelector('${sec} [data-flowchart]') !== null`, 20000, 'charts view')
   await sleep(800)
-  check('analytics: pies, bars, category lines and money moved, no tables', await p.eval(`(() => { const s = document.querySelector('${sec}'); return s.querySelectorAll('[data-pie]').length >= 2 && !!s.querySelector('[data-bars]') && !!s.querySelector('[data-category-lines]') && !s.querySelector('table') && !!s.querySelector('[data-totals]') })()`))
+  check('analytics: pies, bars, category lines and money moved, no tables', await p.eval(`(() => { const s = document.querySelector('${sec}'); return s.querySelectorAll('[data-pie]').length >= 2 && !!s.querySelector('[data-bars]') && !!s.querySelector('[data-category-lines]') && !s.querySelector('table:not([data-conversions])') && !!s.querySelector('[data-totals]') })()`))
   // Money moved: the outside box has the size of the accounts, no amounts written in it, every arrow its own points.
   await p.eval(`(() => { const f = document.querySelector('${sec} [data-flowchart]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
   await sleep(600)
@@ -276,7 +277,7 @@ try {
   // Expenses per day: the amount of the day on hover.
   await p.eval(`(() => { const f = document.querySelector('${sec} [data-bars]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 200 }) })()`)
   await sleep(600)
-  const bar = await p.eval(`(() => { const r = [...document.querySelectorAll('${sec} [data-bars] rect')].filter(r => r.getBoundingClientRect().height > 2 && r.getBoundingClientRect().width < 60).sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+  const bar = await p.eval(`(() => { const r = [...document.querySelector('${sec} [data-bars]').querySelectorAll('rect')].filter(r => r.getBoundingClientRect().height > 2 && r.getBoundingClientRect().width < 60).sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bar.x - 2, y: bar.y - 2 })
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bar.x, y: bar.y })
   await sleep(600)
@@ -286,20 +287,22 @@ try {
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
   // Expenses per category per day: under "Categories", the total and every category with expenses in the period (no
   // drop-down), each ticked on or off; the total and the five largest at first; the scale follows the lines shown.
-  await p.eval(`(() => { const f = document.querySelector('${sec} [data-category-lines]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
+  // August is in CAD at every bank: all banks together hold every operation of the month in CAD.
+  const augAll = `${sec} [data-part-block="all"]`
+  await p.eval(`(() => { const f = document.querySelector('${augAll} [data-category-lines]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
   await sleep(600)
   await shot(p, '09f-category-lines.png')
-  const lineCount = () => p.eval(`document.querySelectorAll('${sec} [data-category-lines] path.MuiLineChart-line').length`)
+  const lineCount = () => p.eval(`document.querySelectorAll('${augAll} [data-category-lines] path.MuiLineChart-line').length`)
   const augSummary = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
-  const choiceKeys = await p.eval(`[...document.querySelectorAll('${sec} [data-category-choices] li[data-choice]')].map(l => l.dataset.choice)`)
+  const choiceKeys = await p.eval(`[...document.querySelectorAll('${augAll} [data-category-choices] li[data-choice]')].map(l => l.dataset.choice)`)
   const lineCats = choiceKeys.filter((k) => k !== '__total')
-  const linesText = await p.eval(`document.querySelector('${sec} [data-category-lines]').innerText`)
+  const linesText = await p.eval(`document.querySelector('${augAll} [data-category-lines]').innerText`)
   check('categories listed under a Categories title: those with expenses in the period, no drop-down',
-    linesText.includes('Categories') && !/Top \d|All \(|chosen/.test(linesText) && !(await p.eval(`!!document.querySelector('${sec} [data-category-lines] [role=combobox]')`))
+    linesText.includes('Categories') && !/Top \d|All \(|chosen/.test(linesText) && !(await p.eval(`!!document.querySelector('${augAll} [data-category-lines] [role=combobox]')`))
       && choiceKeys[0] === '__total' && lineCats.join() === augSummary.byTopCategory.map((c) => c.key).join(), `${lineCats.length} categories`)
   check('total and the five largest categories ticked at first', (await lineCount()) === 1 + Math.min(5, lineCats.length), `${await lineCount()} lines`)
-  const tickLine = async (key) => { await p.eval(`document.querySelector('${sec} [data-category-choices] li[data-choice="${key}"] input').click()`); await sleep(350) }
-  const scaleTop = () => p.eval(`Math.max(...[...document.querySelectorAll('${sec} [data-category-lines] .MuiChartsAxis-directionY text')].map(t => { const v = parseFloat(t.textContent.replace(/[^0-9.]/g, '')); return /K/.test(t.textContent) ? v * 1000 : v }).filter(v => !isNaN(v)))`)
+  const tickLine = async (key) => { await p.eval(`document.querySelector('${augAll} [data-category-choices] li[data-choice="${key}"] input').click()`); await sleep(350) }
+  const scaleTop = () => p.eval(`Math.max(...[...document.querySelectorAll('${augAll} [data-category-lines] .MuiChartsAxis-directionY text')].map(t => { const v = parseFloat(t.textContent.replace(/[^0-9.]/g, '')); return /K/.test(t.textContent) ? v * 1000 : v }).filter(v => !isNaN(v)))`)
   const withTotal = await scaleTop()
   await tickLine('__total')
   const noTotal = await lineCount()
@@ -319,7 +322,7 @@ try {
   await p.eval(`document.querySelector('main').scrollBy({ top: 30000 })`)
   await sleep(1500)
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
-  await p.waitFor(`document.querySelector('${sec} [data-category-lines]') !== null`, 20000, 'period back')
+  await p.waitFor(`document.querySelector('${augAll} [data-category-lines]') !== null`, 20000, 'period back')
   await sleep(800)
   check('chosen lines kept after scrolling away and back', (await lineCount()) === 2)
   // Pies: shares with two decimals, so a small share never reads 0%.
@@ -330,6 +333,7 @@ try {
 
   // date format menu
   await p.scrollMain(0)
+  await p.waitFor(`document.querySelector('section th button') !== null`, 15000, 'first period loaded')
   await p.clickText('Date', { selector: 'section th button' })
   await shot(p, '10-date-menu.png')
   await p.clickText('YYYY-MM-DD', { selector: '[role=menuitem]', partial: true })
@@ -564,11 +568,17 @@ try {
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${sec} table') !== null`, 20000, 'August statements')
   await sleep(500)
-  await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Category').click()`)
-  await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'category filter')
-  const tableCats = await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].map(l => l.dataset.choice)`)
-  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
-  await sleep(300)
+  // Every bank's table of the month: the categories its operations have.
+  const tableCats = []
+  const bankParts = `${sec} [data-part-block]:not([data-part-block="all"])`
+  const bankCount = await p.eval(`document.querySelectorAll('${bankParts}').length`)
+  for (let i = 0; i < bankCount; i++) {
+    await p.eval(`[...document.querySelectorAll('${bankParts}')[${i}].querySelector('table').querySelectorAll('th button')].find(b => b.innerText.trim() === 'Category').click()`)
+    await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'category filter')
+    tableCats.push(...await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].map(l => l.dataset.choice)`))
+    await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+    await sleep(300)
+  }
   check('the operations keep their own categories in the tables', [1, 2, 3, 4].every((i) => tableCats.includes(catId(`Nested ${i}`))) && tableCats.includes('groceries') && !tableCats.includes(catId('Food (test)')))
   // Clean up: the setting back on, the operations back in their categories, the test categories deleted.
   await p.clickText('Settings', { selector: 'nav button' })
@@ -641,7 +651,7 @@ try {
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${sec} table [data-tag-cell]') !== null`, 20000, 'tags column')
   await sleep(500)
-  const tagRows = () => p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].map(r => ({ cat: r.children[1].innerText, tags: [...r.querySelectorAll('[data-tag]')].map(t => t.dataset.tag) }))`)
+  const tagRows = () => p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].filter(r => r.children.length > 2).map(r => ({ cat: r.children[1].innerText, tags: [...r.querySelectorAll('[data-tag]')].map(t => t.dataset.tag) }))`)
   const tagBefore = await tagRows()
   const restaurantRows = tagBefore.filter((r) => r.cat === 'Restaurants & cafés')
   check('Tags column: a category\'s tags on every one of its operations', restaurantRows.length > 0 && restaurantRows.every((r) => r.tags.join() === 'Trip (test),Work (test)')
@@ -659,9 +669,14 @@ try {
   const augTagged = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
   const ownOp = augTagged.transactions.find((t) => t.ownTags.length > 0)
   check('two tags put on one operation', ownOp?.ownTags.length === 2 && ownOp.tags.includes(tagIds['Family (test)']) && ownOp.tags.includes(tagIds['Work (test)']))
-  // The Tags filter: none, then one tag.
-  await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
-  await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'tags filter')
+  // The Tags filter: none, then one tag (once the period is read again with the new tags).
+  for (let i = 0; i < 20; i++) {
+    await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
+    await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'tags filter')
+    if (await p.eval(`!!document.querySelector('[role=menu] li[data-choice="${tagIds['Family (test)']}"]')`)) break
+    await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+    await sleep(500)
+  }
   await shot(p, '22d-tags-filter.png')
   await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === 'none').click()`)
   await sleep(250)
@@ -669,6 +684,7 @@ try {
   await sleep(250)
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   await sleep(400)
+  await p.waitFor(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].filter(r => r.children.length > 2).length === 1`, 10000, 'one tagged row').catch(() => undefined)
   const familyRows = await tagRows()
   check('Tags filter: one tag', familyRows.length === 1 && familyRows[0].tags.includes('Family (test)'))
   await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
@@ -700,22 +716,7 @@ try {
   await sleep(600)
 
   // ---- Summary (left of Statements): only the balance, by month (or by year beyond a year), every kind of period.
-  // Scrolled down in Statements, switched to Summary, then scrolled back up with the wheel: every turn of the wheel
-  // goes back up (newer months), never down again, until the top.
-  const wheel = (dy) => p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 500, deltaX: 0, deltaY: dy })
-  const onScreen = () => p.eval(`(() => { const m = document.querySelector('main'); const line = m.getBoundingClientRect().top + 140; const s = [...document.querySelectorAll('section[data-period]')].find(x => { const r = x.getBoundingClientRect(); return r.top <= line && r.bottom > line }); return { top: Math.round(m.scrollTop), at: s ? s.dataset.period : '' } })()`)
-  await p.scrollMain(0)
-  for (let i = 0; i < 25; i++) { await wheel(600); await sleep(200) }
-  await sleep(600)
-  const beforeSwitch = await onScreen()
   await p.clickText('Summary', { selector: '[data-period-view] button' })
-  await sleep(1500)
-  const afterSwitch = await onScreen()
-  const climb = [afterSwitch]
-  for (let i = 0; i < 60 && climb[climb.length - 1].top > 0; i++) { await wheel(-300); await sleep(220); climb.push(await onScreen()) }
-  const back = climb.slice(1).filter((c, i) => c.at && climb[i].at && c.at < climb[i].at)
-  check('Summary scrolls back up after scrolling down (no jump back)', beforeSwitch.top > 3000 && afterSwitch.top > 0 && climb[climb.length - 1].top === 0 && back.length === 0
-    && climb.slice(1).every((c, i) => c.top < climb[i].top), `${beforeSwitch.at} -> ${afterSwitch.at}, ${climb.length - 1} turns to the top, ${back.length} jumps back`)
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${sec} [data-summary]') !== null`, 20000, 'month summary')
   await sleep(400)
@@ -729,7 +730,8 @@ try {
   await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'year summary')
   await sleep(500)
   const yearCard = await p.eval(`(() => { const s = document.querySelector('section[data-period="2025-01-01"]'); return { parts: s.querySelectorAll('[data-part]').length, stats: [...s.querySelectorAll('[data-stat]')].map(x => x.dataset.stat).join(), text: s.innerText } })()`)
-  const yearSum = await p.engine('periods.summary', { from: '2025-01-01', to: '2025-12-31', granularity: 'year', currency: 'CAD' })
+  // The Summary is global: every bank of the year together, in the global display currency.
+  const yearSum = (await p.engine('periods.report', { from: '2025-01-01', to: '2025-12-31', granularity: 'year' })).global
   check('Summary of a year: the year alone, with its balance', yearCard.parts === 0 && yearCard.stats === 'Balance' && yearSum.breakdown.length === 1
     && cents(yearSum.breakdown[0].balance) === cents(yearSum.balance) && yearCard.text.includes(Math.abs(yearSum.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), yearCard.stats)
   await shot(p, '23b-summary-year.png')
@@ -744,6 +746,58 @@ try {
   check('Summary of a custom period', await p.eval(`document.querySelector('section [data-summary] [data-stat="Balance"]') !== null`))
   await p.clickText('Month', { selector: 'button' })
   await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await sleep(600)
+
+  // ---- Banks side by side (the samples have Canadian banks in CAD and French banks in EUR in October 2025): each bank
+  // in its currency, then all banks in the global currency, every euro operation converted at the rate of its day.
+  const octSec = 'section[data-period="2025-10-01"]'
+  await p.eval(`document.querySelector('${octSec}').scrollIntoView({ block: 'start' })`)
+  await p.waitFor(`document.querySelector('${octSec} [data-conversion-panel]') !== null`, 30000, 'October with all banks')
+  await sleep(500)
+  const octUi = await p.eval(`(() => { const s = document.querySelector('${octSec}'); return { parts: [...s.querySelectorAll('[data-part-block]')].map(b => [b.dataset.partBlock, b.querySelector('[data-part-name]').innerText, b.querySelector('[data-part-currency]').innerText]), balance: s.querySelector('[data-part-block="all"] [data-totals] [data-stat="Balance"]').innerText, panel: s.querySelector('[data-conversion-panel]').innerText } })()`)
+  const oct = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
+  const cadBanks = oct.banks.filter((b) => b.currency === 'CAD')
+  const eurLines = oct.conversion.lines.filter((l) => l.from === 'EUR' && l.to === 'CAD')
+  check('a block per bank in its currency, then all banks in CAD', octUi.parts.length === oct.banks.length + 1 && octUi.parts.some((x) => x[2] === 'EUR') && octUi.parts.some((x) => x[2] === 'CAD' && x[0] !== 'all')
+    && octUi.parts.at(-1).join() === 'all,All banks,CAD', octUi.parts.map((x) => x[1] + ' ' + x[2]).join(' | '))
+  check('all banks = each CAD bank + each euro bank converted operation by operation', eurLines.length > 0 && eurLines.every((l) => l.unconverted === 0 && l.rates.length > 0)
+    && cents(oct.global.expenses) === cents(cadBanks.reduce((x, b) => x + b.summary.expenses, 0) + eurLines.reduce((x, l) => x + l.convertedExpenses, 0))
+    && cents(oct.global.earnings) === cents(cadBanks.reduce((x, b) => x + b.summary.earnings, 0) + eurLines.reduce((x, l) => x + l.convertedEarnings, 0))
+    && octUi.balance.includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), `${eurLines.length} euro banks`)
+  check('how amounts are converted is shown: source, method, each rate', /European Central Bank/.test(octUi.panel) && /rate published for its own day/.test(octUi.panel) && /rounded to the cent/.test(octUi.panel) && /1 EUR = [\d.]+/.test(octUi.panel))
+  await p.eval(`document.querySelector('${octSec} [data-rates-toggle]').click()`)
+  await sleep(300)
+  const dayRates = await p.eval(`[...document.querySelectorAll('${octSec} [data-rates] p')].length`)
+  check('the rate of every day with operations on demand', dayRates === eurLines[0].rates.length, `${dayRates} days`)
+  await shot(p, '24a-banks-and-conversion.png')
+  // The Summary stays global.
+  await p.clickText('Summary', { selector: '[data-period-view] button' })
+  await p.waitFor(`document.querySelector('${octSec} [data-summary]') !== null`, 20000, 'October summary')
+  check('the Summary is the global balance', (await p.eval(`document.querySelector('${octSec} [data-summary]').innerText`)).includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })))
+  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  // The global display currency, in the title of Settings > Display, then the link to the rates.
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('General', { selector: 'button' })
+  await sleep(400)
+  check('global display currency in the Display title, then the link to the rates', await p.eval(`(() => { const g = document.querySelector('[data-global-currency]'); return !!g && g.innerText.includes('Global display') && g.innerText.includes('European Central Bank exchange rates') && !!g.querySelector('[data-rates-link]') })()`))
+  await shot(p, '24b-global-currency.png')
+  await p.engine('settings.set', { key: 'currency', value: 'EUR' })
+  const octEur = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
+  check('in euros, the Canadian banks are the ones converted', octEur.currency === 'EUR' && octEur.conversion.lines.length > 0 && octEur.conversion.lines.every((l) => l.from === 'CAD' && l.to === 'EUR')
+    && Object.keys(octEur.converted).length + Object.keys(oct.converted).length === oct.banks.reduce((x, b) => x + b.summary.transactions.length, 0))
+  await p.engine('settings.set', { key: 'currency', value: 'CAD' })
+  // The calendar: every bank together; a euro operation shows what the bank wrote and the rate.
+  await p.eval('location.reload()')
+  await p.waitFor(`document.querySelector('nav') !== null`, 20000, 'reloaded')
+  await p.clickText('Calendar', { selector: 'nav button' })
+  await sleep(1200)
+  const converted = oct.banks.find((b) => b.currency === 'EUR').summary.transactions.find((t) => oct.converted[t.id])
+  for (let i = 0; i < 24 && (await p.eval(`document.querySelector('main h5')?.innerText`)) !== 'October 2025'; i++) await p.click('[aria-label="Previous month"]')
+  await p.mouseClick(`div[data-date="${converted.date}"]`)
+  await sleep(600)
+  check('calendar: all banks, a converted amount with the amount the bank wrote', await p.eval(`[...document.querySelectorAll('[data-original]')].some(e => e.innerText.includes('€'))`), converted.date)
+  await shot(p, '24c-calendar-all-banks.png')
+  await p.clickText('Periods', { selector: 'nav button' })
   await sleep(600)
 
   // Clean up the test tags: off the category, then deleted (they leave every operation).

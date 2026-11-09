@@ -134,7 +134,7 @@ internal sealed partial class DocumentContext
         int Count(params string[] keys) => keys.Sum(k => Regex.Matches(folded, (char.IsLetter(k[0]) ? @"(?<![A-Z])" : "") + Regex.Escape(k) + (char.IsLetter(k[^1]) ? @"(?![A-Z])" : "")).Count);
         var scores = new Dictionary<string, int>
         {
-            ["EUR"] = Count("EUR", "€"),
+            ["EUR"] = Count("EUR", "€", "EUROS"),
             ["USD"] = Count("USD", "US$", "$ US", "$US"),
             ["GBP"] = Count("GBP", "£"),
             ["CHF"] = Count("CHF"),

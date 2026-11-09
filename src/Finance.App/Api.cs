@@ -43,7 +43,30 @@ internal static class Api
         });
 
         // ------------------------------------------------------------ periods
-        b.Register("periods.index", p => s.Summaries.Index(p.Opt<string>("currency") ?? s.Setting("currency")));
+        // Without a currency: every bank (the periods and the calendar); with one: only the operations in it.
+        b.Register("periods.index", p => s.Summaries.Index(p.Opt<string>("currency")));
+        b.Register("periods.report", p => s.Summaries.Report(
+            ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
+            p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates));
+
+        // ------------------------------------------------------------ exchange rates
+        b.Register("rates.status", _ => s.Rates.Status());
+        b.RegisterBackground("rates.update", async _ => await s.Rates.UpdateAsync());
+        // Downloads the rates when some operations are in another currency than the global one and the rates kept are
+        // missing or more than a few days behind (at most twice a day). Says whether anything changed.
+        b.RegisterBackground("rates.ensure", async _ =>
+        {
+            var global = s.Setting("currency");
+            var used = s.Db.Accounts().Select(a => a.Currency).Append(global).Distinct().ToList();
+            if (used.Count < 2) return new { updated = false, status = s.Rates.Status() };
+            var status = s.Rates.Status();
+            var behind = status.Latest is null || used.Any(c => !s.Rates.Knows(c))
+                || DateOnly.ParseExact(status.Latest, "yyyy-MM-dd", CultureInfo.InvariantCulture) < DateOnly.FromDateTime(DateTime.Today).AddDays(-4);
+            var recent = status.UpdatedAt is { } at && DateTime.UtcNow - DateTime.Parse(at, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) < TimeSpan.FromHours(12);
+            if (!behind || (recent && status.Latest is not null)) return new { updated = false, status };
+            var after = await s.Rates.UpdateAsync();
+            return new { updated = after.Latest != status.Latest || after.Currencies != status.Currencies, status = after };
+        });
         b.Register("periods.summary", p => s.Summaries.Summarize(
             ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
             p.Opt<Granularity?>("granularity") ?? Granularity.Month,
@@ -178,7 +201,7 @@ internal static class Api
             if (!ImportService.Extensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
                 throw new InvalidDataException("This file is not a statement the app can read: PDF, picture, CSV, Excel, OpenDocument, Word, OFX, QFX, QBO or QIF.");
             var draft = await s.Imports.ParseAsync(Path.GetFileName(path), await File.ReadAllBytesAsync(path));
-            return DraftView(draft, s);
+            return WithOthers(draft, s);
         });
         b.RegisterBackground("import.parseBytes", async p =>
         {
@@ -186,7 +209,7 @@ internal static class Api
             var bytes = Convert.FromBase64String(p.Get<string>("base64"));
             if (bytes.Length > 60 * 1024 * 1024) throw new InvalidDataException("This file is larger than 60 MB.");
             var draft = await s.Imports.ParseAsync(Path.GetFileName(name), bytes);
-            return DraftView(draft, s);
+            return WithOthers(draft, s);
         });
         // The person says which account the file belongs to (or the type of a new account); nothing is guessed.
         b.RegisterBackground("import.choose", p =>
@@ -253,6 +276,11 @@ internal static class Api
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             return null;
         });
+        b.Register("shell.openRatesPage", _ =>
+        {
+            Process.Start(new ProcessStartInfo(ExchangeRates.PageUrl) { UseShellExecute = true });
+            return null;
+        });
         b.Register("shell.reveal", p =>
         {
             var path = p.Get<string>("path");
@@ -264,19 +292,19 @@ internal static class Api
         // ------------------------------------------------------------ reports
         b.Register("report.defaults", p =>
         {
-            var summary = SummaryFrom(p, s);
-            return new { folder = ReportsFolder(s), fileName = ReportBuilder.FileName(summary) };
+            var report = ReportFrom(p, s);
+            return new { folder = ReportsFolder(s), fileName = ReportBuilder.FileName(report.Global) };
         });
         b.RegisterBackground("report.export", p =>
         {
-            var summary = SummaryFrom(p, s);
+            var report = ReportFrom(p, s);
             var folder = p.Opt<string>("folder") is { Length: > 0 } f ? f : ReportsFolder(s);
             if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("This folder does not exist.");
-            var name = p.Opt<string>("fileName") is { Length: > 0 } n ? n.Trim() : ReportBuilder.FileName(summary);
+            var name = p.Opt<string>("fileName") is { Length: > 0 } n ? n.Trim() : ReportBuilder.FileName(report.Global);
             if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new ArgumentException("The file name contains characters Windows does not allow.");
             if (!name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) name += ".pdf";
             var path = Path.Combine(folder, name);
-            var pdf = ReportBuilder.Build(summary, s.Setting("dateFormat"), DateTime.Now, ReportOptions(s));
+            var pdf = ReportBuilder.Build(report, s.Setting("dateFormat"), DateTime.Now, ReportOptions(s));
             File.WriteAllBytes(path, pdf);
             s.Db.SetSetting("reportsFolder", folder);
             return Task.FromResult<object?>(new { path });
@@ -290,9 +318,10 @@ internal static class Api
     private static DateOnly ParseDate(string s) =>
         DateOnly.TryParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : throw new ArgumentException("Invalid date.");
 
-    private static PeriodSummary SummaryFrom(JsonElement p, AppServices s) => s.Summaries.Summarize(
+    /// <summary>The period of a report: every bank, then all of them in the global currency.</summary>
+    private static PeriodReport ReportFrom(JsonElement p, AppServices s) => s.Summaries.Report(
         ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
-        p.Opt<Granularity?>("granularity") ?? Granularity.Month, p.Opt<string>("currency") ?? s.Setting("currency"));
+        p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates);
 
     private static ReportBuilder.Options ReportOptions(AppServices s) => new(
         PieShowAll: s.Setting("pieShowAll") != "false",
@@ -304,6 +333,16 @@ internal static class Api
         var saved = s.Setting("reportsFolder");
         if (saved.Length > 0 && Directory.Exists(saved)) return saved;
         return Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    }
+
+    /// <summary>A draft, and the drafts of the other accounts of the same file.</summary>
+    private static object WithOthers(ImportDraft d, AppServices s)
+    {
+        var view = JsonSerializer.SerializeToElement(DraftView(d, s), Bridge.Json);
+        if (d.Others.Count == 0) return view;
+        var node = System.Text.Json.Nodes.JsonObject.Create(view)!;
+        node["others"] = JsonSerializer.SerializeToNode(d.Others.Select(o => DraftView(o, s)).ToList(), Bridge.Json);
+        return node;
     }
 
     private static object DraftView(ImportDraft d, AppServices s)
