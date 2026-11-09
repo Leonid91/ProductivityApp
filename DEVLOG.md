@@ -436,3 +436,10 @@ real app with `tools/e2e/perf.mjs`.
   currencies used.
 - Previous version, then this one: scrolling months 110 fps, 106 fps; scrolling years 233 fps, 154 fps; switching to
   years 240 fps, 193 fps; ten years 219 fps, 207 fps; calendar, category picker and brands 240 fps, 240 fps.
+
+## November 9th, 2026 - Old unpacked copies removed from drive C: - Commit 19
+
+### Fixed
+- The app is one file that unpacks itself (about 120 MB) into %TEMP%\.net\ProductivityApp the first time each build
+  runs; .NET never deletes the copies of earlier builds, so every new version left 120 MB more on drive C: (twenty
+  builds had left 2.4 GB). At start the app now deletes the copies of other builds that no program is using.

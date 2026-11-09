@@ -24,6 +24,9 @@ internal static class Program
             return 0;
         }
 
+        // Copies of earlier builds unpacked on drive C: are deleted in the background.
+        new Thread(UnpackedCopies.RemoveOld) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+
         ApplicationConfiguration.Initialize();
         using var services = new AppServices(options.DataDir);
         Application.ThreadException += (_, e) => services.Log(e.Exception, "ui");
