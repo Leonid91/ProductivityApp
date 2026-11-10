@@ -29,8 +29,9 @@ public sealed class RatesFileException(string message) : Exception(message);
 /// <summary>
 /// Exchange rates of the source chosen in Settings, among the sources defined in Definitions > Exchange rates (the
 /// European Central Bank by default, the Bank of Canada, or any other address giving a file in one of their layouts).
-/// The whole history is downloaded once a day and kept in the database with the copy downloaded before it, used when
-/// the latest one is missing or cannot be read; nothing older is kept.
+/// The whole history is downloaded once a day and kept as the bank's own file (see <see cref="DownloadStore"/>) with
+/// the copy downloaded before it, used when the latest one is missing or cannot be read; nothing older is kept. A copy
+/// is read once, when first used, and kept in memory.
 /// <para>An amount is converted at the rate of its own day; on a weekend or holiday (no rate published), at the last
 /// rate published before it. Two currencies other than the source's own go through it: 1 CAD in USD with the European
 /// Central Bank is (USD per euro) ÷ (CAD per euro), the same day. Every converted amount is rounded to the cent; totals
@@ -41,9 +42,11 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     /// <summary>A file of rates larger than this is refused (the European Central Bank's whole history is under 1 MB zipped, the Bank of Canada's about 4 MB).</summary>
     public const int MaxDownloadBytes = 32 * 1024 * 1024;
 
-    /// <summary>The stored text of each currency's rates (units of the currency per unit of the base); read into numbers when used.</summary>
-    private (string SourceId, Dictionary<string, string> Raw, bool FromPrevious)? _loaded;
-    private readonly Dictionary<string, (DateOnly[] Days, decimal[] PerBase)> _series = new(StringComparer.Ordinal);
+    private readonly DownloadStore _store = new(db.DownloadsFolder);
+
+    /// <summary>Each source's copy in use, read from its file: each currency's rates as text (units of the currency per unit of the base), read into numbers when used.</summary>
+    private readonly Dictionary<string, (Dictionary<string, string> Raw, bool FromPrevious)> _copies = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Source, string Currency), (DateOnly[] Days, decimal[] PerBase)> _series = [];
     private List<RateSource>? _sources;
     private readonly Lock _gate = new();
 
@@ -57,18 +60,34 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     /// <summary>The source chosen in Settings (the first one defined when that one is gone).</summary>
     public RateSource Source => Find(sourceSetting?.Invoke()) ?? Sources().FirstOrDefault() ?? RateSource.Ecb;
 
+    /// <summary>The downloads kept for a source, the latest first (its files are in <see cref="DownloadStore.ExchangeRates"/>).</summary>
+    public List<DownloadStore.Copy> Copies(RateSource source) => _store.Copies(DownloadStore.ExchangeRates, source.Name);
+
     private (Dictionary<string, string> Raw, bool FromPrevious) Loaded(RateSource source)
     {
         lock (_gate)
         {
-            if (_loaded is { } l && l.SourceId == source.Id) return (l.Raw, l.FromPrevious);
-            _series.Clear();
+            if (_copies.TryGetValue(source.Id, out var known)) return known;
             // The latest copy, or the one before it when the latest is missing or cannot be read.
-            var current = db.LoadRateSet(source.Id, 0);
-            var usable = current.Count > 0 && current.Values.All(Readable);
-            var raw = usable ? current : db.LoadRateSet(source.Id, 1);
-            _loaded = (source.Id, raw, !usable && raw.Count > 0);
-            return (raw, !usable && raw.Count > 0);
+            var bank = CentralBank.Find(source.Format);
+            var loaded = (Raw: new Dictionary<string, string>(), FromPrevious: false);
+            foreach (var (copy, i) in Copies(source).Take(DownloadStore.Kept).Select((c, i) => (c, i)))
+            {
+                var file = copy.Files.FirstOrDefault(f => f.StartsWith("rates.", StringComparison.Ordinal));
+                if (file is null) continue;
+                try
+                {
+                    var (series, _) = Parse(File.ReadAllBytes(Path.Combine(copy.Folder, file)), bank);
+                    if (series.Count == 0 || !series.Values.All(Readable)) continue;
+                    loaded = (series, i > 0);
+                    break;
+                }
+                catch (Exception e) when (e is RatesFileException or IOException or InvalidDataException or JsonException or FormatException or UnauthorizedAccessException)
+                {
+                    // Not readable (changed by hand, cut short): the copy before it is used.
+                }
+            }
+            return _copies[source.Id] = loaded;
         }
     }
 
@@ -85,7 +104,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         var (raw, _) = Loaded(source);
         lock (_gate)
         {
-            if (_series.TryGetValue(currency, out var known)) return known;
+            if (_series.TryGetValue((source.Id, currency), out var known)) return known;
             if (!raw.TryGetValue(currency, out var data)) return null;
             // Newest first in the text: read backwards into ascending arrays, without intermediate lists.
             var parts = data.Split(';', StringSplitOptions.RemoveEmptyEntries);
@@ -99,7 +118,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
                 rates[i] = decimal.Parse(p[11..], NumberStyles.Float, CultureInfo.InvariantCulture);
             }
             if (!IsAscending(days)) Array.Sort(days, rates);
-            return _series[currency] = (days, rates);
+            return _series[(source.Id, currency)] = (days, rates);
         }
     }
 
@@ -112,7 +131,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     /// <summary>Forgets the rates and sources read from the database (after an update or a change of source).</summary>
     public void Reload()
     {
-        lock (_gate) { _loaded = null; _series.Clear(); _sources = null; }
+        lock (_gate) { _copies.Clear(); _series.Clear(); _sources = null; }
     }
 
     public RatesStatus Status() => Status(Source);
@@ -120,12 +139,14 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     public RatesStatus Status(RateSource source)
     {
         var (raw, previous) = Loaded(source);
-        // Each currency's text runs from its newest day to its oldest (the order of the bank's file).
-        var newest = raw.Values.Where(v => v.Length > 10).Select(v => v[..10]).DefaultIfEmpty().Max();
+        var newest = Newest(raw);
         var oldest = raw.Values.Where(v => v.Length > 10).Select(v => v.TrimEnd(';')).Select(v => v[(v.LastIndexOf(';') + 1)..][..10]).DefaultIfEmpty().Min();
         return new RatesStatus(source.Id, source.Name, source.Base ?? "", source.Url, db.GetSetting($"rates.{source.Id}.updatedAt"),
             newest, oldest, raw.Count + (raw.Count > 0 ? 1 : 0), db.GetSetting($"rates.{source.Id}.error") is { Length: > 0 } e ? e : null, previous);
     }
+
+    /// <summary>The last day of rates of a copy (each currency's text runs from its newest day to its oldest).</summary>
+    private static string? Newest(Dictionary<string, string> raw) => raw.Values.Where(v => v.Length > 10).Select(v => v[..10]).DefaultIfEmpty().Max();
 
     /// <summary>Every source defined, with what its copy in use holds and the error of its last download.</summary>
     public List<RateSourceView> Views()
@@ -133,9 +154,9 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         var current = Source.Id;
         return [.. Sources().Select(s =>
         {
-            var copy = db.RateCopies(s.Id).FirstOrDefault(c => c.Slot == 0);
-            return new RateSourceView(s.Id, s.Name, s.Format, s.Url, s.Base, copy.Currencies > 0 ? db.RateSetLatest(s.Id) : null,
-                copy.Currencies > 0 ? copy.Currencies + 1 : 0, db.GetSetting($"rates.{s.Id}.updatedAt"),
+            var (raw, _) = Loaded(s);
+            return new RateSourceView(s.Id, s.Name, s.Format, s.Url, s.Base, raw.Count > 0 ? Newest(raw) : null,
+                raw.Count > 0 ? raw.Count + 1 : 0, db.GetSetting($"rates.{s.Id}.updatedAt"),
                 db.GetSetting($"rates.{s.Id}.error") is { Length: > 0 } e ? e : null, s.Id == current);
         })];
     }
@@ -163,6 +184,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
             db.SaveRateSource(saved);
             if (changedAddress && old is not null) db.ClearRates(saved.Id);
         });
+        if (changedAddress && old is not null) _store.Delete(DownloadStore.ExchangeRates, saved.Name);
         Reload();
         return saved;
     }
@@ -171,6 +193,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     {
         if (Find(id) is null) return;
         if (Source.Id == id) throw new InvalidOperationException("This bank is in use: choose another one first.");
+        _store.Delete(DownloadStore.ExchangeRates, Find(id)!.Name);
         db.RemoveRateSource(id);
         Reload();
     }
@@ -262,7 +285,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
                 source = source with { Base = currency };
                 db.SaveRateSource(source);
             }
-            Save(source, series, DateOnly.FromDateTime(DateTime.Now));
+            Save(source, bytes, DateOnly.FromDateTime(DateTime.Now));
             db.SetSetting($"rates.{source.Id}.updatedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             db.SetSetting($"rates.{source.Id}.error", "");
         }
@@ -305,13 +328,17 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         return copy.ToArray();
     }
 
-    /// <summary>Keeps the copy of a source's rates downloaded on <paramref name="day"/> as the one in use (see <see cref="Database.SaveRateSet"/>).</summary>
-    public void Save(RateSource source, Dictionary<string, string> series) => Save(source, series, DateOnly.FromDateTime(DateTime.Now));
+    /// <summary>
+    /// Keeps a source's file of rates downloaded on <paramref name="day"/>, as it is, as the copy in use (see <see
+    /// cref="DownloadStore.Save"/>); a file that does not give rates in its bank's layout is refused.
+    /// </summary>
+    public void Save(RateSource source, byte[] file) => Save(source, file, DateOnly.FromDateTime(DateTime.Now));
 
-    public void Save(RateSource source, Dictionary<string, string> series, DateOnly day)
+    public void Save(RateSource source, byte[] file, DateOnly day)
     {
+        var (series, _) = Parse(file, CentralBank.Find(source.Format));
         if (series.Count == 0) throw new RatesFileException("The file at this address holds no exchange rates.");
-        db.SaveRateSet(source.Id, series, day);
+        _store.Save(DownloadStore.ExchangeRates, source.Name, day, [(DownloadStore.FileName("rates", null, file), file)]);
         Reload();
     }
 

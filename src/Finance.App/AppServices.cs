@@ -93,6 +93,7 @@ internal sealed class AppServices : IDisposable
         if (string.Equals(folder, Path.TrimEndingDirectorySeparator(DbFolder), StringComparison.OrdinalIgnoreCase)) return;
         if (File.Exists(Path.Combine(folder, DbFile))) throw new IOException("This folder already holds a finances database.");
         var from = Path.Combine(DbFolder, DbFile);
+        var downloads = Db.DownloadsFolder;
         Db.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try
@@ -102,6 +103,8 @@ internal sealed class AppServices : IDisposable
             else File.WriteAllText(LocationFile, folder);
             File.Delete(from);
             foreach (var extra in new[] { "-wal", "-shm" }) File.Delete(from + extra);
+            // The downloaded rates and holidays go with it.
+            new DownloadStore(downloads).MoveTo(Path.Combine(folder, "downloads"));
         }
         finally
         {

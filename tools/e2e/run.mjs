@@ -1415,6 +1415,29 @@ try {
   await p.engine('brands.rename', { from: brandBefore.brand + ' Renamed', to: brandBefore.brand })
   await shot(p, '25-brands-pencils.png')
 
+  // The downloaded rates and holidays: files in their own format next to the database, in downloads/<kind>/<source>/
+  // <day of the download>/<what it holds>.<format>; two downloads at most per source.
+  const listing = (dir) => existsSync(dir) ? readdirSync(dir).sort() : []
+  const downloads = join(data, 'downloads')
+  const layout = {}
+  for (const kind of ['exchange-rates', 'holidays'])
+    for (const source of listing(join(downloads, kind)))
+      layout[`${kind}/${source}`] = listing(join(downloads, kind, source)).map((day) => `${day}: ${listing(join(downloads, kind, source, day)).join(' ')}`)
+  const dayName = /^\d{4}-\d{2}-\d{2}$/
+  const okLayout = ['exchange-rates/european-central-bank', 'exchange-rates/bank-of-canada', 'exchange-rates/us-federal-reserve', 'holidays/canada-federal', 'holidays/quebec', 'holidays/united-states-federal', 'holidays/france'].every((k) => layout[k]?.length >= 1 && layout[k].length <= 2)
+    && Object.entries(layout).every(([k, copies]) => copies.every((c) => dayName.test(c.split(':')[0]) && c.split(': ')[1].split(' ').every((f) => (k.startsWith('exchange-rates') ? /^rates\.(zip|csv|json)$/ : /^holidays(-\d{4})?\.(json|ics)$/).test(f))))
+    && layout['exchange-rates/european-central-bank'][0].endsWith('rates.zip') && layout['exchange-rates/bank-of-canada'][0].endsWith('rates.json') && layout['exchange-rates/us-federal-reserve'][0].endsWith('rates.csv')
+    && layout['holidays/quebec'][0].includes('holidays-2026.json') && layout['holidays/united-states-federal'][0].endsWith('holidays.ics')
+  check('the downloads: the files of the banks and calendars as downloaded, in downloads/<kind>/<source>/<day>/, plain standard names, two copies at most', okLayout, JSON.stringify(layout).slice(0, 900))
+  // The database moved to another folder: its downloads go with it, the rates and holidays still in use.
+  const movedTo = join(out, 'moved-database')
+  mkdirSync(movedTo, { recursive: true })
+  await p.engine('data.moveDatabase', { folder: movedTo })
+  const afterMove = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
+  check('the database moved: its downloads moved with it, the rates and holidays still used from there', existsSync(join(movedTo, 'downloads', 'exchange-rates', 'bank-of-canada')) && !existsSync(downloads)
+    && afterMove.conversion.lines.length > 0 && afterMove.conversion.lines.every((l) => l.unconverted === 0) && afterMove.businessDays === 22, `${afterMove.businessDays} business days`)
+  await p.engine('data.moveDatabase', { folder: data })
+
   check('no script errors in the interface', p.consoleErrors.length === 0, p.consoleErrors.slice(0, 3).join(' | '))
 } catch (e) {
   failed = true

@@ -48,7 +48,9 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
     private const string YearMark = "{year}";
 
     private List<HolidayCalendar>? _calendars;
-    private readonly Dictionary<string, Holiday[]> _loaded = new(StringComparer.Ordinal);
+    private readonly DownloadStore _store = new(db.DownloadsFolder);
+    /// <summary>Each calendar's holidays, read from its files, and whether they come from the download before the latest.</summary>
+    private readonly Dictionary<string, (Holiday[] Days, bool FromPrevious)> _loaded = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
 
     /// <summary>The calendars in the order of the table: each country followed by the provinces or states under it.</summary>
@@ -86,40 +88,46 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         lock (_gate) { _calendars = null; _loaded.Clear(); }
     }
 
-    /// <summary>The holidays of a calendar: its latest copy, or the one of the day before when the latest cannot be read.</summary>
-    public Holiday[] Of(string id)
+    /// <summary>The downloads kept for a calendar, the latest first (its files are in <see cref="DownloadStore.Holidays"/>).</summary>
+    public List<DownloadStore.Copy> Copies(HolidayCalendar c) => _store.Copies(DownloadStore.Holidays, c.Location);
+
+    /// <summary>
+    /// The holidays of a calendar, read once from its files: the latest download, or the one before when the latest
+    /// cannot be read (changed by hand, cut short) or holds no holidays.
+    /// </summary>
+    public Holiday[] Of(string id) => Loaded(id).Days;
+
+    private (Holiday[] Days, bool FromPrevious) Loaded(string id)
     {
         lock (_gate)
         {
             if (_loaded.TryGetValue(id, out var known)) return known;
-            var days = Read(db.LoadHolidaySet(id, 0)) ?? Read(db.LoadHolidaySet(id, 1)) ?? [];
-            return _loaded[id] = days;
+            var c = Calendars().FirstOrDefault(x => x.Id == id);
+            var loaded = (Days: Array.Empty<Holiday>(), FromPrevious: false);
+            foreach (var (copy, i) in (c is null ? [] : Copies(c)).Take(DownloadStore.Kept).Select((x, i) => (x, i)))
+            {
+                try
+                {
+                    var days = copy.Files.Where(f => f.StartsWith("holidays", StringComparison.Ordinal))
+                        .SelectMany(f => Parse(File.ReadAllBytes(Path.Combine(copy.Folder, f)))).Distinct().OrderBy(h => h.Day).ThenBy(h => h.Name, StringComparer.Ordinal).ToArray();
+                    if (days.Length == 0) continue;
+                    loaded = (days, i > 0);
+                    break;
+                }
+                catch (Exception e) when (e is HolidaysFileException or IOException or JsonException or FormatException or DecoderFallbackException or UnauthorizedAccessException)
+                {
+                    // Not readable: the download before it is used.
+                }
+            }
+            return _loaded[id] = loaded;
         }
     }
 
-    /// <summary>A stored copy: a JSON list of [day, name]; null when missing or unreadable.</summary>
-    private static Holiday[]? Read(string? data)
-    {
-        if (string.IsNullOrEmpty(data)) return null;
-        try
-        {
-            var rows = JsonSerializer.Deserialize<string[][]>(data);
-            if (rows is not { Length: > 0 }) return null;
-            return [.. rows.Select(r => new Holiday(DateOnly.ParseExact(r[0], "yyyy-MM-dd", CultureInfo.InvariantCulture), r[1], r.Length > 2 && r[2] == "observed"))];
-        }
-        catch (Exception e) when (e is JsonException or FormatException or IndexOutOfRangeException or ArgumentNullException)
-        {
-            return null;
-        }
-    }
+    /// <summary>What a calendar's holidays are, as one text (to see whether a download changed them).</summary>
+    private static string Signature(IEnumerable<Holiday> days) => string.Join(";", days.Select(h => $"{h.Day:yyyy-MM-dd}={h.Name}{(h.Observed ? "*" : "")}"));
 
-    private static string Write(IEnumerable<Holiday> days) =>
-        JsonSerializer.Serialize(days.Select(h => h.Observed
-            ? new[] { h.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), h.Name, "observed" }
-            : [h.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), h.Name]));
-
-    /// <summary>True when the copy in use of a calendar comes from the day before (today's cannot be read).</summary>
-    public bool FromPrevious(string id) => Read(db.LoadHolidaySet(id, 0)) is null && Read(db.LoadHolidaySet(id, 1)) is not null;
+    /// <summary>True when the holidays in use of a calendar come from the download before the latest (the latest cannot be read).</summary>
+    public bool FromPrevious(string id) => Loaded(id).FromPrevious;
 
     /// <summary>
     /// Every calendar defined, in the order of the table, with the number of holidays of this year in its copy in use
@@ -151,7 +159,8 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         CheckAddress(url);
         var old = Find(id);
         if (id is not null && old is null) throw new ArgumentException("This calendar no longer exists.");
-        if (Calendars().FirstOrDefault(c => c.Id != id && string.Equals(c.Location, location, StringComparison.OrdinalIgnoreCase)) is { } same)
+        // Two places with one name, or names giving the same folder of downloads ("Québec" and "Quebec"): one place.
+        if (Calendars().FirstOrDefault(c => c.Id != id && DownloadStore.Slug(c.Location) == DownloadStore.Slug(location)) is { } same)
             throw new ArgumentException($"{same.Location} is already in the table.");
         if (parent is not null && (parent == id || Find(parent) is not { Parent: null }))
             throw new ArgumentException("A calendar can only be placed under a country's calendar.");
@@ -163,6 +172,9 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
             db.SaveHolidayCalendar(saved);
             if (old is not null && old.Url != url) db.ClearHolidays(saved.Id);
         });
+        // Its downloads follow its name; a new address drops them.
+        if (old is not null) _store.Rename(DownloadStore.Holidays, old.Location, location);
+        if (old is not null && old.Url != url) _store.Delete(DownloadStore.Holidays, location);
         Reload();
         return saved;
     }
@@ -190,12 +202,12 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
     public void RemoveCalendar(string id)
     {
         if (Find(id) is null) return;
-        var under = Calendars().Where(c => c.Parent == id).Select(c => c.Id).ToList();
+        var gone = Calendars().Where(c => c.Parent == id || c.Id == id).ToList();
         db.InTransaction(() =>
         {
-            foreach (var u in under) db.RemoveHolidayCalendar(u);
-            db.RemoveHolidayCalendar(id);
+            foreach (var c in gone) db.RemoveHolidayCalendar(c.Id);
         });
+        foreach (var c in gone) _store.Delete(DownloadStore.Holidays, c.Location);
         Reload();
     }
 
@@ -266,9 +278,9 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
     public async Task<bool> UpdateAllAsync(bool force, HttpClient? client = null, CancellationToken ct = default)
     {
         var due = Calendars().Where(c => force || Due(c)).ToList();
-        var before = due.Where(c => c.Active).ToDictionary(c => c.Id, c => Write(Of(c.Id)));
+        var before = due.Where(c => c.Active).ToDictionary(c => c.Id, c => Signature(Of(c.Id)));
         await Task.WhenAll(due.Select(c => UpdateAsync(c.Id, client, ct))).ConfigureAwait(false);
-        return before.Any(b => Write(Of(b.Key)) != b.Value);
+        return before.Any(b => Signature(Of(b.Key)) != b.Value);
     }
 
     /// <summary>
@@ -283,11 +295,14 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         try
         {
             CheckAddress(c.Url);
-            var addresses = Addresses(c.Url, DateTime.Today.Year);
+            var thisYear = DateTime.Today.Year;
+            var addresses = Addresses(c.Url, thisYear);
             var files = await Task.WhenAll(addresses.Select(a => Download(client, a, addresses.Count > 1, ct))).ConfigureAwait(false);
             if (files.All(f => f is null)) throw new HolidaysFileException("Nothing at this address (404): check it.");
-            var days = files.Where(f => f is not null).SelectMany(f => Parse(f!)).Distinct().OrderBy(h => h.Day).ThenBy(h => h.Name, StringComparer.Ordinal).ToList();
-            Save(c.Id, days, DateOnly.FromDateTime(DateTime.Now));
+            // One file per year: each kept with its year in its name.
+            var byYear = files.Select((f, i) => (Year: addresses.Count > 1 ? thisYear - YearsBack + i : (int?)null, Bytes: f))
+                .Where(x => x.Bytes is not null).Select(x => (x.Year, x.Bytes!)).ToList();
+            Save(c.Id, byYear, DateOnly.FromDateTime(DateTime.Now));
             db.SetSetting($"holidays.{c.Id}.updatedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             db.SetSetting($"holidays.{c.Id}.error", "");
         }
@@ -339,13 +354,20 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         return copy.ToArray();
     }
 
-    /// <summary>Keeps the holidays downloaded on <paramref name="day"/> as the copy in use (see <see cref="Database.SaveHolidaySet"/>).</summary>
-    public void Save(string id, IReadOnlyCollection<Holiday> days, DateOnly day)
+    /// <summary>
+    /// Keeps a calendar's files downloaded on <paramref name="day"/>, as they are, as its latest download (see <see
+    /// cref="DownloadStore.Save"/>): one file, or one per year; files that do not give holidays are refused.
+    /// </summary>
+    public void Save(string id, IReadOnlyList<(int? Year, byte[] Bytes)> files, DateOnly day)
     {
-        if (days.Count == 0) throw new HolidaysFileException("The file at this address holds no holidays.");
-        db.SaveHolidaySet(id, Write(days), day);
+        var c = Find(id) ?? throw new ArgumentException("This calendar no longer exists.");
+        if (files.Sum(f => Parse(f.Bytes).Count) == 0) throw new HolidaysFileException("The file at this address holds no holidays.");
+        _store.Save(DownloadStore.Holidays, c.Location, day, [.. files.Select(f => (DownloadStore.FileName("holidays", f.Year, f.Bytes), f.Bytes))]);
         Reload();
     }
+
+    /// <summary>The same for a calendar of one file.</summary>
+    public void Save(string id, byte[] file, DateOnly day) => Save(id, [(null, file)], day);
 
     /// <summary>
     /// Reads a downloaded calendar of holidays: an ICS calendar (one event per holiday; an event over several days

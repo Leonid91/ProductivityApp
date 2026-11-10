@@ -610,3 +610,19 @@ real app with `tools/e2e/perf.mjs`.
 ### Changed
 - Definitions > Categories: the + of each line (a subcategory) is always shown, like the pencil, in the column of the
   + of its heading (a new category of the kind).
+
+## November 10th, 2026 - Downloaded rates and holidays kept as their own files - Commit 28
+
+### Changed
+- The downloaded exchange rates and holidays are no longer in the database: they are kept as downloaded, in their own
+  format, in a downloads folder next to the database: downloads/<kind>/<source>/<day of the download>/<what it holds>
+  .<format>, for instance downloads/exchange-rates/bank-of-canada/2026-11-10/rates.json or
+  downloads/holidays/quebec/2026-11-10/holidays-2026.json (one file per year when the source gives one per year).
+  Every name follows the same pattern whatever the format: lowercase words joined by hyphens, days as yyyy-MM-dd.
+- Two downloads at most per source: the latest (n) and the one before (n-1), used when the latest cannot be read (a
+  file changed by hand or cut short). A download is written whole in a partial folder, then renamed; a file that does
+  not give rates or holidays is never kept. A copy is read once, when first used, and kept in memory.
+- The folders follow the sources: a calendar renamed renames its folder, a source deleted or given a new address
+  deletes its downloads, and moving the database moves its downloads with it.
+- The database keeps only the person's choices (the banks and calendars, their addresses, the bank in use and the
+  checked calendars). A database made before drops its copies; every source is downloaded again at the next start.

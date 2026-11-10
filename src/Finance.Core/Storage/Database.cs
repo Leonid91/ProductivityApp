@@ -13,11 +13,14 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 17;
+    private const int SchemaVersion = 18;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
     public string Path { get; }
+
+    /// <summary>The folder of the files downloaded for the exchange rates and the holidays, next to the database.</summary>
+    public string DownloadsFolder => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(Path))!, "downloads");
 
     public Database(string path)
     {
@@ -246,6 +249,18 @@ public sealed class Database : IDisposable
             Exec("UPDATE holiday_calendars SET location = $l WHERE id = 'us' AND location = 'United States'", ("$l", HolidayCalendar.UnitedStates.Location));
             Exec("PRAGMA user_version = 17;");
         }
+        if (version < 18)
+        {
+            // The downloaded rates and holidays are kept as files in their own format next to the database (see
+            // DownloadStore), not in tables: the copies kept so far go, and every source is downloaded again.
+            Exec("""
+                DROP TABLE IF EXISTS rate_sets;
+                DROP TABLE IF EXISTS holiday_sets;
+                DELETE FROM settings WHERE key LIKE 'rates.%.updatedAt' OR key LIKE 'holidays.%.updatedAt';
+                PRAGMA user_version = 18;
+                """);
+            _settings = null;
+        }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -404,39 +419,6 @@ public sealed class Database : IDisposable
         }
     }
 
-    /// <summary>One copy of a bank's exchange rates per currency: slot 0 the latest download, slot 1 the one before.</summary>
-    public Dictionary<string, string> LoadRateSet(string source, int slot) =>
-        Query("SELECT currency, data FROM rate_sets WHERE source = $s AND slot = $n", r => (r.GetString(0), r.GetString(1)), ("$s", source), ("$n", slot))
-            .ToDictionary(x => x.Item1, x => x.Item2);
-
-    /// <summary>
-    /// Keeps a download of <paramref name="day"/> as the copy in use. Two copies at most: the one of the day before and
-    /// the one of today. A second download the same day replaces today's copy (the day before stays); a download on a
-    /// new day makes today's copy the day before, and the older one is deleted.
-    /// </summary>
-    public void SaveRateSet(string source, IReadOnlyDictionary<string, string> series, DateOnly day) => InTransaction(() =>
-    {
-        var iso = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        if (Scalar("SELECT fetched FROM rate_sets WHERE source = $s AND slot = 0 LIMIT 1", ("$s", source)) as string == iso)
-            Exec("DELETE FROM rate_sets WHERE source = $s AND slot = 0", ("$s", source));
-        else
-        {
-            Exec("DELETE FROM rate_sets WHERE source = $s AND slot = 1", ("$s", source));
-            Exec("UPDATE rate_sets SET slot = 1 WHERE source = $s AND slot = 0", ("$s", source));
-        }
-        foreach (var (currency, data) in series)
-            Exec("INSERT INTO rate_sets(source, slot, currency, data, fetched) VALUES($s, 0, $c, $d, $f)", ("$s", source), ("$c", currency), ("$d", data), ("$f", iso));
-    });
-
-    /// <summary>The copies of a source's rates kept: slot 0 in use, slot 1 the day before; the day each was downloaded and how many currencies it has.</summary>
-    public List<(int Slot, string? Day, int Currencies)> RateCopies(string source) =>
-        Query("SELECT slot, MAX(fetched), COUNT(*) FROM rate_sets WHERE source = $s GROUP BY slot ORDER BY slot",
-            r => (r.GetInt32(0), r.IsDBNull(1) ? null : r.GetString(1), r.GetInt32(2)), ("$s", source));
-
-    /// <summary>The newest day of the latest copy of a source's rates (every currency's text starts with its newest day).</summary>
-    public string? RateSetLatest(string source) =>
-        Scalar("SELECT MAX(substr(data, 1, 10)) FROM rate_sets WHERE source = $s AND slot = 0", ("$s", source)) as string;
-
     public List<RateSource> RateSources() =>
         Query("SELECT id, name, url, base, format FROM rate_sources ORDER BY position, rowid",
             r => new RateSource(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetString(4)));
@@ -447,10 +429,9 @@ public sealed class Database : IDisposable
         ON CONFLICT(id) DO UPDATE SET name = excluded.name, url = excluded.url, base = excluded.base, format = excluded.format
         """, ("$i", s.Id), ("$n", s.Name), ("$u", s.Url), ("$b", s.Base), ("$f", s.Format));
 
-    /// <summary>Forgets the rates downloaded from a source, with the day and the error of its last download.</summary>
+    /// <summary>Forgets the day and the error of a source's last download (its files are the download store's).</summary>
     public void ClearRates(string source) => InTransaction(() =>
     {
-        Exec("DELETE FROM rate_sets WHERE source = $s", ("$s", source));
         Exec("DELETE FROM settings WHERE key IN ($u, $e)", ("$u", $"rates.{source}.updatedAt"), ("$e", $"rates.{source}.error"));
         _settings = null;
     });
@@ -473,36 +454,9 @@ public sealed class Database : IDisposable
         ON CONFLICT(id) DO UPDATE SET location = excluded.location, url = excluded.url, active = excluded.active, parent = excluded.parent
         """, ("$i", c.Id), ("$l", c.Location), ("$u", c.Url), ("$a", c.Active ? 1 : 0), ("$p", c.Parent));
 
-    /// <summary>A copy of a calendar's holidays: slot 0 the latest download, slot 1 the one of the day before.</summary>
-    public string? LoadHolidaySet(string calendar, int slot) =>
-        Scalar("SELECT data FROM holiday_sets WHERE calendar = $c AND slot = $n", ("$c", calendar), ("$n", slot)) as string;
-
-    /// <summary>
-    /// Keeps a download of <paramref name="day"/> as the copy in use. Two copies at most: the one of the day before and
-    /// the one of today. A second download the same day replaces today's copy (the day before stays); a download on a
-    /// new day makes today's copy the day before, and the older one is deleted.
-    /// </summary>
-    public void SaveHolidaySet(string calendar, string data, DateOnly day) => InTransaction(() =>
-    {
-        var iso = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        if (Scalar("SELECT fetched FROM holiday_sets WHERE calendar = $c AND slot = 0", ("$c", calendar)) as string == iso)
-            Exec("DELETE FROM holiday_sets WHERE calendar = $c AND slot = 0", ("$c", calendar));
-        else
-        {
-            Exec("DELETE FROM holiday_sets WHERE calendar = $c AND slot = 1", ("$c", calendar));
-            Exec("UPDATE holiday_sets SET slot = 1 WHERE calendar = $c AND slot = 0", ("$c", calendar));
-        }
-        Exec("INSERT INTO holiday_sets(calendar, slot, fetched, data) VALUES($c, 0, $f, $d)", ("$c", calendar), ("$f", iso), ("$d", data));
-    });
-
-    /// <summary>The copies of a calendar kept: slot 0 in use, slot 1 the day before; the day each was downloaded.</summary>
-    public List<(int Slot, string Day)> HolidayCopies(string calendar) =>
-        Query("SELECT slot, fetched FROM holiday_sets WHERE calendar = $c ORDER BY slot", r => (r.GetInt32(0), r.GetString(1)), ("$c", calendar));
-
-    /// <summary>Forgets the holidays downloaded for a calendar, with the day and the error of its last download.</summary>
+    /// <summary>Forgets the day and the error of a calendar's last download (its files are the download store's).</summary>
     public void ClearHolidays(string calendar) => InTransaction(() =>
     {
-        Exec("DELETE FROM holiday_sets WHERE calendar = $c", ("$c", calendar));
         Exec("DELETE FROM settings WHERE key IN ($u, $e)", ("$u", $"holidays.{calendar}.updatedAt"), ("$e", $"holidays.{calendar}.error"));
         _settings = null;
     });

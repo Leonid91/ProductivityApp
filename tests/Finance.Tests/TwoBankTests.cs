@@ -28,7 +28,7 @@ public class TwoBankTests
     private static ExchangeRates WithRates(TempStore s)
     {
         var rates = new ExchangeRates(s.Db);
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv(Rates));
+        rates.Save(RateSource.Ecb, Utf8(Rates));
         return rates;
     }
 
@@ -89,7 +89,7 @@ public class TwoBankTests
         var source = "boc";
         var rates = new ExchangeRates(s.Db, () => source);
         Assert.Equal(("Bank of Canada", "CAD"), (rates.Source.Name, rates.Source.Base));
-        rates.Save(RateSource.BankOfCanada, ExchangeRates.ParseBankOfCanada(System.Text.Encoding.UTF8.GetBytes(BankOfCanada)));
+        rates.Save(RateSource.BankOfCanada, Utf8(BankOfCanada));
         // 100 EUR on 10 October: 162.00 CAD (the bank's own figure, no detour).
         Assert.Equal(new Converted(162.00m, 1.62m, new DateOnly(2025, 10, 10)), rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10)));
         // EUR to USD goes through the Canadian dollar: 100 x 1.62 / 1.39.
@@ -142,7 +142,7 @@ public class TwoBankTests
         Assert.Equal("2025-10-10=0.8333333333;2025-10-08=0.8;", series["EUR"]);
         Assert.Equal("2025-10-10=1.3900;2025-10-09=1.4100;2025-10-08=1.4000;", series["CAD"]);
         var rates = new ExchangeRates(s.Db, () => "fed");
-        rates.Save(RateSource.FederalReserve, series);
+        rates.Save(RateSource.FederalReserve, Utf8(FederalReserve));
         // 100 EUR on 10 October: 120 USD, then 166.80 CAD through the dollar (100 x 1.39 / 0.8333...).
         Assert.Equal(120.00m, rates.Convert(100m, "EUR", "USD", new DateOnly(2025, 10, 10))!.Amount);
         Assert.Equal(166.80m, rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
@@ -173,10 +173,10 @@ public class TwoBankTests
         Assert.Throws<ArgumentException>(() => rates.SaveSource(fed.Id, null, "http://example.test/rates.csv"));
         Assert.Throws<ArgumentException>(() => rates.SaveSource(fed.Id, null, "rates.csv"));
         // A new address drops what the old one gave; the bank stays the same.
-        rates.Save(fed, ExchangeRates.ParseFed(FederalReserve).Series);
+        rates.Save(fed, Utf8(FederalReserve));
         Assert.Equal((4, "2025-10-10"), (rates.Views().Single(v => v.Id == fed.Id).Currencies, rates.Views().Single(v => v.Id == fed.Id).Latest));
         Assert.Equal("fed", rates.SaveSource(fed.Id, "ecb", "https://example.test/other.csv").Format);
-        Assert.Empty(s.Db.LoadRateSet(fed.Id, 0));
+        Assert.Empty(rates.Copies(fed));
         // Without a copy, nothing is said about its rates.
         Assert.Equal((0, null), (rates.Views().Single(v => v.Id == fed.Id).Currencies, rates.Views().Single(v => v.Id == fed.Id).Latest));
         // The source in use cannot be removed; another one can, with its rates.
@@ -218,39 +218,52 @@ public class TwoBankTests
     }
 
     [Fact]
-    public void Two_copies_at_most_the_day_before_and_today()
+    public void Two_copies_at_most_kept_as_the_banks_own_files()
     {
         using var s = new TempStore();
         var rates = new ExchangeRates(s.Db);
         var day1 = new DateOnly(2025, 10, 8);
-        string? Copy(int slot) => s.Db.LoadRateSet("ecb", slot).GetValueOrDefault("CAD");
-        List<string?> Days() => [.. s.Db.RateCopies("ecb").Select(c => c.Day)];
+        var copies = () => rates.Copies(RateSource.Ecb);
+        List<string> Days() => [.. copies().Select(c => c.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))];
+        string File(int i) => System.IO.File.ReadAllText(Path.Combine(copies()[i].Folder, copies()[i].Files.Single()));
 
-        // Day n: one copy.
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5000,"), day1);
+        // Download n: one copy, the bank's file as downloaded, in downloads/exchange-rates/<bank>/<day>/rates.<format>.
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2025-10-08,1.5000,"), day1);
         Assert.Equal(["2025-10-08"], Days());
-        // Downloaded again the same day: today's copy is replaced, still one.
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5100,"), day1);
+        Assert.Equal(Path.Combine(s.Db.DownloadsFolder, "exchange-rates", "european-central-bank", "2025-10-08"), copies()[0].Folder);
+        Assert.Equal(["rates.csv"], copies()[0].Files);
+        // Downloaded again the same day: the latest copy is replaced, still one.
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2025-10-08,1.5100,"), day1);
         Assert.Equal(["2025-10-08"], Days());
-        Assert.Equal("2025-10-08=1.5100;", Copy(0));
-        // The next day: the day before (n-1) and today (n).
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-09,1.6000,"), day1.AddDays(1));
+        Assert.Equal("Date,CAD,\n2025-10-08,1.5100,", File(0));
+        // Another day: the one before (n-1) and the latest (n).
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2025-10-09,1.6000,"), day1.AddDays(1));
         Assert.Equal(["2025-10-09", "2025-10-08"], Days());
         // Again the same day: n is replaced, n-1 stays.
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-09,1.6100,"), day1.AddDays(1));
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2025-10-09,1.6100,"), day1.AddDays(1));
         Assert.Equal(["2025-10-09", "2025-10-08"], Days());
-        Assert.Equal(("2025-10-09=1.6100;", "2025-10-08=1.5100;"), (Copy(0), Copy(1)));
         // A new day: n becomes n-1, the older copy is deleted. Never more than two.
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-10,1.7000,"), day1.AddDays(2));
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2025-10-10,1.7000,"), day1.AddDays(2));
         Assert.Equal(["2025-10-10", "2025-10-09"], Days());
-        Assert.Empty(s.Db.LoadRateSet("ecb", 2));
-        // Today's copy is the one used.
+        Assert.False(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "exchange-rates", "european-central-bank", "2025-10-08")));
+        // The latest copy is the one used.
         Assert.Equal(1.7m, rates.Convert(1m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
-        // A copy of today that cannot be read: the day before's is used, and the status says so.
-        s.Db.SaveRateSet("ecb", new Dictionary<string, string> { ["CAD"] = "garbage" }, day1.AddDays(2));
+        Assert.False(rates.Status().FromPrevious);
+        // A latest copy that cannot be read (changed by hand, cut short): the one before is used, and the status says so.
+        System.IO.File.WriteAllText(Path.Combine(copies()[0].Folder, "rates.csv"), "garbage");
         rates.Reload();
         Assert.Equal(1.61m, rates.Convert(1m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
         Assert.True(rates.Status().FromPrevious);
+        // A file that is not rates is never kept.
+        Assert.Throws<RatesFileException>(() => rates.Save(RateSource.Ecb, Utf8("<html></html>"), day1.AddDays(3)));
+        Assert.Equal(["2025-10-10", "2025-10-09"], Days());
+        // A bank deleted takes its files with it.
+        rates.RemoveSource("fed");
+        rates.Save(RateSource.BankOfCanada, Utf8(BankOfCanada), day1);
+        Assert.True(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "exchange-rates", "bank-of-canada", "2025-10-08")));
+        Assert.Equal(["rates.json"], rates.Copies(RateSource.BankOfCanada)[0].Files);
+        rates.RemoveSource("boc");
+        Assert.False(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "exchange-rates", "bank-of-canada")));
     }
 
     [Fact]
@@ -297,7 +310,7 @@ public class TwoBankTests
         Assert.Equal(3, answer.Calls);
         Assert.True(await rates.UpdateAllAsync(force: true, client));
         Assert.Equal(6, answer.Calls);
-        Assert.All(rates.Sources(), x => Assert.Single(s.Db.RateCopies(x.Id)));
+        Assert.All(rates.Sources(), x => Assert.Single(rates.Copies(x)));
     }
 
     [Fact]
@@ -319,7 +332,7 @@ public class TwoBankTests
         var rates = new ExchangeRates(s.Db);
         // A rate for every day of October 2025 (invented): 1.60 + day / 1000 CAD per euro.
         var csv = "Date,CAD,\n" + string.Join("\n", Enumerable.Range(1, 31).Reverse().Select(d => $"2025-10-{d:D2},{(1.60m + d / 1000m).ToString(CultureInfo.InvariantCulture)},"));
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv(csv));
+        rates.Save(RateSource.Ecb, Utf8(csv));
         var (_, _, st) = await TwoBanks(s);
 
         var r = s.Summaries.Report(new DateOnly(2025, 10, 1), new DateOnly(2025, 10, 31), Granularity.Month, "CAD", rates);

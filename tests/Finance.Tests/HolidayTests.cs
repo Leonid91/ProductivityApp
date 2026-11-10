@@ -120,12 +120,13 @@ public class HolidayTests
         {
             // Made before the holidays.
             new Database(path).Dispose();
-            Raw(path, "DROP TABLE holiday_calendars; DROP TABLE holiday_sets; PRAGMA user_version = 15;");
+            Raw(path, "DROP TABLE holiday_calendars; DROP TABLE IF EXISTS holiday_sets; PRAGMA user_version = 15;");
             using (var db = new Database(path))
                 Assert.Equal(["ca", "qc", "us", "fr"], new Holidays(db).Calendars().Select(c => c.Id));
             // Made with the three calendars of version 16, Quebec downloaded from its old address, France renamed.
             Raw(path, """
-                DROP TABLE holiday_calendars; DELETE FROM holiday_sets;
+                DROP TABLE holiday_calendars; DROP TABLE IF EXISTS holiday_sets;
+                CREATE TABLE holiday_sets (calendar TEXT NOT NULL, slot INTEGER NOT NULL, fetched TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (calendar, slot));
                 CREATE TABLE holiday_calendars (id TEXT PRIMARY KEY, location TEXT NOT NULL, url TEXT NOT NULL, active INTEGER NOT NULL, position INTEGER NOT NULL);
                 INSERT INTO holiday_calendars VALUES ('qc', 'Canada - Quebec', 'https://canada-holidays.ca/ics/QC/{year}', 1, 0),
                     ('us', 'United States', 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/holidays.ics', 0, 1),
@@ -139,8 +140,9 @@ public class HolidayTests
                 Assert.Equal(["Canada (Federal)", "Québec", "United States (Federal)", "France métropolitaine"], h.Calendars().Select(c => c.Location));
                 Assert.Equal([true, true, false, false], h.Calendars().Select(c => c.Active));
                 Assert.Equal(("ca", HolidayCalendar.Quebec.Url), (h.Calendars()[1].Parent, h.Calendars()[1].Url));
-                // Its old copy is dropped: downloaded again from the new address.
-                Assert.Empty(db.HolidayCopies("qc"));
+                // Its old copy is dropped (the copies are files now): downloaded again from the new address.
+                Assert.Empty(h.Copies(h.Find("qc")!));
+                Assert.Null(db.GetSetting("holidays.qc.updatedAt"));
             }
             using (var db = new Database(path))
                 Assert.Equal(4, new Holidays(db).Calendars().Count);
@@ -215,10 +217,10 @@ public class HolidayTests
         using var s = new TempStore();
         var weekend = "6,7";
         var h = new Holidays(s.Db, () => weekend);
-        h.Save("ca", Holidays.Parse(Utf8(FederalJson(2026))), Downloaded);
-        h.Save("qc", Holidays.Parse(Utf8(QuebecJson(2026))), Downloaded);
-        h.Save("us", Holidays.Parse(Utf8(OpmIcs)), Downloaded);
-        h.Save("fr", Holidays.Parse(Utf8(FranceJson)), Downloaded);
+        h.Save("ca", Utf8(FederalJson(2026)), Downloaded);
+        h.Save("qc", Utf8(QuebecJson(2026)), Downloaded);
+        h.Save("us", Utf8(OpmIcs), Downloaded);
+        h.Save("fr", Utf8(FranceJson), Downloaded);
         var (from, to) = (new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 31));
         // Canada and Québec (checked to start with): 23 days Monday to Friday, less Christmas (Friday, in both: once) and
         // Monday the 28th, the day off for Boxing Day (Saturday the 26th, not a business day anyway).
@@ -279,10 +281,11 @@ public class HolidayTests
         Assert.Throws<ArgumentException>(() => h.SaveCalendar("ca", "Canada (Federal)", HolidayCalendar.Canada.Url, "us"));
         Assert.Throws<ArgumentException>(() => h.SaveCalendar("fr", "France", HolidayCalendar.France.Url, "fr"));
         // Deleting Canada deletes the provinces under it, with their holidays.
-        h.Save("qc", Holidays.Parse(Utf8(QuebecJson(2026))), Downloaded);
+        h.Save("qc", Utf8(QuebecJson(2026)), Downloaded);
+        Assert.True(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "holidays", "quebec")));
         h.RemoveCalendar("ca");
         Assert.Equal(["us", "fr", on.Id], h.Calendars().Select(c => c.Id));
-        Assert.Null(s.Db.LoadHolidaySet("qc", 0));
+        Assert.False(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "holidays", "quebec")));
     }
 
     [Fact]
@@ -290,9 +293,9 @@ public class HolidayTests
     {
         using var s = new TempStore();
         var h = new Holidays(s.Db);
-        h.Save("ca", Holidays.Parse(Utf8(FederalJson(2026))), Downloaded);
-        h.Save("qc", Holidays.Parse(Utf8(QuebecJson(2026))), Downloaded);
-        h.Save("fr", Holidays.Parse(Utf8(FranceJson)), Downloaded);
+        h.Save("ca", Utf8(FederalJson(2026)), Downloaded);
+        h.Save("qc", Utf8(QuebecJson(2026)), Downloaded);
+        h.Save("fr", Utf8(FranceJson), Downloaded);
         // Canada: 1 January, 11 November, 25 and 26 December (the day off on Monday the 28th is not another holiday).
         h.SetActive("qc", false);
         Assert.Equal(4, h.TotalHolidays(2026));
@@ -314,7 +317,7 @@ public class HolidayTests
     {
         using var s = new TempStore();
         var h = new Holidays(s.Db);
-        h.Save("qc", Holidays.Parse(Utf8(QuebecJson(2026))), Downloaded);
+        h.Save("qc", Utf8(QuebecJson(2026)), Downloaded);
         var june = s.Summaries.Report(new(2026, 6, 1), new(2026, 6, 30), Granularity.Month, "CAD", new ExchangeRates(s.Db), h);
         // June 2026: 22 days Monday to Friday, less Saint-Jean-Baptiste (Wednesday 24).
         Assert.Equal(21, june.BusinessDays);
@@ -330,8 +333,8 @@ public class HolidayTests
         using var s = new TempStore();
         var weekend = "6,7";
         var h = new Holidays(s.Db, () => weekend);
-        h.Save("ca", Holidays.Parse(Utf8(FederalJson(2026))), Downloaded);
-        h.Save("qc", Holidays.Parse(Utf8(QuebecJson(2026))), Downloaded);
+        h.Save("ca", Utf8(FederalJson(2026)), Downloaded);
+        h.Save("qc", Utf8(QuebecJson(2026)), Downloaded);
         var bank = s.Db.AddBank(new Bank { Name = "Banque Exemple", System = BankingSystem.NorthAmerica, Currency = "CAD" });
         var account = s.Db.AddAccount(new Account { Name = "Chequing", Currency = "CAD", Kind = AccountKind.Bank, BankId = bank });
         s.Transactions.Create(new TransactionInput("2026-12-04", 2000m, "Employer", "salary", account, null));
@@ -339,7 +342,7 @@ public class HolidayTests
         s.Transactions.Create(new TransactionInput("2026-12-10", 150m, "Refund", "otherincome", account, null));
         s.Transactions.Create(new TransactionInput("2026-12-11", -80m, "Market", "groceries", account, null));
         var rates = new ExchangeRates(s.Db, () => "ecb");
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2026-12-01,1.5000,"));
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2026-12-01,1.5000,"));
         SalaryRate Salary(string currency) => s.Summaries.Report(new(2026, 12, 1), new(2026, 12, 31), Granularity.Month, currency, rates, h).Salary!;
 
         // 4,000 of salary (not the refund) over December's 21 business days of 8 hours: 4,000 / 168 = 23.81 an hour.
@@ -360,17 +363,19 @@ public class HolidayTests
     }
 
     [Fact]
-    public void Two_copies_at_most_the_previous_download_and_the_latest()
+    public void Two_copies_at_most_the_previous_download_and_the_latest_as_files()
     {
         using var s = new TempStore();
         var h = new Holidays(s.Db);
+        var qc = h.Find("qc")!;
         var day1 = new DateOnly(2026, 11, 8);
-        List<string> Days() => [.. s.Db.HolidayCopies("qc").Select(c => c.Day)];
-        Holiday[] One(int m, string name) => [new(new(2026, m, 1), name)];
+        List<string> Days() => [.. h.Copies(qc).Select(c => c.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))];
+        byte[] One(int m, string name) => Utf8($$"""{"2026-{{m:00}}-01": "{{name}}"}""");
 
         // Download n: one copy.
         h.Save("qc", One(1, "a"), day1);
         Assert.Equal(["2026-11-08"], Days());
+        Assert.Equal(["holidays.json"], h.Copies(qc)[0].Files);
         // Downloaded again the same day: the latest copy is replaced, still one.
         h.Save("qc", One(1, "b"), day1);
         Assert.Equal(["2026-11-08"], Days());
@@ -384,14 +389,38 @@ public class HolidayTests
         // A new download: n becomes n-1, the older copy is deleted. Never more than two.
         h.Save("qc", One(3, "e"), day1.AddDays(60));
         Assert.Equal(["2027-01-07", "2026-12-08"], Days());
-        Assert.Null(s.Db.LoadHolidaySet("qc", 2));
         Assert.Equal("e", h.Of("qc").Single().Name);
+        Assert.False(h.FromPrevious("qc"));
         // A latest copy that cannot be read: the previous one is used.
-        s.Db.SaveHolidaySet("qc", "garbage", day1.AddDays(60));
+        File.WriteAllText(Path.Combine(h.Copies(qc)[0].Folder, "holidays.json"), "garbage");
         h.Reload();
         Assert.Equal("d", h.Of("qc").Single().Name);
         Assert.True(h.FromPrevious("qc"));
+        // A download stopped in the middle (its folder still partial) is never a copy, and is cleared by the next one.
+        Directory.CreateDirectory(Path.Combine(s.Db.DownloadsFolder, "holidays", "quebec", "2027-02-01.partial"));
+        h.Reload();
         Assert.Equal(["2027-01-07", "2026-12-08"], Days());
+        h.Save("qc", One(4, "f"), day1.AddDays(90));
+        Assert.False(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "holidays", "quebec", "2027-02-01.partial")));
+        Assert.Equal(["2027-02-06", "2027-01-07"], Days());
+        // A file that gives no holidays is never kept.
+        Assert.Throws<HolidaysFileException>(() => h.Save("qc", Utf8("<html></html>"), day1.AddDays(91)));
+        Assert.Equal(["2027-02-06", "2027-01-07"], Days());
+    }
+
+    [Fact]
+    public void Folders_and_files_have_plain_standard_names()
+    {
+        Assert.Equal("canada-federal", DownloadStore.Slug("Canada (Federal)"));
+        Assert.Equal("quebec", DownloadStore.Slug("Québec"));
+        Assert.Equal("united-states-federal", DownloadStore.Slug("United States (Federal)"));
+        Assert.Equal("us-federal-reserve", DownloadStore.Slug("US Federal Reserve"));
+        Assert.Equal("ile-de-france", DownloadStore.Slug("  Île-de-France! "));
+        Assert.Equal("source", DownloadStore.Slug("???"));
+        Assert.Equal("rates.zip", DownloadStore.FileName("rates", null, [0x50, 0x4B, 3, 4]));
+        Assert.Equal("holidays-2026.json", DownloadStore.FileName("holidays", 2026, Utf8("{}")));
+        Assert.Equal("holidays.ics", DownloadStore.FileName("holidays", null, Utf8("BEGIN:VCALENDAR")));
+        Assert.Equal("rates.csv", DownloadStore.FileName("rates", null, Utf8("Date,USD")));
     }
 
     [Fact]
@@ -441,7 +470,13 @@ public class HolidayTests
         Assert.Equal(26, web.Calls);
         Assert.False(await h.UpdateAllAsync(force: true, client));
         Assert.Equal(52, web.Calls);
-        Assert.All(h.Calendars(), c => Assert.Single(s.Db.HolidayCopies(c.Id)));
+        Assert.All(h.Calendars(), c => Assert.Single(h.Copies(c)));
+        // Each calendar's files as downloaded: one per year, named by its year; or one file.
+        var qcCopy = h.Copies(h.Find("qc")!)[0];
+        Assert.Equal(Path.Combine(s.Db.DownloadsFolder, "holidays", "quebec", DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)), qcCopy.Folder);
+        Assert.Equal(Enumerable.Range(year - 2, 4).Select(y => $"holidays-{y}.json"), qcCopy.Files);
+        Assert.Equal(["holidays.ics"], h.Copies(h.Find("us")!)[0].Files);
+        Assert.Equal(["holidays.json"], h.Copies(h.Find("fr")!)[0].Files);
     }
 
     [Fact]
@@ -497,12 +532,18 @@ public class HolidayTests
         Assert.Throws<ArgumentException>(() => h.SaveCalendar(null, "Spain", "x.ics"));
         h.SaveCalendar(null, "Spain", "https://example.test/{year}/es.ics");
         // The place renamed: its holidays stay; a new address drops them.
-        h.Save(be.Id, [new Holiday(new(2026, 7, 21), "Fête nationale")], Downloaded);
+        h.Save(be.Id, Utf8("""{"2026-07-21": "Fête nationale"}"""), Downloaded);
+        Assert.True(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "holidays", "belgium")));
+        // Renamed: its files follow its name.
         h.SaveCalendar(be.Id, "Belgique", be.Url);
         Assert.Single(h.Of(be.Id));
+        Assert.False(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "holidays", "belgium")));
+        Assert.True(Directory.Exists(Path.Combine(s.Db.DownloadsFolder, "holidays", "belgique")));
         h.SaveCalendar(be.Id, "Belgique", "https://example.test/other.ics");
         Assert.Empty(h.Of(be.Id));
-        Assert.Empty(s.Db.HolidayCopies(be.Id));
+        Assert.Empty(h.Copies(h.Find(be.Id)!));
+        // Two names giving one folder (accents aside): one place.
+        Assert.Throws<ArgumentException>(() => h.SaveCalendar(null, "Quebec", "https://example.test/q.ics"));
         Assert.Equal(["Canada (Federal)", "Québec", "United States (Federal)", "France", "Belgique", "Spain"], h.Calendars().Select(c => c.Location));
     }
 }
