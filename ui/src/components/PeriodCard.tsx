@@ -477,6 +477,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
             <Typography variant="h5" component="h2" sx={{ flex: 1 }}>{report.title}</Typography>
             <Typography data-days color="text.secondary" className="tnum" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
+              {report.businessDays != null && <> · <span data-business-days>{plural(report.businessDays, 'business day')}</span></>}
             </Typography>
           </Box>
           {shown === 'summary' ? (

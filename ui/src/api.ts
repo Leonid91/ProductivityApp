@@ -162,6 +162,8 @@ export interface PeriodReport {
   from: string; to: string; title: string; granularity: Granularity; currency: string; banks: BankPart[]; global: PeriodSummary; conversion: Conversion
   /** Operations left out of every total (no rate known for their day): the banks' parts list them in their own currency. */
   unconverted: number[]
+  /** Monday to Friday, less the holidays of the checked calendars. */
+  businessDays: number | null
 }
 
 /** Every operation of every bank in the global currency (converted ones keep the amount the bank wrote, and the rate). */
@@ -187,6 +189,18 @@ export interface RateSource {
 }
 /** A central bank whose file the app reads: its file's layout (format), its currency and the address to start with. */
 export interface CentralBank { format: string; name: string; currency: string; defaultUrl: string }
+/**
+ * A calendar of public holidays (Definitions > Holidays): its place (free text), the address of its file ("{year}"
+ * stands for each year), whether it is checked, and the number of holidays of this year (year) in its copy in use
+ * (none without a copy); with why its last download failed.
+ */
+export interface HolidayCalendar {
+  id: string; location: string; url: string; active: boolean; perYear: number | null; year: number; updatedAt: string | null; error: string | null
+}
+/** A calendar every database starts with (offered again for a new line). */
+export interface HolidayPreset { id: string; location: string; url: string; active: boolean }
+/** A holiday of a checked calendar, with the place of its calendar. */
+export interface Holiday { day: string; name: string; location: string }
 
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
@@ -313,6 +327,22 @@ export const api = {
     refresh: () => invoke<{ updated: boolean; sources: RateSource[] }>('rates.refresh'),
     /** Downloads every bank without today's copy; says whether the rates in use changed. */
     ensure: () => invoke<{ updated: boolean; status: RatesStatus }>('rates.ensure'),
+  },
+  holidays: {
+    calendars: () => invoke<HolidayCalendar[]>('holidays.calendars'),
+    presets: () => invoke<HolidayPreset[]>('holidays.presets'),
+    /** A new calendar (no id), or a new place or address for one. */
+    save: (c: { id?: string; location: string; url: string }) => invoke<{ id: string; calendars: HolidayCalendar[] }>('holidays.save', c),
+    setActive: (id: string, active: boolean) => invoke<HolidayCalendar[]>('holidays.setActive', { id, active }),
+    remove: (id: string) => invoke<HolidayCalendar[]>('holidays.remove', { id }),
+    /** Downloads a calendar again, which checks its address too. */
+    update: (id: string) => invoke<HolidayCalendar>('holidays.update', { id }),
+    /** Downloads every calendar again now; updated: a checked one changed. */
+    refresh: () => invoke<{ updated: boolean; calendars: HolidayCalendar[] }>('holidays.refresh'),
+    /** Downloads every calendar without today's copy; says whether a checked one changed. */
+    ensure: () => invoke<{ updated: boolean }>('holidays.ensure'),
+    /** The holidays of the checked calendars over a period. */
+    list: (from: string, to: string) => invoke<Holiday[]>('holidays.list', { from, to }),
   },
   tx: {
     setCategory: (id: number, categoryId: string, allOfBrand: boolean) => invoke<{ changed: number }>('tx.setCategory', { id, categoryId, allOfBrand }),

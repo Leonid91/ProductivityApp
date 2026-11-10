@@ -189,7 +189,10 @@ try {
   const title = await p.eval(`document.querySelector('section h2').innerText`)
   check('month title: the month and its year alone', /^[A-Z][a-z]+ \d{4}$/.test(title), title)
   const days = await p.eval(`document.querySelector('section [data-days]')?.innerText`)
-  check('days of the month shown', days === `${new Date(Number(title.slice(-4)), ['January','February','March','April','May','June','July','August','September','October','November','December'].indexOf(title.split(' ')[0]) + 1, 0).getDate()} days`, days)
+  const shownMonth = await p.eval(`document.querySelector('section[data-period]').dataset.period`)
+  const monthEnd = new Date(Number(title.slice(-4)), ['January','February','March','April','May','June','July','August','September','October','November','December'].indexOf(title.split(' ')[0]) + 1, 0).getDate()
+  const shownReport = await p.engine('periods.report', { from: shownMonth, to: shownMonth.slice(0, 8) + String(monthEnd).padStart(2, '0'), granularity: 'month' })
+  check('days of the month shown, then its business days', days === `${monthEnd} days · ${shownReport.businessDays} business days` && shownReport.businessDays > 15 && shownReport.businessDays <= 23, days)
   await p.eval(`(() => { const s = document.querySelector('section'); const t = [...s.querySelectorAll('p, span')].find(e => e.innerText === 'Expenses'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
   await sleep(800)
   await shot(p, '08-periods-totals.png')
@@ -766,7 +769,7 @@ try {
     && cents(oct.global.earnings) === cents(oct.banks.reduce((x, b) => x + b.summary.earnings, 0))
     && octUi.balance.includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), `${eurLines.length} euro banks`)
   check('a converted operation shows the amount its bank wrote', octUi.originals.length > 0 && octUi.originals.every((o) => o.includes('€')), octUi.originals.join(' '))
-  check('how amounts are converted is shown: source, method, each rate', /European Central Bank/.test(octUi.panel) && /rate published for its own day/.test(octUi.panel) && /rounded to the cent/.test(octUi.panel) && /1 EUR = [\d.]+/.test(octUi.panel))
+  check('how amounts are converted is shown: source, method, each rate', /Bank of Canada/.test(octUi.panel) && /rate published for its own day/.test(octUi.panel) && /rounded to the cent/.test(octUi.panel) && /1 EUR = [\d.]+/.test(octUi.panel))
   await p.eval(`document.querySelector('${octSec} [data-rates-toggle]').click()`)
   await sleep(300)
   const dayRates = await p.eval(`[...document.querySelectorAll('${octSec} [data-rates] p')].length`)
@@ -789,7 +792,7 @@ try {
     await sleep(150)
   }
   // Settings > Display: the global display currency and the bank of the exchange rates are rows like the date format,
-  // their values in the same column; the European Central Bank by default.
+  // their values in the same column; the Bank of Canada by default.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('General', { selector: 'button' })
   await sleep(600)
@@ -799,16 +802,17 @@ try {
     return rows.map(r => { const v = r.querySelector('.MuiInputBase-root').getBoundingClientRect(); return { label: r.firstElementChild.innerText, value: r.querySelector('.MuiInputBase-root').innerText.replace(/[​s]+/g, ' ').trim(), right: Math.round(v.right), width: Math.round(v.width) } })
   })()`)
   check('Display: global currency and exchange rates as rows, values aligned with the date format', display.map((r) => r.label).join() === 'Global display currency,Exchange rates,Date format'
-    && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[1].value === 'European Central Bank'
+    && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[1].value === 'Bank of Canada'
     && (await p.eval(`document.querySelector('[data-rates-link]')?.innerText`)) === 'Edit banks', JSON.stringify(display))
   await shot(p, '24c-display-settings.png')
-  await p.engine('settings.set', { key: 'ratesSource', value: 'boc' })
-  const boc = await p.engine('rates.update')
-  const octBoc = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
-  check('another central bank: the Bank of Canada, rates against CAD', boc.error === null && boc.base === 'CAD' && octBoc.conversion.source === 'Bank of Canada' && octBoc.conversion.base === 'CAD'
-    && octBoc.conversion.lines.length > 0 && octBoc.conversion.lines.every((l) => l.unconverted === 0) && Math.abs(octBoc.global.balance - oct.global.balance) < Math.abs(oct.global.balance) * 0.02,
-    `${octBoc.global.balance} with the Bank of Canada, ${oct.global.balance} with the ECB`)
+  check('the Bank of Canada by default, rates against CAD', oct.conversion.source === 'Bank of Canada' && oct.conversion.base === 'CAD')
   await p.engine('settings.set', { key: 'ratesSource', value: 'ecb' })
+  const ecb = await p.engine('rates.update')
+  const octEcb = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
+  check('another central bank: the European Central Bank, rates against EUR', ecb.error === null && ecb.base === 'EUR' && octEcb.conversion.source === 'European Central Bank' && octEcb.conversion.base === 'EUR'
+    && octEcb.conversion.lines.length > 0 && octEcb.conversion.lines.every((l) => l.unconverted === 0) && Math.abs(octEcb.global.balance - oct.global.balance) < Math.abs(oct.global.balance) * 0.02,
+    `${octEcb.global.balance} with the ECB, ${oct.global.balance} with the Bank of Canada`)
+  await p.engine('settings.set', { key: 'ratesSource', value: 'boc' })
   // Definitions > Exchange rates: one line per central bank the app reads (all three to start with), the round button for
   // the one in use, what each download holds; Refresh all; a new line is a choice among the banks; a wrong address is
   // checked in the background and the reason shown cleanly.
@@ -842,14 +846,14 @@ try {
     return +(Math.max(...all) - Math.min(...all)).toFixed(1)
   })`)
   check('each line aligned: round button, texts, address and delete icon on one middle', middles.every((d) => d <= 1.5), middles.join())
-  check('the bank in use: its round button checked, its line tinted, the others plain', rt.rows[0].inUse && !rt.rows[1].inUse && rt.rows[0].tint !== rt.rows[1].tint, rt.rows.map((r) => r.tint).join())
+  check('the bank in use (the Bank of Canada): its round button checked, its line tinted, the others plain', rt.rows[1].inUse && !rt.rows[0].inUse && rt.rows[0].tint !== rt.rows[1].tint, rt.rows.map((r) => r.tint).join())
   check('what to paste as the address: one short sentence', (rt.help.match(/[.!?](\s|$)/g) ?? []).length === 1 && rt.help.length < 110 && /not the address of its web page/.test(rt.help), rt.help)
-  // Choose the Bank of Canada with its round button: its line tinted, the European Central Bank's plain.
-  await p.mouseClick('[data-rate-source="boc"] input[type=radio]')
-  await p.waitFor(`document.querySelector('[data-rate-source="boc"] input[type=radio]').checked`, 10000, 'Bank of Canada in use')
-  check('a round button makes its bank the one in use', (await p.engine('rates.status')).sourceId === 'boc')
+  // Choose the European Central Bank with its round button: its line tinted, the Bank of Canada's plain.
   await p.mouseClick('[data-rate-source="ecb"] input[type=radio]')
-  await p.waitFor(`document.querySelector('[data-rate-source="ecb"] input[type=radio]').checked`, 10000, 'back to the ECB')
+  await p.waitFor(`document.querySelector('[data-rate-source="ecb"] input[type=radio]').checked`, 10000, 'the ECB in use')
+  check('a round button makes its bank the one in use', (await p.engine('rates.status')).sourceId === 'ecb')
+  await p.mouseClick('[data-rate-source="boc"] input[type=radio]')
+  await p.waitFor(`document.querySelector('[data-rate-source="boc"] input[type=radio]').checked`, 10000, 'back to the Bank of Canada')
   check('every central bank of the list in the table to start with: no more to add', await p.eval(`[...document.querySelectorAll('main button')].find(b => b.innerText === 'Add bank').disabled`))
   // The US Federal Reserve deleted from its own button, after saying so.
   await p.mouseClick('[data-rate-source="fed"] button[aria-label^="Delete"]')
@@ -872,10 +876,10 @@ try {
   check('every central bank of the list in the table: no more to add', await p.eval(`[...document.querySelectorAll('main button')].find(b => b.innerText === 'Add bank').disabled`))
   await shot(p, '24d-exchange-rate-sources.png')
   // The delete button: a plain icon, red under the mouse, nothing drawn around it.
-  const del = await p.eval(`(() => { const b = document.querySelector('[data-rate-source="boc"] button[aria-label^="Delete"]'); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+  const del = await p.eval(`(() => { const b = document.querySelector('[data-rate-source="ecb"] button[aria-label^="Delete"]'); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: del.x, y: del.y })
   await sleep(300)
-  const hovered = await p.eval(`(() => { const s = (q) => getComputedStyle(document.querySelector(q + ' button[aria-label^="Delete"]')); const h = s('[data-rate-source="boc"]'); const o = s('[data-rate-source]:last-child'); return { bg: h.backgroundColor, color: h.color, other: o.color } })()`)
+  const hovered = await p.eval(`(() => { const s = (q) => getComputedStyle(document.querySelector(q + ' button[aria-label^="Delete"]')); const h = s('[data-rate-source="ecb"]'); const o = s('[data-rate-source]:last-child'); return { bg: h.backgroundColor, color: h.color, other: o.color } })()`)
   check('delete under the mouse: red, no shape around it', /rgba\(0, 0, 0, 0\)|transparent/.test(hovered.bg) && hovered.color !== hovered.other, JSON.stringify(hovered))
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
   // Chosen in Settings: the same reason under the choice; nothing said when a good one is chosen again.
@@ -887,7 +891,7 @@ try {
   check('the chosen bank checked at once, its error under the choice', /web page/.test(await p.eval(`document.querySelector('main [data-rates-error]').innerText`)))
   await shot(p, '24e-wrong-source-chosen.png')
   await p.mouseClick('[data-rates-source-select]')
-  await p.clickText('European Central Bank', { selector: '[role=option]' })
+  await p.clickText('Bank of Canada', { selector: '[role=option]' })
   await p.waitFor(`document.querySelector('main [data-rates-error]') === null`, 90000, 'the good source checked')
   check('a good source: chosen silently', !(await p.eval(`[...document.querySelectorAll('.MuiSnackbar-root')].some(x => /rates/i.test(x.innerText))`)) && (await p.engine('rates.status')).error === null)
   // Its own address back: its rates again.
@@ -915,6 +919,101 @@ try {
   await sleep(600)
   check('calendar: all banks, a converted amount with the amount the bank wrote', await p.eval(`[...document.querySelectorAll('[data-original]')].some(e => e.innerText.includes('€'))`), converted.date)
   await shot(p, '24f-calendar-all-banks.png')
+
+  // ---- Definitions > Holidays: Quebec checked, the United States and France ready; Refresh all; several checked at
+  // once; their holidays on the calendar and out of the business days; deleted, added again; a wrong address said.
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('Definitions', { selector: 'button' })
+  await p.clickText('Holidays', { selector: 'main [role=group] button' })
+  await p.waitFor(`document.querySelector('[data-holiday-calendars]') !== null`, 10000, 'holidays table')
+  const holidaysIdle = `![...document.querySelectorAll('[data-holiday-calendar]')].some(r => r.innerText.includes('Downloading')) && !document.querySelector('[data-holidays-refresh]').disabled`
+  await p.click('[data-holidays-refresh]')
+  await p.waitFor(holidaysIdle, 180000, 'every calendar downloaded')
+  await sleep(400)
+  const holidayRows = () => p.eval(`[...document.querySelectorAll('[data-holiday-calendar]')].map(r => ({ id: r.dataset.holidayCalendar, location: r.querySelector('[data-field=location]').value, url: r.querySelector('[data-field=url]').value, perYear: Number(r.querySelector('[data-per-year]').innerText || 0), active: r.querySelector('input[type=checkbox]').checked, tint: getComputedStyle(r).backgroundColor, error: r.querySelector('[data-holidays-error]')?.innerText ?? null }))`)
+  let hr = await holidayRows()
+  check('Holidays: Location, URL, Number of Holidays per Year', (await p.eval(`[...document.querySelectorAll('[data-holiday-calendars] thead th')].map(t => t.innerText).join('|')`)) === 'Shown|Location|URL|Number of Holidays per Year|')
+  check('the three calendars to start with: Quebec checked, the United States and France; each with its holidays of this year', hr.map((r) => r.location).join() === 'Canada - Quebec,United States,France'
+    && hr.map((r) => r.active).join() === 'true,false,false' && hr.every((r) => r.perYear >= 7 && r.perYear <= 14 && r.error === null) && hr[0].tint !== hr[1].tint, JSON.stringify(hr))
+  const holidayMiddles = await p.eval(`[...document.querySelectorAll('[data-holiday-calendar]')].map((row) => {
+    const mid = (r) => r.top + r.height / 2
+    const td = row.cells
+    const g = document.createRange(); g.selectNodeContents(td[3].querySelector('div')); const num = td[3].innerText.trim() ? mid(g.getBoundingClientRect()) : null
+    const all = [mid(td[0].querySelector('svg').getBoundingClientRect()), mid(td[1].querySelector('input').getBoundingClientRect()), mid(td[2].querySelector('input').getBoundingClientRect()), num, mid(td[4].querySelector('svg').getBoundingClientRect())].filter((x) => x !== null)
+    return +(Math.max(...all) - Math.min(...all)).toFixed(1)
+  })`)
+  check('each line aligned like the exchange rates: check box, place, address, number and delete icon', holidayMiddles.every((d) => d <= 1.5), holidayMiddles.join())
+  await shot(p, '24g-holidays.png')
+  // November 2025: Quebec has no holiday in it; the United States checked too take out Veterans Day and Thanksgiving.
+  const novDays = async () => (await p.engine('periods.report', { from: '2025-11-01', to: '2025-11-30', granularity: 'month' })).businessDays
+  const novQuebec = await novDays()
+  await p.mouseClick('[data-holiday-calendar="us"] input[type=checkbox]')
+  await p.waitFor(`document.querySelector('[data-holiday-calendar="us"] input[type=checkbox]').checked`, 10000, 'the United States checked')
+  await sleep(300)
+  hr = await holidayRows()
+  check('several calendars checked at once, each line tinted; their holidays out of the business days', novQuebec === 20 && (await novDays()) === 18 && hr[0].active && hr[1].active && hr[1].tint === hr[0].tint && hr[2].tint !== hr[0].tint, `${novQuebec} then ${await novDays()}`)
+  // The calendar: Christmas Day of both checked calendars written once, with both places.
+  await p.clickText('Calendar', { selector: 'nav button' })
+  await sleep(1000)
+  for (let i = 0; i < 24 && (await p.eval(`document.querySelector('main h5')?.innerText`)) !== 'December 2025'; i++)
+    await p.click(`[aria-label="${/^(January|February|March|April|May|June|July|August|September|October|November) 2025$|202[0-4]/.test(await p.eval(`document.querySelector('main h5').innerText`)) ? 'Next' : 'Previous'} month"]`)
+  await p.waitFor(`document.querySelector('[data-holiday="2025-12-25"]') !== null`, 10000, 'Christmas on the calendar')
+  await sleep(400)
+  const christmas = await p.eval(`[...document.querySelectorAll('[data-holiday="2025-12-25"]')].map(h => h.innerText + ' / ' + h.title)`)
+  await p.mouseClick('[data-holiday="2025-12-25"]')
+  await sleep(500)
+  const panelHoliday = await p.eval(`[...document.querySelectorAll('[data-day-holiday]')].map(h => h.innerText).join(' | ')`)
+  check('the calendar: the checked calendars\' holidays on their day, the same one written once with its places', christmas.length === 1 && /Christmas Day \/ Christmas Day · Canada - Quebec, United States/.test(christmas[0])
+    && /Christmas Day · Canada - Quebec, United States/.test(panelHoliday) && (await p.eval(`document.querySelectorAll('[data-holiday="2025-12-26"]').length`)) === 0, `${christmas.join()} | ${panelHoliday}`)
+  await shot(p, '24h-calendar-holidays.png')
+  // Unchecked: not on the calendar any more, business days again.
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('Definitions', { selector: 'button' })
+  await p.clickText('Holidays', { selector: 'main [role=group] button' })
+  await p.waitFor(`document.querySelector('[data-holiday-calendar="us"] input[type=checkbox]') !== null`, 10000, 'holidays table again')
+  await p.mouseClick('[data-holiday-calendar="us"] input[type=checkbox]')
+  await p.waitFor(`!document.querySelector('[data-holiday-calendar="us"] input[type=checkbox]').checked`, 10000, 'the United States unchecked')
+  check('unchecked: its holidays are business days again', (await novDays()) === 20 && (await p.engine('holidays.list', { from: '2025-11-01', to: '2025-11-30' })).length === 0)
+  // France deleted with its button, then added again from the choices of a new line, with its address.
+  await p.mouseClick('[data-holiday-calendar="fr"] button[aria-label^="Delete"]')
+  await p.clickText('Delete', { selector: '[role=dialog] button' })
+  await p.waitFor(`document.querySelector('[data-holiday-calendar="fr"]') === null`, 10000, 'France deleted')
+  check('a calendar deleted with its delete icon', (await p.engine('holidays.calendars')).length === 2)
+  await p.clickText('Add calendar', { selector: 'main button' })
+  await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-field=url]') !== null`, 5000, 'new calendar line')
+  await p.mouseClick('[data-new-holiday-calendar] [data-field=location]')
+  await sleep(400)
+  const holidayChoices = await p.eval(`[...document.querySelectorAll('[role=option]')].map(o => o.innerText).join()`)
+  const prefilled = await p.eval(`[document.querySelector('[data-new-holiday-calendar] [data-field=location]').value, document.querySelector('[data-new-holiday-calendar] [data-field=url]').value]`)
+  check('a new line offers the calendars to start with that are not in the table, with their address', holidayChoices === 'France' && prefilled[0] === 'France' && prefilled[1].startsWith('https://calendrier.api.gouv.fr/'), `${holidayChoices} ${prefilled.join(' ')}`)
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
+  await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 3`, 10000, 'France added again')
+  await p.waitFor(holidaysIdle, 120000, 'France downloaded')
+  await sleep(300)
+  check('added again: downloaded at once, its holidays counted', (await holidayRows()).at(-1).perYear === 11)
+  // A calendar of one's own with the address of a web page: refused cleanly under it.
+  await p.clickText('Add calendar', { selector: 'main button' })
+  await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-field=url]') !== null`, 5000, 'another new line')
+  await typeInto('[data-new-holiday-calendar] [data-field="location"]', 'United States - federal page')
+  await typeInto('[data-new-holiday-calendar] [data-field="url"]', 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/')
+  await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
+  await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 4`, 10000, 'own calendar added')
+  await p.waitFor(holidaysIdle, 120000, 'own calendar checked')
+  await sleep(300)
+  const ownError = (await holidayRows()).at(-1).error
+  check('a wrong address: checked in the background, the reason shown under it', /web page, not a calendar file/.test(ownError ?? ''), ownError)
+  await shot(p, '24i-holidays-wrong-address.png')
+  // The same place twice: said under the new line.
+  await p.clickText('Add calendar', { selector: 'main button' })
+  await typeInto('[data-new-holiday-calendar] [data-field="location"]', 'france')
+  await typeInto('[data-new-holiday-calendar] [data-field="url"]', 'https://example.org/holidays.ics')
+  await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
+  await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-holidays-error]') !== null`, 10000, 'the same place refused')
+  check('the same place twice: refused', (await p.eval(`document.querySelector('[data-new-holiday-calendar] [data-holidays-error]').innerText`)) === 'France is already in the table.')
+  await p.clickText('Cancel', { selector: '[data-new-holiday-calendar] button' })
+  const own = (await p.engine('holidays.calendars')).at(-1)
+  await p.engine('holidays.remove', { id: own.id })
   await p.clickText('Periods', { selector: 'nav button' })
   await sleep(600)
 
@@ -944,7 +1043,7 @@ try {
   await p.waitFor(`document.querySelector('section h2')?.innerText.startsWith('From')`, 20000, 'custom title')
   await sleep(1000)
   await shot(p, '12g-custom-period.png')
-  check('custom period with its days', /^\d+ days$/.test(await p.eval(`document.querySelector('section [data-days]')?.innerText ?? ''`)))
+  check('custom period with its days and business days', /^\d+ days · \d+ business days$/.test(await p.eval(`document.querySelector('section [data-days]')?.innerText ?? ''`)))
 
   // Ctrl+F
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'f', code: 'KeyF', modifiers: 2, windowsVirtualKeyCode: 70 })
@@ -1031,7 +1130,7 @@ try {
   check('account added at its bank', added?.bankId === contoso?.id && added?.kind === 'bank' && added?.currency === 'CAD', JSON.stringify(added))
   await shot(p, '19f-account-added.png')
   await p.clickText('Definitions', { selector: 'button' })
-  check('definitions in order Bank, Exchange rates, Brands, Categories, Tags', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Exchange rates Brands Categories Tags')
+  check('definitions in order Bank, Exchange rates, Brands, Categories, Tags, Holidays', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Exchange rates Brands Categories Tags Holidays')
   await p.clickText('Brands', { selector: 'main button' })
   await sleep(1000)
   await shot(p, '18-brands.png')

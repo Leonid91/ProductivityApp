@@ -125,6 +125,8 @@ public sealed class PeriodReport
     /// charts, not the operations again.
     /// </summary>
     public required List<long> Unconverted { get; init; }
+    /// <summary>Monday to Friday, less the holidays of the checked calendars (null when no calendars were given).</summary>
+    public int? BusinessDays { get; init; }
 }
 
 public sealed class SummaryService(Database db)
@@ -185,7 +187,7 @@ public sealed class SummaryService(Database db)
     /// with every conversion shown. An operation without a rate for its day is listed in its own currency and left
     /// out of the totals.
     /// </summary>
-    public PeriodReport Report(DateOnly from, DateOnly to, Granularity g, string global, ExchangeRates rates)
+    public PeriodReport Report(DateOnly from, DateOnly to, Granularity g, string global, ExchangeRates rates, Holidays? holidays = null)
     {
         if (to < from) throw new ArgumentException("The period ends before it starts.");
         var all = db.Transactions(from, to);
@@ -232,6 +234,7 @@ public sealed class SummaryService(Database db)
             Global = globalSummary,
             Conversion = new Conversion(global, status.Source, status.Base, status.Url, status.UpdatedAt, status.Latest, lines),
             Unconverted = [.. all.Where(t => t.Currency != global && !everyConversion.ContainsKey(t.Id)).Select(t => t.Id)],
+            BusinessDays = holidays?.BusinessDays(from, to),
         };
     }
 

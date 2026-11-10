@@ -3,14 +3,11 @@ import {
   Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Radio, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
   Tooltip, Typography, alpha, useTheme,
 } from '@mui/material'
-/** Read by screen readers only. */
-const visuallyHidden = { border: 0, clip: 'rect(0 0 0 0)', height: '1px', m: '-1px', overflow: 'hidden', p: 0, position: 'absolute', whiteSpace: 'nowrap', width: '1px' } as const
 import Add from '@mui/icons-material/AddRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
 import Refresh from '@mui/icons-material/RefreshRounded'
-import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
 import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem, type CentralBank, type RateSource } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample } from '../format'
@@ -20,6 +17,8 @@ import { useRowOrder } from '../components/order'
 import { BrandsPanel } from './BrandsPage'
 import { CategoriesPanel } from './CategoriesPage'
 import { TagsPanel } from './TagsPage'
+import { HolidaysTable, useHolidayCalendars } from './HolidaysPanel'
+import { SOURCE_LINE, SourceError, inlineInput, quietDelete, sourceLine, sourceRow, visuallyHidden } from '../components/sourceTable'
 
 const systems: { value: BankingSystem; label: string }[] = [
   // Credit cards are accounts of their own, paid from the chequing account; or (France) debit cards only: purchases
@@ -44,12 +43,7 @@ function Row({ label, children, note }: { label: string; children: React.ReactNo
 
 /** Why a source of exchange rates gives no rates, in red under its address or its choice. */
 function RatesError({ message }: { message: string }) {
-  return (
-    <Typography variant="body2" role="alert" data-rates-error sx={{ color: 'error.main', display: 'flex', alignItems: 'flex-start', gap: 0.75, maxWidth: 560 }}>
-      <ErrorOutline sx={{ fontSize: 18, mt: '1px', flexShrink: 0 }} />
-      {message}
-    </Typography>
-  )
+  return <SourceError message={message} data-rates-error />
 }
 
 /** A group of settings inside a card, under its own small heading (Periods and Calendar inside Display). */
@@ -79,7 +73,6 @@ function Tabs<T extends string>({ value, onChange, tabs, size }: { value: T; onC
   )
 }
 
-const inlineInput = { flex: 1, fontWeight: 520, px: 1, mx: -1, borderRadius: 2, fontSize: 14, '&:hover, &.Mui-focused': { bgcolor: 'action.hover' } }
 
 function CurrencySelect({ value, onChange, label, width = 110 }: { value: string; onChange: (c: string) => void; label?: string; width?: number }) {
   return (
@@ -90,7 +83,7 @@ function CurrencySelect({ value, onChange, label, width = 110 }: { value: string
 }
 
 /**
- * The central bank whose daily exchange rates convert the other currencies (European Central Bank by default), chosen
+ * The central bank whose daily exchange rates convert the other currencies (Bank of Canada by default), chosen
  * among the banks of Definitions > Exchange rates (the same choice as the round buttons of that table). Choosing one
  * without rates yet downloads them in the background, which checks its address: nothing is said when it works, the
  * reason is written under the choice when it does not.
@@ -101,7 +94,7 @@ function RatesSourceRow({ onEdit }: { onEdit: () => void }) {
   const [checking, setChecking] = useState<string | null>(null)
   useEffect(() => { api.rates.sources().then(setSources, () => setSources([])) }, [settings.ratesSource, dataVersion])
   const choose = useChooseRates(setSources, setChecking)
-  const current = settings.ratesSource || 'ecb'
+  const current = settings.ratesSource || 'boc'
   const error = sources.find((s) => s.id === current)?.error
   return (
     <Row label="Exchange rates" note={!checking && error ? <RatesError message={error} /> : undefined}>
@@ -160,12 +153,6 @@ function useRateSources(active: boolean) {
   return { sources, setSources, banks, free, refreshing, refresh }
 }
 
-/** The delete button of a line: a plain icon that turns red under the mouse, with no shape of its own around it. */
-const quietDelete = {
-  color: 'text.secondary', borderRadius: '8px', transition: 'color 120ms',
-  '&:hover': { bgcolor: 'transparent', color: 'error.main' },
-  '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 1 },
-}
 
 /**
  * The central banks the exchange rates can come from, one line each: the round button chooses the one in use (its line
@@ -173,11 +160,6 @@ const quietDelete = {
  * wrong shows under the address), and what its last download holds: the number of currencies and the last day of
  * rates, read from the data itself (nothing is shown without it). A new line is one of the central banks the app reads.
  */
-/** The first line of every cell of a line of banks: the same height, its content centred on it, so the round button, the
- * texts, the address and the delete icon share one middle (what shows under the address only adds lines below). */
-const RATES_LINE = 32
-const ratesLine = { height: RATES_LINE, display: 'flex', alignItems: 'center' } as const
-
 function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
   rates: ReturnType<typeof useRateSources>
   adding: boolean
@@ -242,13 +224,13 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
               const error = refused[s.id] ?? (busy ? null : s.error)
               return (
                 <TableRow key={s.id} data-rate-source={s.id} data-in-use={s.inUse || undefined}
-                  sx={{ bgcolor: s.inUse ? inUseTint : undefined, transition: 'background-color 160ms', verticalAlign: 'top', '& td, & td.MuiTableCell-paddingCheckbox': { py: 1.25 } }}>
+                  sx={{ ...sourceRow, bgcolor: s.inUse ? inUseTint : undefined }}>
                   <TableCell padding="checkbox">
-                    <Box sx={{ ...ratesLine, justifyContent: 'center' }}>
+                    <Box sx={{ ...sourceLine, justifyContent: 'center' }}>
                       <Radio size="small" checked={s.inUse} onChange={() => void choose(s.id, sources)} slotProps={{ input: { 'aria-label': `Use the rates of the ${s.name}` } }} />
                     </Box>
                   </TableCell>
-                  <TableCell sx={{ fontWeight: s.inUse ? 650 : 520 }}><Box sx={ratesLine}>{s.name}</Box></TableCell>
+                  <TableCell sx={{ fontWeight: s.inUse ? 650 : 520 }}><Box sx={sourceLine}>{s.name}</Box></TableCell>
                   <TableCell>
                     <InputBase
                       key={s.url}
@@ -257,15 +239,15 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
                       inputProps={{ 'aria-label': `Address of the rates file of the ${s.name}`, 'data-field': 'url', spellCheck: false }}
                       onBlur={(e) => { const v = e.target.value.trim(); if (v !== s.url) void save({ id: s.id, url: v }) }}
                       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                      sx={{ ...inlineInput, height: RATES_LINE, fontSize: 13, fontWeight: 450, width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', '& input': { textOverflow: 'ellipsis' } }}
+                      sx={{ ...inlineInput, height: SOURCE_LINE, fontSize: 13, fontWeight: 450, width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', '& input': { textOverflow: 'ellipsis' } }}
                     />
                     {busy && <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}><CircularProgress size={12} />Downloading</Typography>}
                     {error && <Box sx={{ mt: 0.5 }}><RatesError message={error} /></Box>}
                   </TableCell>
-                  <TableCell align="right" className="tnum" data-currencies><Box sx={{ ...ratesLine, justifyContent: 'flex-end' }}>{s.currencies > 0 ? s.currencies : ''}</Box></TableCell>
-                  <TableCell className="tnum" data-latest sx={{ pl: 3, whiteSpace: 'nowrap' }}><Box sx={ratesLine}>{s.latest ? formatDate(s.latest, settings.dateFormat) : ''}</Box></TableCell>
+                  <TableCell align="right" className="tnum" data-currencies><Box sx={{ ...sourceLine, justifyContent: 'flex-end' }}>{s.currencies > 0 ? s.currencies : ''}</Box></TableCell>
+                  <TableCell className="tnum" data-latest sx={{ pl: 3, whiteSpace: 'nowrap' }}><Box sx={sourceLine}>{s.latest ? formatDate(s.latest, settings.dateFormat) : ''}</Box></TableCell>
                   <TableCell padding="checkbox">
-                    <Box sx={{ ...ratesLine, justifyContent: 'center' }}>
+                    <Box sx={{ ...sourceLine, justifyContent: 'center' }}>
                     {!s.inUse && (
                       <IconButton size="small" disableRipple aria-label={`Delete the ${s.name}`} sx={quietDelete} onClick={() => confirm({
                         title: `Delete the ${s.name}?`,
@@ -625,9 +607,11 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
 export function SettingsPage() {
   const { refreshAccounts, refreshBanks, fail, view, takeView } = useApp()
   const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>(view === 'rates' ? 'definitions' : 'general')
-  const [definition, setDefinition] = useState<'bank' | 'rates' | 'brands' | 'categories' | 'tags'>(view === 'rates' ? 'rates' : 'bank')
+  const [definition, setDefinition] = useState<'bank' | 'rates' | 'brands' | 'categories' | 'tags' | 'holidays'>(view === 'rates' ? 'rates' : 'bank')
   const [addingSource, setAddingSource] = useState(false)
   const rates = useRateSources(tab === 'definitions' && definition === 'rates')
+  const [addingCalendar, setAddingCalendar] = useState(false)
+  const holidays = useHolidayCalendars(tab === 'definitions' && definition === 'holidays')
   const editRates = useCallback(() => { setTab('definitions'); setDefinition('rates') }, [])
   // Opened from elsewhere on its sources of exchange rates (the conversion panel of the periods).
   useEffect(() => { if (view === 'rates') { editRates(); takeView() } }, [view, editRates, takeView])
@@ -648,7 +632,7 @@ export function SettingsPage() {
       {tab === 'definitions' && (
         <>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-            <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'rates', label: 'Exchange rates' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }, { value: 'tags', label: 'Tags' }]} />
+            <Tabs size="small" value={definition} onChange={setDefinition} tabs={[{ value: 'bank', label: 'Bank' }, { value: 'rates', label: 'Exchange rates' }, { value: 'brands', label: 'Brands' }, { value: 'categories', label: 'Categories' }, { value: 'tags', label: 'Tags' }, { value: 'holidays', label: 'Holidays' }]} />
             <Box sx={{ flex: 1 }} />
             {definition === 'bank' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingBank(true)}>Add bank</Button>}
             {definition === 'rates' && (
@@ -659,6 +643,13 @@ export function SettingsPage() {
               </>
             )}
             {definition === 'tags' && <Button variant="contained" startIcon={<Add />} onClick={() => setAddingTag(true)}>Add tag</Button>}
+            {definition === 'holidays' && (
+              <>
+                <Button variant="outlined" data-holidays-refresh disabled={holidays.refreshing} onClick={holidays.refresh}
+                  startIcon={holidays.refreshing ? <CircularProgress size={16} color="inherit" /> : <Refresh />}>Refresh all</Button>
+                <Button variant="contained" startIcon={<Add />} disabled={addingCalendar} onClick={() => setAddingCalendar(true)}>Add calendar</Button>
+              </>
+            )}
           </Box>
           <AddBankDialog open={addingBank} onClose={() => setAddingBank(false)} />
           {definition === 'bank' && <BanksTable confirm={setConfirm} />}
@@ -666,6 +657,7 @@ export function SettingsPage() {
           {definition === 'brands' && <BrandsPanel />}
           {definition === 'categories' && <CategoriesPanel />}
           {definition === 'tags' && <TagsPanel adding={addingTag} onAdded={() => setAddingTag(false)} />}
+          {definition === 'holidays' && <HolidaysTable holidays={holidays} adding={addingCalendar} onAdded={() => setAddingCalendar(false)} confirm={setConfirm} />}
         </>
       )}
       <ConfirmDialog

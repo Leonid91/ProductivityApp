@@ -15,6 +15,7 @@ internal sealed class AppServices : IDisposable
     public CategoryService Categories { get; private set; } = null!;
     public TagService Tags { get; private set; } = null!;
     public ExchangeRates Rates { get; private set; } = null!;
+    public Holidays Holidays { get; private set; } = null!;
     public string DataDir { get; }
     public string LogPath { get; }
 
@@ -31,7 +32,7 @@ internal sealed class AppServices : IDisposable
         // Global display currency: every bank together is converted to it and shown in it.
         ["currency"] = "CAD",
         // Source of the daily exchange rates converting the other currencies (one of Definitions > Exchange rates).
-        ["ratesSource"] = "ecb",
+        ["ratesSource"] = "boc",
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
         ["reportsFolder"] = "",
@@ -72,6 +73,7 @@ internal sealed class AppServices : IDisposable
         Categories = new CategoryService(Db);
         Tags = new TagService(Db);
         Rates = new ExchangeRates(Db, () => Setting("ratesSource"));
+        Holidays = new Holidays(Db);
         if (Db.GetSetting("rulesVersion") != RulesVersion)
         {
             Transactions.ReapplyRules();

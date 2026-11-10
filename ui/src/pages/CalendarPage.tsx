@@ -10,16 +10,24 @@ import classicThemePlugin from '@fullcalendar/react/themes/classic'
 import '@fullcalendar/react/skeleton.css'
 import '@fullcalendar/react/themes/classic/theme.css'
 import '@fullcalendar/react/themes/classic/palette.css'
-import { api, globalTransactions, type PeriodSummary, type TransactionView } from '../api'
+import { api, globalTransactions, type Holiday, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, iso, money, moneyBeside, monthName, parts, today } from '../format'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { Money, useCategoryColor } from '../components/common'
 import { TransactionDialog } from '../components/TransactionDialog'
 
+/** The day n days after an ISO day. */
+function addDays(day: string, n: number): string {
+  const d = parts(day)
+  const t = new Date(Date.UTC(d.y, d.m - 1, d.d + n))
+  return iso(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate())
+}
+
 /**
  * Month calendar of every bank together, in the global display currency: what went out and came in each day; a day
- * opens its operations (an amount converted from another currency shows the amount the bank wrote).
+ * opens its operations (an amount converted from another currency shows the amount the bank wrote). The holidays of
+ * the checked calendars (Definitions > Holidays) are written on their day.
  */
 export function CalendarPage() {
   const { settings, dataVersion, fail, category } = useApp()
@@ -34,6 +42,7 @@ export function CalendarPage() {
   const dark = theme.palette.mode === 'dark'
   const [month, setMonth] = useState(() => { const t = parts(today()); return { y: t.y, m: t.m } })
   const [summary, setSummary] = useState<PeriodSummary | null>(null)
+  const [holidays, setHolidays] = useState<Holiday[]>([])
   const [day, setDay] = useState<string>(today())
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
@@ -56,19 +65,36 @@ export function CalendarPage() {
     api.periods.report(from, to, 'month').then((r) => {
       setSummary({ ...r.global, transactions: globalTransactions(r) })
     }, fail)
+    // The weeks shown run into the months before and after.
+    api.holidays.list(addDays(from, -7), addDays(to, 7)).then(setHolidays, fail)
   }, [month, currency, dataVersion, fail])
 
+  // The same holiday in several checked calendars (Christmas Day in Quebec and in the United States): written once.
+  const merged = useMemo(() => {
+    const byKey = new Map<string, { day: string; name: string; locations: string[] }>()
+    for (const h of holidays) {
+      const key = `${h.day}|${h.name.toLowerCase()}`
+      const known = byKey.get(key)
+      if (known) known.locations.push(h.location)
+      else byKey.set(key, { day: h.day, name: h.name, locations: [h.location] })
+    }
+    return [...byKey.values()]
+  }, [holidays])
   const events = useMemo(() => {
-    if (!summary) return []
-    return summary.series.flatMap((b) => {
+    // Holidays first in their day, then what came in, went out and moved.
+    const off = merged.map((h, i) => ({ id: `h${i}`, start: h.day, allDay: true, title: h.name, order: 0, extendedProps: { kind: 'holiday', location: h.locations.join(', ') } }))
+    if (!summary) return off
+    return [...off, ...summary.series.flatMap((b) => {
       const moved = (hideMoves ? 0 : b.moved) + (hideCard ? 0 : b.cardPaid) + (hideInvest ? 0 : b.invested)
       return [
         ...(b.earnings > 0 ? [{ id: 'i' + b.key, start: b.key, allDay: true, title: money(b.earnings, currency, { sign: true }), extendedProps: { kind: 'in' } }] : []),
         ...(b.expenses > 0 ? [{ id: 'e' + b.key, start: b.key, allDay: true, title: money(-b.expenses, currency), extendedProps: { kind: 'out' } }] : []),
         ...(moved > 0 ? [{ id: 'm' + b.key, start: b.key, allDay: true, title: '⇄ ' + money(moved, currency), extendedProps: { kind: 'move' } }] : []),
-      ]
-    })
-  }, [summary, currency, hideCard, hideMoves, hideInvest])
+      ].map((e) => ({ ...e, order: 1 }))
+    })]
+  }, [summary, merged, currency, hideCard, hideMoves, hideInvest])
+  const holidayDays = useMemo(() => new Set(holidays.map((h) => h.day)), [holidays])
+  const dayHolidays = merged.filter((h) => h.day === day)
 
   const dayTx = summary?.transactions.filter((t) => t.date === day && !hidden(t.categoryId)) ?? []
   const brands = useMemo(() => [...new Set(summary?.transactions.map((t) => t.brand) ?? [])], [summary])
@@ -136,11 +162,23 @@ export function CalendarPage() {
             height="auto"
             events={events}
             eventDisplay="block"
+            eventOrder="order,title"
             dayMaxEvents={false}
             dateClick={(info) => setDay(info.dateStr.slice(0, 10))}
             eventClick={(info) => { const s = info.event.startStr; if (s) setDay(s.slice(0, 10)) }}
-            dayCellClass={(arg) => (arg.date && iso(arg.date.getFullYear(), arg.date.getMonth() + 1, arg.date.getDate()) === day ? 'selected-day' : '')}
-            eventContent={(arg) => (
+            dayCellClass={(arg) => {
+              const d = arg.date && iso(arg.date.getFullYear(), arg.date.getMonth() + 1, arg.date.getDate())
+              return [d === day ? 'selected-day' : '', d && holidayDays.has(d) ? 'holiday-day' : ''].filter(Boolean).join(' ')
+            }}
+            eventContent={(arg) => arg.event.extendedProps.kind === 'holiday' ? (
+              <Box
+                data-holiday={arg.event.startStr.slice(0, 10)}
+                title={`${arg.event.title} · ${arg.event.extendedProps.location}`}
+                sx={{ width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 11.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'primary.main', bgcolor: dark ? 'rgba(106,165,236,.14)' : 'rgba(36,104,192,.08)' }}
+              >
+                {arg.event.title}
+              </Box>
+            ) : (
               <Box
                 className="tnum"
                 sx={{
@@ -166,6 +204,11 @@ export function CalendarPage() {
           <Typography variant="h6" sx={{ flex: 1 }}>{dayTitle}</Typography>
           <IconButton aria-label="Add operation" onClick={() => setAdding(true)}><Add /></IconButton>
         </Box>
+        {dayHolidays.map((h) => (
+          <Typography key={h.name} data-day-holiday variant="body2" sx={{ color: 'primary.main', fontWeight: 600 }}>
+            {h.name} <Box component="span" sx={{ color: 'text.secondary', fontWeight: 450 }}>· {h.locations.join(', ')}</Box>
+          </Typography>
+        ))}
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }} className="tnum">
           {dayTx.length === 0 ? 'No operations' : `${money(spent, currency)} spent`}
         </Typography>
@@ -204,7 +247,7 @@ export function CalendarPage() {
       </Box>
 
       <TransactionDialog open={editing !== null || adding} tx={editing} brands={brands} defaultDate={day} onClose={() => { setEditing(null); setAdding(false) }} />
-      <style>{`.selected-day { box-shadow: inset 0 0 0 2px ${theme.palette.primary.main}; }`}</style>
+      <style>{`.selected-day { box-shadow: inset 0 0 0 2px ${theme.palette.primary.main}; } .holiday-day { background: ${dark ? 'rgba(106,165,236,.05)' : 'rgba(36,104,192,.03)'}; }`}</style>
     </Box>
   )
 }

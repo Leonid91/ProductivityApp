@@ -47,7 +47,32 @@ internal static class Api
         b.Register("periods.index", p => s.Summaries.Index(p.Opt<string>("currency")));
         b.Register("periods.report", p => s.Summaries.Report(
             ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
-            p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates));
+            p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates, s.Holidays));
+
+        // ------------------------------------------------------------ holidays
+        // The calendars of Definitions > Holidays, with the number of holidays of this year each one holds.
+        b.Register("holidays.calendars", _ => s.Holidays.Views());
+        // The calendars every database starts with (the choices offered for a new line).
+        b.Register("holidays.presets", _ => HolidayCalendar.Defaults);
+        b.Register("holidays.save", p =>
+        {
+            var saved = s.Holidays.SaveCalendar(p.Opt<string>("id"), p.Get<string>("location"), p.Get<string>("url"));
+            return new { id = saved.Id, calendars = s.Holidays.Views() };
+        });
+        b.Register("holidays.setActive", p => { s.Holidays.SetActive(p.Get<string>("id"), p.Get<bool>("active")); return s.Holidays.Views(); });
+        b.Register("holidays.remove", p => { s.Holidays.RemoveCalendar(p.Get<string>("id")); return s.Holidays.Views(); });
+        // Downloads a calendar again, which checks its address too.
+        b.RegisterBackground("holidays.update", async p => await s.Holidays.UpdateAsync(p.Get<string>("id")));
+        // Every calendar downloaded again now (the Refresh button): today's copy replaces today's, the day before stays.
+        b.RegisterBackground("holidays.refresh", async _ =>
+        {
+            var updated = await s.Holidays.UpdateAllAsync(force: true);
+            return new { updated, calendars = s.Holidays.Views() };
+        });
+        // Every calendar is downloaded again once a day (checked at start and every hour). Says whether a checked one changed.
+        b.RegisterBackground("holidays.ensure", async _ => new { updated = await s.Holidays.UpdateAllAsync(force: false) });
+        // The holidays of the checked calendars over a period (the calendar page).
+        b.Register("holidays.list", p => s.Holidays.List(ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to"))));
 
         // ------------------------------------------------------------ exchange rates
         b.Register("rates.status", _ => s.Rates.Status());
@@ -327,7 +352,7 @@ internal static class Api
     /// <summary>The period of a report: every bank, then all of them in the global currency.</summary>
     private static PeriodReport ReportFrom(JsonElement p, AppServices s) => s.Summaries.Report(
         ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
-        p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates);
+        p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates, s.Holidays);
 
     private static ReportBuilder.Options ReportOptions(AppServices s) => new(
         PieShowAll: s.Setting("pieShowAll") != "false",

@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 15;
+    private const int SchemaVersion = 16;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -203,6 +203,21 @@ public sealed class Database : IDisposable
                 """, ("$i", fed.Id), ("$n", fed.Name), ("$u", fed.Url), ("$b", fed.Base), ("$f", fed.Format));
             Exec("PRAGMA user_version = 15;");
         }
+        if (version < 16)
+        {
+            // Calendars of public holidays (Definitions > Holidays): Quebec's checked, the United States' and France's
+            // ready to be; each with its latest copy (slot 0) and the one of the day before (slot 1).
+            Exec("""
+                CREATE TABLE IF NOT EXISTS holiday_calendars (id TEXT PRIMARY KEY, location TEXT NOT NULL, url TEXT NOT NULL, active INTEGER NOT NULL, position INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS holiday_sets (calendar TEXT NOT NULL, slot INTEGER NOT NULL, fetched TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (calendar, slot));
+                """);
+            var position = 0;
+            if (Scalar("SELECT COUNT(*) FROM holiday_calendars") is 0L)
+                foreach (var c in HolidayCalendar.Defaults)
+                    Exec("INSERT INTO holiday_calendars(id, location, url, active, position) VALUES($i, $l, $u, $a, $p)",
+                        ("$i", c.Id), ("$l", c.Location), ("$u", c.Url), ("$a", c.Active ? 1 : 0), ("$p", position++));
+            Exec("PRAGMA user_version = 16;");
+        }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -222,7 +237,9 @@ public sealed class Database : IDisposable
         var s = sql.AsSpan().Trim();
         if (s.IndexOf(';') is var end and >= 0 && end < s.Length - 1) return false;
         foreach (var prefix in (ReadOnlySpan<string>)["INSERT INTO settings", "UPDATE settings", "DELETE FROM settings", "INSERT INTO rate_sets", "UPDATE rate_sets",
-            "DELETE FROM rate_sets", "INSERT INTO rate_sources", "UPDATE rate_sources", "DELETE FROM rate_sources"])
+            "DELETE FROM rate_sets", "INSERT INTO rate_sources", "UPDATE rate_sources", "DELETE FROM rate_sources",
+            "INSERT INTO holiday_sets", "UPDATE holiday_sets", "DELETE FROM holiday_sets", "INSERT INTO holiday_calendars",
+            "UPDATE holiday_calendars", "DELETE FROM holiday_calendars"])
             if (s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
@@ -414,6 +431,58 @@ public sealed class Database : IDisposable
     {
         ClearRates(source);
         Exec("DELETE FROM rate_sources WHERE id = $s", ("$s", source));
+    });
+
+    // ---------------------------------------------------------------- holidays
+
+    public List<HolidayCalendar> HolidayCalendars() =>
+        Query("SELECT id, location, url, active FROM holiday_calendars ORDER BY position, rowid",
+            r => new HolidayCalendar(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt64(3) != 0));
+
+    /// <summary>Adds the calendar (at the end) or saves its place, address and whether it is checked.</summary>
+    public void SaveHolidayCalendar(HolidayCalendar c) => Exec("""
+        INSERT INTO holiday_calendars(id, location, url, active, position) VALUES($i, $l, $u, $a, (SELECT COALESCE(MAX(position), -1) + 1 FROM holiday_calendars))
+        ON CONFLICT(id) DO UPDATE SET location = excluded.location, url = excluded.url, active = excluded.active
+        """, ("$i", c.Id), ("$l", c.Location), ("$u", c.Url), ("$a", c.Active ? 1 : 0));
+
+    /// <summary>A copy of a calendar's holidays: slot 0 the latest download, slot 1 the one of the day before.</summary>
+    public string? LoadHolidaySet(string calendar, int slot) =>
+        Scalar("SELECT data FROM holiday_sets WHERE calendar = $c AND slot = $n", ("$c", calendar), ("$n", slot)) as string;
+
+    /// <summary>
+    /// Keeps a download of <paramref name="day"/> as the copy in use. Two copies at most: the one of the day before and
+    /// the one of today. A second download the same day replaces today's copy (the day before stays); a download on a
+    /// new day makes today's copy the day before, and the older one is deleted.
+    /// </summary>
+    public void SaveHolidaySet(string calendar, string data, DateOnly day) => InTransaction(() =>
+    {
+        var iso = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (Scalar("SELECT fetched FROM holiday_sets WHERE calendar = $c AND slot = 0", ("$c", calendar)) as string == iso)
+            Exec("DELETE FROM holiday_sets WHERE calendar = $c AND slot = 0", ("$c", calendar));
+        else
+        {
+            Exec("DELETE FROM holiday_sets WHERE calendar = $c AND slot = 1", ("$c", calendar));
+            Exec("UPDATE holiday_sets SET slot = 1 WHERE calendar = $c AND slot = 0", ("$c", calendar));
+        }
+        Exec("INSERT INTO holiday_sets(calendar, slot, fetched, data) VALUES($c, 0, $f, $d)", ("$c", calendar), ("$f", iso), ("$d", data));
+    });
+
+    /// <summary>The copies of a calendar kept: slot 0 in use, slot 1 the day before; the day each was downloaded.</summary>
+    public List<(int Slot, string Day)> HolidayCopies(string calendar) =>
+        Query("SELECT slot, fetched FROM holiday_sets WHERE calendar = $c ORDER BY slot", r => (r.GetInt32(0), r.GetString(1)), ("$c", calendar));
+
+    /// <summary>Forgets the holidays downloaded for a calendar, with the day and the error of its last download.</summary>
+    public void ClearHolidays(string calendar) => InTransaction(() =>
+    {
+        Exec("DELETE FROM holiday_sets WHERE calendar = $c", ("$c", calendar));
+        Exec("DELETE FROM settings WHERE key IN ($u, $e)", ("$u", $"holidays.{calendar}.updatedAt"), ("$e", $"holidays.{calendar}.error"));
+        _settings = null;
+    });
+
+    public void RemoveHolidayCalendar(string calendar) => InTransaction(() =>
+    {
+        ClearHolidays(calendar);
+        Exec("DELETE FROM holiday_calendars WHERE id = $c", ("$c", calendar));
     });
 
     public Dictionary<string, string> AllSettings()

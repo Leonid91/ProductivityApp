@@ -535,3 +535,24 @@ real app with `tools/e2e/perf.mjs`.
 - Definitions > Exchange rates: the round button, the bank's name, the address, the numbers and the delete icon of a
   line share one middle (the button cells had lost the line's top padding); what shows under an address only adds
   lines below.
+
+## November 10th, 2026 - Holidays and business days; the Bank of Canada by default - Commit 24
+
+### Added
+- Definitions > Holidays (after Tags): a table of calendars of public holidays, like the one of the exchange rates:
+  Location (free text), URL, Number of Holidays per Year (this year's, read from the download; nothing without it).
+  Three to start with: Canada - Quebec (checked; canada-holidays.ca, built from the CNESST list, one file per year),
+  United States (the federal holidays of the Office of Personnel Management) and France (the government's service).
+  Any other calendar can be added: an ICS or JSON file; "{year}" in its address stands for each year (this year, the
+  ten before and the next one are downloaded). A new line offers the calendars to start with that are not in the table.
+- Several calendars can be checked at once (check boxes, the lines tinted); the change applies at once.
+- Refresh all downloads every calendar again; each one is also downloaded once a day by itself. Each keeps two copies
+  at most: the one of the day before and today's (a second download the same day replaces today's); the one of the
+  day before is used when today's cannot be read. Errors are said under the address, unexpected ones too.
+- The calendar shows the holidays of the checked calendars on their day (the same holiday of two calendars once, with
+  both places) and in the day's panel.
+- Every period shows its business days next to its days: Monday to Friday, less the holidays of the checked calendars.
+
+### Changed
+- The Bank of Canada is the source of exchange rates by default.
+- The tables of exchange rates and of holidays share their line layout, delete button and error line.

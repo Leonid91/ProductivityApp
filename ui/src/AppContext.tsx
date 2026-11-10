@@ -131,6 +131,15 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     return () => clearInterval(hourly)
   }, [settings.ratesSource])
 
+  // Calendars of holidays: downloaded again every day too (checked at start and every hour); the periods and the
+  // calendar are drawn again when a checked one changed.
+  useEffect(() => {
+    const check = () => api.holidays.ensure().then((r) => { if (r.updated) setDataVersion((v) => v + 1) }, () => undefined)
+    void check()
+    const hourly = setInterval(() => void check(), 3600_000)
+    return () => clearInterval(hourly)
+  }, [])
+
   const category = useCallback((id: string) => byId.get(id) ?? byId.get('other') ?? categories[0], [byId, categories])
   const tag = useCallback((id: number) => tagById.get(id), [tagById])
 
