@@ -93,13 +93,19 @@ export interface MovementView {
   /** Type of an own account ("Chequing account"); null for the outside. */
   fromType: string | null
   toType: string | null
+  /** The bank of an own account; null for the outside. */
+  fromBank: string | null
+  toBank: string | null
 }
 
 export interface OutsideParty { name: string; sent: number; received: number }
 /** An account box (centre x, y; size w, h) or the outside blob (an ellipse) with who is behind it. */
-export interface DiagramNode { id: string; name: string; type: string; outside: boolean; x: number; y: number; w: number; h: number; parties: OutsideParty[] }
+/** title: the account's full name (inside its bank it is named without the bank's name it starts with). */
+export interface DiagramNode { id: string; name: string; type: string; outside: boolean; x: number; y: number; w: number; h: number; parties: OutsideParty[]; title?: string | null }
 export interface DiagramArrow { from: string; to: string; amount: number; count: number; outside: boolean; path: string; head: string; width: number; labelX: number; labelY: number }
-export interface FlowDiagram { width: number; height: number; nodes: DiagramNode[]; arrows: DiagramArrow[] }
+/** A bank: a larger box holding its accounts, its name at the top (centre x, y; size w, h). */
+export interface DiagramBank { name: string; x: number; y: number; w: number; h: number }
+export interface FlowDiagram { width: number; height: number; nodes: DiagramNode[]; arrows: DiagramArrow[]; banks: DiagramBank[] }
 
 export interface Flow { from: string; to: string; amount: number; fromOutside: boolean; toOutside: boolean; count: number }
 

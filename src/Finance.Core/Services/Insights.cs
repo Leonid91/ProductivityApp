@@ -92,11 +92,13 @@ public static class RecurringDetector
 
 /// <summary>
 /// One movement of money, seen once: from an account (or the outside) to another account (or the outside).
-/// FromType / ToType name the type of an own account ("Chequing account"); null for the outside.
+/// FromType / ToType name the type of an own account ("Chequing account"), FromBank / ToBank its bank; null for the
+/// outside. FromAccount / ToAccount are the own accounts (two accounts of two banks can have the same name).
 /// </summary>
 public sealed record MovementView(
     string Date, string CategoryId, string Label, decimal Amount, string From, string To, bool FromOutside, bool ToOutside,
-    long EditId, long? OtherId, string? FromType = null, string? ToType = null);
+    long EditId, long? OtherId, string? FromType = null, string? ToType = null, long? FromAccount = null, long? ToAccount = null,
+    string? FromBank = null, string? ToBank = null);
 
 /// <summary>The total moved from one place to another over a period.</summary>
 public sealed record Flow(string From, string To, decimal Amount, bool FromOutside, bool ToOutside, int Count);
@@ -119,18 +121,27 @@ public static class Movements
     /// are imported) make one line; a half alone goes to or comes from the outside: an account that is not imported,
     /// another person, an investment account.
     /// </summary>
-    public static List<MovementView> Build(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts)
+    /// <summary>Accounts at no bank of the list (cash, manual entries) are shown together under this name.</summary>
+    public const string OtherAccounts = "Other accounts";
+
+    /// <param name="bankNames">The names of the person's banks: each account is drawn inside the box of its bank.</param>
+    public static List<MovementView> Build(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts,
+        IReadOnlyDictionary<long, string>? bankNames = null)
     {
-        string? Type(string name, bool outside) => outside ? null
-            : accounts.Values.FirstOrDefault(a => a.Name == name) is { } a ? AccountTypes.Label(a.Kind, a.System) : null;
+        string? Type(long? id) => id is { } x && accounts.TryGetValue(x, out var a) ? AccountTypes.Label(a.Kind, a.System) : null;
+        string? Bank(long? id) => id is { } x && accounts.TryGetValue(x, out var a)
+            ? a.BankId is { } b && bankNames?.GetValueOrDefault(b) is { Length: > 0 } n ? n : OtherAccounts
+            : null;
         var raw = BuildRaw(period, linked, accounts);
-        return raw.Select(m => m with { FromType = Type(m.From, m.FromOutside), ToType = Type(m.To, m.ToOutside) }).ToList();
+        return raw.Select(m => m with { FromType = Type(m.FromAccount), ToType = Type(m.ToAccount), FromBank = Bank(m.FromAccount), ToBank = Bank(m.ToAccount) }).ToList();
     }
 
     private static List<MovementView> BuildRaw(IReadOnlyList<Transaction> period, IReadOnlyDictionary<long, Transaction> linked, IReadOnlyDictionary<long, Account> accounts)
     {
         var list = new List<MovementView>();
         var seen = new HashSet<long>();
+        // The period's own operations (converted to the display currency in a report of every bank).
+        var inPeriod = period.ToDictionary(t => t.Id);
         var cards = accounts.Values.Where(a => a.Kind == AccountKind.CreditCard).ToList();
         string Name(long id) => accounts.TryGetValue(id, out var a) ? a.Name : "Account";
         foreach (var t in period.Where(t => Categories.IsTransfer(t.CategoryId)).OrderBy(t => t.Date).ThenBy(t => t.Id))
@@ -141,17 +152,21 @@ public static class Movements
             {
                 seen.Add(other.Id);
                 var (out_, in_) = t.Amount < 0 ? (t, other) : (other, t);
-                list.Add(new MovementView(Iso(out_.Date), out_.CategoryId, out_.Brand, Math.Abs(t.Amount), Name(out_.AccountId), Name(in_.AccountId),
-                    false, false, out_.Id, in_.Id));
+                // The amount sent, as the period shows it; the amount received when the sending half is out of the
+                // period (in two currencies the two differ by the banks' rate and fees).
+                var amount = Math.Abs(inPeriod.TryGetValue(out_.Id, out var sent) ? sent.Amount : t.Amount);
+                list.Add(new MovementView(Iso(out_.Date), out_.CategoryId, out_.Brand, amount, Name(out_.AccountId), Name(in_.AccountId),
+                    false, false, out_.Id, in_.Id, FromAccount: out_.AccountId, ToAccount: in_.AccountId));
                 continue;
             }
             var kind = accounts.TryGetValue(t.AccountId, out var acc) ? acc.Kind : AccountKind.Bank;
             string counterpart;
             var counterpartOutside = true;
+            long? counterpartId = null;
             if (t.CategoryId == Categories.CardPayments && kind != AccountKind.CreditCard && t.Amount < 0)
             {
                 // A card paid from this account: the card is the person's own even when its other half is not imported.
-                if (cards.Count == 1) { counterpart = cards[0].Name; counterpartOutside = false; }
+                if (cards.Count == 1) { counterpart = cards[0].Name; counterpartOutside = false; counterpartId = cards[0].Id; }
                 else counterpart = OutsideCard;
             }
             else if (kind == AccountKind.CreditCard && t.Amount > 0) counterpart = OutsideBank;
@@ -160,14 +175,16 @@ public static class Movements
             else if (!GenericBrands.Contains(t.Brand)) counterpart = $"{t.Brand} (not imported)";
             else counterpart = Outside;
             list.Add(t.Amount < 0
-                ? new MovementView(Iso(t.Date), t.CategoryId, t.Brand, -t.Amount, Name(t.AccountId), counterpart, false, counterpartOutside, t.Id, null)
-                : new MovementView(Iso(t.Date), t.CategoryId, t.Brand, t.Amount, counterpart, Name(t.AccountId), counterpartOutside, false, t.Id, null));
+                ? new MovementView(Iso(t.Date), t.CategoryId, t.Brand, -t.Amount, Name(t.AccountId), counterpart, false, counterpartOutside, t.Id, null,
+                    FromAccount: t.AccountId, ToAccount: counterpartId)
+                : new MovementView(Iso(t.Date), t.CategoryId, t.Brand, t.Amount, counterpart, Name(t.AccountId), counterpartOutside, false, t.Id, null,
+                    FromAccount: counterpartId, ToAccount: t.AccountId));
         }
         return list;
     }
 
     public static List<Flow> Flows(IEnumerable<MovementView> movements) => movements
-        .GroupBy(m => (m.From, m.To, m.FromOutside, m.ToOutside))
+        .GroupBy(m => (m.FromAccount, m.ToAccount, m.From, m.To, m.FromOutside, m.ToOutside))
         .Select(g => new Flow(g.Key.From, g.Key.To, g.Sum(m => m.Amount), g.Key.FromOutside, g.Key.ToOutside, g.Count()))
         .OrderByDescending(f => f.Amount)
         .ToList();

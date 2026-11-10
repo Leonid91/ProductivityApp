@@ -47,7 +47,11 @@ public static class ReportBuilder
     /// <summary>A period in one currency (one bank, or a single-currency summary).</summary>
     public static byte[] Build(PeriodSummary s, string dateFormat, DateTime generatedAt, Options? options = null) =>
         Document(s.Title, $"{s.Transactions.Count} operation{(s.Transactions.Count == 1 ? "" : "s")} · amounts in {s.Currency}", generatedAt,
-            col => Part(col, s, options ?? new Options(), dateFormat, tables: true));
+            col =>
+            {
+                Part(col, s, options ?? new Options(), dateFormat, tables: true);
+                if (s.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
+            });
 
     /// <summary>
     /// A period bank by bank (statements, totals and charts in the bank's currency), then every bank together in the
@@ -64,11 +68,15 @@ public static class ReportBuilder
                 col.Item().PaddingTop(4).Text(bank.Native == bank.Currency ? $"{bank.Name} · {bank.Currency}" : $"{bank.Name} · {bank.Native} → {bank.Currency}").FontSize(14).SemiBold();
                 Part(col, bank.Summary, o, dateFormat, tables: true);
             }
-            if (!ShowsGlobal(r)) return;
-            col.Item().PageBreak();
-            col.Item().Text($"All banks · {r.Currency}").FontSize(14).SemiBold();
-            Part(col, r.Global, o, dateFormat, tables: false);
-            col.Item().ShowEntire().Element(c => ConversionBlock(c, r.Conversion, dateFormat));
+            if (ShowsGlobal(r))
+            {
+                col.Item().PageBreak();
+                col.Item().Text($"All banks · {r.Currency}").FontSize(14).SemiBold();
+                Part(col, r.Global, o, dateFormat, tables: false);
+                col.Item().ShowEntire().Element(c => ConversionBlock(c, r.Conversion, dateFormat));
+            }
+            // Money moved between the accounts of every bank: once, in its own part, in the display currency.
+            if (r.Global.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, r.Global));
         });
     }
 
@@ -157,7 +165,6 @@ public static class ReportBuilder
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Income", o.PieShowAll ? s.IncomePie : SummaryService.FoldPie(s.IncomePie), s.Currency, "No income in this period."));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Tags", o.PieShowAll ? s.TagPie : SummaryService.FoldPie(s.TagPie), s.Currency, "No tagged expenses in this period."));
                 col.Item().ShowEntire().Element(c => SeriesBlock(c, s));
-                if (s.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
     }
 
     /// <summary>How the global figures were converted: the source of the rates, the method, and every bank's currency before and after.</summary>

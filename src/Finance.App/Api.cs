@@ -38,6 +38,7 @@ internal static class Api
         {
             var key = p.Get<string>("key");
             s.SetSetting(key, p.Get<string>("value"));
+            if (key == "ratesSource") s.RatesChanged();
             if (key == "theme") window.ApplyTheme(s.Setting("theme") == "dark");
             return s.Settings();
         });
@@ -79,7 +80,12 @@ internal static class Api
         // ------------------------------------------------------------ exchange rates
         b.Register("rates.status", _ => s.Rates.Status());
         // Downloads a source's rates again (the chosen one by default); this checks its address too.
-        b.RegisterBackground("rates.update", async p => await s.Rates.UpdateAsync(p.Opt<string>("id")));
+        b.RegisterBackground("rates.update", async p =>
+        {
+            var status = await s.Rates.UpdateAsync(p.Opt<string>("id"));
+            s.RatesChanged();
+            return status;
+        });
         // The sources the person defined (Definitions > Exchange rates): name and address of the file of rates.
         b.Register("rates.sources", _ => s.Rates.Views());
         // The central banks whose files the app reads (the choices of a new line of the table).
@@ -94,12 +100,14 @@ internal static class Api
         b.RegisterBackground("rates.refresh", async _ =>
         {
             var updated = await s.Rates.UpdateAllAsync(force: true);
+            if (updated) s.RatesChanged();
             return new { updated, sources = s.Rates.Views() };
         });
         // Every source is downloaded again once a day (checked at start and every hour). Says whether the rates in use changed.
         b.RegisterBackground("rates.ensure", async _ =>
         {
             var updated = await s.Rates.UpdateAllAsync(force: false);
+            if (updated) s.RatesChanged();
             return new { updated, status = s.Rates.Status() };
         });
         b.Register("periods.summary", p => s.Summaries.Summarize(

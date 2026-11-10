@@ -91,14 +91,21 @@ public static class SvgCharts
     }
 
     /// <summary>
-    /// The money-moved diagram as laid out by the engine (<see cref="Services.FlowDiagram"/>): account boxes (name, then
-    /// type), the outside box (same size, orange), and arrows pointing where the money went with their amounts.
+    /// The money-moved diagram as laid out by the engine (<see cref="Services.FlowDiagram"/>): bank boxes (their name at
+    /// the top) holding their account boxes (name, then type), the outside box (the size of an account, orange), and
+    /// arrows pointing where the money went with their amounts.
     /// Blue between own accounts, orange to or from the outside.
     /// </summary>
     public static string FlowDiagram(Services.FlowDiagram d, double width, double height, string currency)
     {
         var sb = new StringBuilder();
         sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(width)}\" height=\"{F(height)}\" viewBox=\"0 0 {F(d.Width)} {F(d.Height)}\" preserveAspectRatio=\"xMidYMid meet\" font-family=\"Inter\">");
+        // Banks behind everything: the shape of an account box, larger, their name at the top.
+        foreach (var b in d.Banks)
+        {
+            sb.Append($"<rect x=\"{F(b.X - b.W / 2)}\" y=\"{F(b.Y - b.H / 2)}\" width=\"{F(b.W)}\" height=\"{F(b.H)}\" rx=\"18\" fill=\"{Palette.Surface}\" stroke=\"{Palette.InkMuted}\" stroke-width=\"1.5\"/>");
+            sb.Append($"<text x=\"{F(b.X)}\" y=\"{F(b.Y - b.H / 2 + 29)}\" font-size=\"15\" font-weight=\"700\" fill=\"{Palette.InkSecondary}\" text-anchor=\"middle\">{Escape(Services.FlowDiagram.Fit(b.Name, b.W))}</text>");
+        }
         foreach (var a in d.Arrows)
         {
             var color = a.Outside ? Palette.OutsideInk : Palette.Accent;

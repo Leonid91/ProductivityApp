@@ -635,3 +635,39 @@ real app with `tools/e2e/perf.mjs`.
 - Import: every amount of a statement's card (balance check, status, "add up to" warning) and of its column editor is
   shown in the currency of the account it is imported into, the same as its lines.
 - The sample tool's large-data measure builds again (it still saved rates the way the database used to).
+
+## November 10th, 2026 - Imports that overlap, transfers between banks, money moved per bank - Commit 30
+
+### Added
+- Unit tests of every way statements can overlap (ImportOverlapTests): periods one after the other, sharing a day,
+  part then whole and whole then part, crossing in either order, one inside another in either order, the same
+  statement in another file or twice, identical operations on one day, one day and one amount for two operations,
+  the same operation dated differently in two files, two purchases on both sides of the end of a statement, two
+  crossing files opened together, a statement deleted then imported again, operations corrected by hand, operations
+  entered by hand; and across banks: a transfer between two banks whatever the order of the imports, crossing
+  statements of both banks, a transfer across the end of a month, two transfers of one amount to two accounts,
+  transfers inside one bank, a transfer between two currencies, a salary of the same value, an amount too far from the
+  rate, a transfer waiting for the rates of its day, two accounts with one name at two banks.
+- The sample statements hold a transfer between two banks in two currencies (500 EUR from the Caisse d'Epargne to
+  Northwind Bank, received as 800.00 CAD).
+
+### Changed
+- Money moved: one card of its own per period, after the banks, for every bank together, in the display currency (it
+  was inside each bank and again in All banks). Each bank is a box holding its accounts; an arrow between two accounts
+  of one bank stays inside its box, an arrow between two banks goes from the account of one to the account of the
+  other. "Outside the app" sits between the banks (between two columns of banks, or between the two banks of the
+  last row, or beside the last one) so every account reaches it by a short arrow; an arrow that would cross another
+  box bends once in a gap between banks, arrows sharing a gap run side by side. Inside its bank an account named
+  after the bank is named without it ("Account •••• 8901"), its full name on hover. The PDF draws it the same way,
+  once, after the banks.
+
+### Fixed
+- A transfer between accounts in two currencies (euros sent from a French bank, dollars received in Canada) was never
+  paired: it counted as an expense in one bank and an income in the other. Its two halves are now one movement when
+  the amount received is the amount sent at the rate of its day, within 4% (the banks' rate and fees), up to 4 days
+  apart and worded as a transfer on at least one side; they are paired again when new rates arrive.
+- The same operation dated differently in two files of one account (the day of the purchase, the day the bank posted
+  it) was counted twice. It is now one operation up to 3 days apart, when one of the two files covers the other's day
+  without holding the operation itself.
+- An operation entered by hand, then imported with its statement, was counted twice: it is now recognised by its brand.
+- Two accounts with one name at two banks were drawn as one box.

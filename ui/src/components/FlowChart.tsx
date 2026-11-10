@@ -6,8 +6,9 @@ import { money } from '../format'
 /**
  * Where the money moved over the period: transfers, card payments and investments only (spending always goes out).
  * The layout comes from the engine (src/Finance.Core/Services/FlowDiagram.cs), so the PDF draws the same diagram:
- * each account as a box (name, then type), everything outside the app as one orange box of the same size, and arrows pointing where the
- * money went, blue between own accounts, orange to or from the outside.
+ * each bank as a box holding its accounts (name, then type), everything outside the app as one orange box of the size of an account,
+ * and arrows pointing where the money went, blue between own accounts (inside a bank, or from one bank to another), orange to or
+ * from the outside.
  */
 export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; flows: Flow[]; currency: string }) {
   const theme = useTheme()
@@ -19,7 +20,7 @@ export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; 
   const between = flows.filter((f) => !f.fromOutside && !f.toOutside).reduce((s, f) => s + f.amount, 0)
   const out = flows.filter((f) => f.toOutside).reduce((s, f) => s + f.amount, 0)
   const inn = flows.filter((f) => f.fromOutside).reduce((s, f) => s + f.amount, 0)
-  const name = (id: string) => diagram.nodes.find((n) => n.id === id)?.name ?? id
+  const name = (id: string) => { const n = diagram.nodes.find((x) => x.id === id); return n ? n.title ?? n.name : id }
 
   return (
     <Box data-flowchart sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, bgcolor: 'background.paper' }}>
@@ -33,6 +34,13 @@ export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; 
         <Typography color="text.secondary" sx={{ py: 5, textAlign: 'center' }}>No transfers in this period</Typography>
       ) : (
         <Box component="svg" viewBox={`0 0 ${diagram.width} ${diagram.height}`} sx={{ width: '100%', maxWidth: 1000, height: 'auto', display: 'block', mx: 'auto', overflow: 'visible' }}>
+          {diagram.banks.map((b) => (
+            // A bank behind its accounts: the shape of an account box, larger, its name at the top.
+            <g key={'b' + b.name} data-bank-node={b.name}>
+              <rect x={b.x - b.w / 2} y={b.y - b.h / 2} width={b.w} height={b.h} rx={18} fill={theme.palette.surface.sunken} stroke={theme.palette.text.secondary} strokeWidth={1.5} />
+              <text x={b.x} y={b.y - b.h / 2 + 29} fontSize={15} fontWeight={700} fill={theme.palette.text.secondary} textAnchor="middle">{fit(b.name, b.w)}</text>
+            </g>
+          ))}
           {diagram.arrows.map((a, i) => {
             const color = a.outside ? outside : internal
             const fade = hover !== null && hover !== i
@@ -61,7 +69,7 @@ export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; 
           {diagram.nodes.map((n) => (
             // The outside box has the size of the accounts, in orange; who is behind it shows on hover.
             <g key={n.id} {...(n.outside ? { 'data-outside-node': '' } : { 'data-account-node': n.name })}>
-              <title>{n.outside ? n.parties.map((p) => p.name).join(', ') : n.name}</title>
+              <title>{n.outside ? n.parties.map((p) => p.name).join(', ') : n.title ?? n.name}</title>
               <rect x={n.x - n.w / 2} y={n.y - n.h / 2} width={n.w} height={n.h} rx={12} fill={n.outside ? (dark ? '#3a2a20' : '#fdf1ea') : paper} stroke={n.outside ? outside : theme.palette.text.primary} strokeWidth={1.5} />
               <text x={n.x} y={n.y - 3} fontSize={15} fontWeight={700} fill={n.outside ? outside : theme.palette.text.primary} textAnchor="middle">{fit(n.name, n.w)}</text>
               <text x={n.x} y={n.y + 16} fontSize={12} fill={theme.palette.text.secondary} textAnchor="middle">{n.type}</text>

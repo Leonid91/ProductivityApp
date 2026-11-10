@@ -12,9 +12,14 @@ if (args.Length == 2 && args[0] == "generate")
 {
     var dir = Directory.CreateDirectory(args[1]).FullName;
     var seed = 11;
+    // A transfer from one bank to another, in two currencies: 500 EUR sent from the Caisse d'Epargne on 8 October,
+    // 800.00 CAD received at Northwind Bank the next day.
+    static Spec With(Spec s, FakeTransaction t) => s with { Transactions = [.. s.Transactions.Append(t).OrderBy(x => x.Date)] };
     for (var m = 1; m <= 12; m++)
     {
-        Write(Path.Combine(dir, $"Northwind Bank {2025}-{m:D2}.pdf"), Render(Sample(Style.EnglishWithdrawalsDeposits, 2025, m, 28 + m % 7, seed++)));
+        var northwind = Sample(Style.EnglishWithdrawalsDeposits, 2025, m, 28 + m % 7, seed++);
+        if (m == 10) northwind = With(northwind, new FakeTransaction(new DateOnly(2025, 10, 9), "WIRE TRANSFER RECEIVED CAISSE D EPARGNE", 800.00m));
+        Write(Path.Combine(dir, $"Northwind Bank {2025}-{m:D2}.pdf"), Render(northwind));
         Write(Path.Combine(dir, $"Fabrikam Card {2025}-{m:D2}.pdf"), Render(Sample(Style.EnglishCard, 2025, m, 16 + m % 5, seed++)));
     }
     Write(Path.Combine(dir, "Banque Exemple 2025-10.pdf"), Render(Sample(Style.FrenchDebitCredit, 2025, 10, 30, seed++)));
@@ -23,7 +28,11 @@ if (args.Length == 2 && args[0] == "generate")
     Write(Path.Combine(dir, "Banque Exemple 2025-09 (scan).pdf"), AsScan(Render(Sample(Style.FrenchDebitCredit, 2025, 9, 20, seed++))));
     // A Caisse d'Epargne-style current account (fictitious), three months.
     for (var m = 9; m <= 11; m++)
-        Write(Path.Combine(dir, $"Caisse d'Epargne 2025-{m:D2}.pdf"), Render(Sample(Style.FrenchDebitCredit, 2025, m, 30, seed++) with { BankName = "Caisse d'Epargne" }));
+    {
+        var caisse = Sample(Style.FrenchDebitCredit, 2025, m, 30, seed++) with { BankName = "Caisse d'Epargne" };
+        if (m == 10) caisse = With(caisse, new FakeTransaction(new DateOnly(2025, 10, 8), "VIR SEPA EMIS NORTHWIND BANK", -500.00m));
+        Write(Path.Combine(dir, $"Caisse d'Epargne 2025-{m:D2}.pdf"), Render(caisse));
+    }
     // A Banque Nationale-style month (fictitious): Mastercard, chequing and savings, as PDF and as CSV.
     var bnc = BncGenerator.Sample(2025, 8, seed++);
     foreach (var a in new[] { BncGenerator.BncAccount.Card, BncGenerator.BncAccount.Chequing, BncGenerator.BncAccount.Savings })

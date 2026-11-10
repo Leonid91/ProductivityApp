@@ -202,6 +202,12 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
     /// Re-runs the dictionary over every operation the person has not corrected by hand, then links the movements
     /// between their own accounts again. Returns how many operations ended up different.
     /// </summary>
+    /// <summary>
+    /// The exchange rates used to pair the two halves of a movement between accounts in two currencies (see <see
+    /// cref="TransferMatcher.Link"/>); without them, only halves in one currency are paired.
+    /// </summary>
+    public TransferMatcher.Converter? Convert { get; set; }
+
     public int ReapplyRules()
     {
         var before = db.AllTransactions().ToDictionary(t => t.Id, t => (t.Brand, t.CategoryId));
@@ -222,7 +228,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
                 if (dirty) db.UpdateTransaction(t);
             }
         });
-        TransferMatcher.Link(db);
+        TransferMatcher.Link(db, Convert);
         return db.AllTransactions().Count(t => before.TryGetValue(t.Id, out var b) && (b.Brand != t.Brand || b.CategoryId != t.CategoryId));
     }
 }

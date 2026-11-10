@@ -285,6 +285,9 @@ try {
   await shot(p, '09d-money-moved.png')
   const flow = await p.eval(`(() => { const f = document.querySelector('${sec} [data-flowchart]'); const o = f.querySelector('[data-outside-node] rect'); const a = f.querySelector('[data-account-node] rect'); return { same: !!o && !!a && o.getAttribute('width') === a.getAttribute('width') && o.getAttribute('height') === a.getAttribute('height'), text: [...f.querySelectorAll('[data-outside-node] text')].map(t => t.textContent).join(' | '), blob: !!f.querySelector('ellipse') } })()`)
   check('outside box the size of the accounts, no amounts inside', flow.same && !flow.blob && flow.text === 'Outside the app | Other accounts & people', flow.text)
+  // The diagram is not a bank's: one card of its own per period, after the banks, every account inside the box of its bank.
+  const own = await p.eval(`(() => { const s = document.querySelector('${sec}'); const f = s.querySelector('[data-flow-card]'); const inBox = (a, b) => a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5; const banks = [...f.querySelectorAll('[data-bank-node] rect')].map(r => r.getBoundingClientRect()); const accounts = [...f.querySelectorAll('[data-account-node] rect')].map(r => r.getBoundingClientRect()); const parts = [...s.querySelectorAll('[data-part-block]')]; return { cards: s.querySelectorAll('[data-flowchart]').length, inPart: !!s.querySelector('[data-part-block] [data-flowchart]'), after: parts.every(b => b.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING), banks: [...f.querySelectorAll('[data-bank-node]')].map(b => b.dataset.bankNode), inside: accounts.length > 0 && accounts.every(a => banks.some(b => inBox(a, b))) } })()`)
+  check('money moved: one card of its own after the banks, each account inside the box of its bank', own.cards === 1 && !own.inPart && own.after && own.banks.length > 0 && own.inside, JSON.stringify(own))
   // Expenses per day: the amount of the day on hover.
   await p.eval(`(() => { const f = document.querySelector('${sec} [data-bars]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 200 }) })()`)
   await sleep(600)
@@ -789,6 +792,25 @@ try {
   const pinned = await p.eval(`(() => { const b = document.querySelector('${octSec} [data-part-block]'); const h = b.querySelector('[data-part-head]').getBoundingClientRect(); const th = b.querySelector('thead th').getBoundingClientRect(); const bar = document.querySelector('[data-period-view]').parentElement.parentElement.getBoundingClientRect(); return { bar: Math.round(bar.bottom), head: [Math.round(h.top), Math.round(h.bottom)], th: [Math.round(th.top), Math.round(th.bottom)], top: Math.round(b.getBoundingClientRect().top) } })()`)
   check('the bank stays named while its table scrolls, the table header under its name', pinned.top < pinned.head[0] && Math.abs(pinned.head[0] - pinned.bar) <= 1 && Math.abs(pinned.th[0] - pinned.head[1]) <= 1, JSON.stringify(pinned))
   await shot(p, '24b-bank-name-pinned.png')
+  // Money moved in October: the banks as boxes holding their accounts; 500 EUR sent from the Caisse d'Epargne to
+  // Northwind Bank (received as 800.00 CAD) is one movement between the two banks, shown in the display currency.
+  const between = oct.global.movements.filter((m) => !m.fromOutside && !m.toOutside && m.fromBank !== m.toBank)
+  check('a transfer between two banks in two currencies: one movement, out of spending and income', between.some((m) => m.fromBank === "Caisse d'Epargne" && m.toBank === 'Northwind Bank')
+    && !oct.banks.some((b) => b.summary.transactions.some((t) => Math.abs(t.amount) === 800 && t.categoryId !== 'transfers')), JSON.stringify(between))
+  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.waitFor(`document.querySelector('${octSec} [data-flow-card] [data-flowchart]') !== null`, 20000, 'October money moved')
+  await p.eval(`(() => { const f = document.querySelector('${octSec} [data-flow-card]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
+  await sleep(800)
+  await shot(p, '24c-money-moved-between-banks.png')
+  await p.eval(`document.querySelector('main').scrollBy({ top: 560 })`)
+  await sleep(400)
+  await shot(p, '24d-money-moved-between-banks-lower.png')
+  const octFlow = await p.eval(`(() => { const f = document.querySelector('${octSec} [data-flow-card]'); return { banks: [...f.querySelectorAll('[data-bank-node]')].map(b => b.dataset.bankNode), labels: [...f.querySelectorAll('g text.tnum')].map(t => t.textContent) } })()`)
+  check('the October diagram: every bank with movements as a box, amounts in the display currency', octFlow.banks.includes("Caisse d'Epargne") && octFlow.banks.includes('Northwind Bank')
+    && octFlow.labels.length > 0 && octFlow.labels.every((l) => l.includes('$') && !l.includes('€')), JSON.stringify(octFlow))
+  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await sleep(600)
   // The Summary stays global.
   await p.clickText('Summary', { selector: '[data-period-view] button' })
   await p.waitFor(`document.querySelector('${octSec} [data-summary]') !== null`, 20000, 'October summary')

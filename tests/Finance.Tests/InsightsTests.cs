@@ -135,12 +135,13 @@ public class InsightsTests
         Assert.Equal(["Card", "Chequing", "Savings"], d.Nodes.Where(n => !n.Outside).Select(n => n.Name).Order());
         Assert.Equal("Credit card", d.Nodes.Single(n => n.Name == "Card").Type);
         Assert.Equal("Savings account", d.Nodes.Single(n => n.Name == "Savings").Type);
+        string Box(string name) => d.Nodes.Single(n => n.Name == name).Id;
         var blob = d.Nodes.Single(n => n.Outside);
         Assert.Contains(blob.Parties, x => x.Name == "Investments" && x.Sent == 500m);
         Assert.Equal(535m, blob.Parties.Sum(x => x.Sent));
         Assert.Equal(sum.Flows.Select(f => (f.FromOutside ? "out" : f.From, f.ToOutside ? "out" : f.To)).Distinct().Count(), d.Arrows.Count);
-        Assert.Contains(d.Arrows, a => a.From == "Chequing" && a.To == "Savings" && a.Amount == 250m && !a.Outside);
-        Assert.Contains(d.Arrows, a => a.From == "Chequing" && a.To == FlowDiagram.OutsideId && a.Amount == 535m && a.Outside);
+        Assert.Contains(d.Arrows, a => a.From == Box("Chequing") && a.To == Box("Savings") && a.Amount == 250m && !a.Outside);
+        Assert.Contains(d.Arrows, a => a.From == Box("Chequing") && a.To == FlowDiagram.OutsideId && a.Amount == 535m && a.Outside);
         Assert.All(d.Arrows, a => { Assert.StartsWith("M", a.Path); Assert.EndsWith("Z", a.Head); });
         Assert.All(d.Nodes, n => Assert.InRange(n.Y + n.H / 2, 0, d.Height));
         Assert.Equal("Chequing account", sum.Movements.First(m => m.From == "Chequing").FromType);

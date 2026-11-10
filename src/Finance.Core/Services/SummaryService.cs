@@ -226,7 +226,7 @@ public sealed class SummaryService(Database db)
             lines.AddRange(globalLines);
             var left = txs.Where(t => t.Currency != global && !toGlobal.ContainsKey(t.Id)).ToList();
             parts.Add(new BankPart(group.Key is { } k ? k.ToString(CultureInfo.InvariantCulture) : "other", name, global, bank?.Currency ?? global, bank?.System,
-                Build(converted, from, to, g, global, toGlobal, accounts, unconverted: left)));
+                Build(converted, from, to, g, global, toGlobal, accounts, unconverted: left, diagram: false)));
             everything.AddRange(converted);
             foreach (var (txId, c) in toGlobal) everyConversion[txId] = c;
         }
@@ -323,11 +323,11 @@ public sealed class SummaryService(Database db)
 
     private PeriodSummary Build(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g, string currency,
         Dictionary<long, (Transaction Original, Converted Rate)>? converted, Dictionary<long, Account> accounts, bool listOperations = true,
-        List<Transaction>? unconverted = null)
+        List<Transaction>? unconverted = null, bool diagram = true)
     {
         var (recurring, byId) = History();
         var tags = db.TagIndex();
-        var movements = Movements.Build(txs, byId, accounts);
+        var movements = Movements.Build(txs, byId, accounts, db.Banks().ToDictionary(b => b.Id, b => b.Name));
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var toIso = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -428,7 +428,8 @@ public sealed class SummaryService(Database db)
             IncomePie = incomeSlices,
             Movements = movements,
             Flows = Movements.Flows(movements),
-            Diagram = FlowDiagram.Build(movements),
+            // A bank's part has none: the diagram is drawn once for every bank (see PeriodReport.Global).
+            Diagram = diagram ? FlowDiagram.Build(movements) : new FlowDiagram(0, 0, [], [], []),
             RecurringWithoutHousing = burden,
             RecurringWithoutHousingShare = earnings > 0 ? (double)(burden / earnings) : null,
             ExpensesShare = earnings > 0 ? (double)(expenses / earnings) : null,

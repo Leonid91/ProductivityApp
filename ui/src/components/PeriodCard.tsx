@@ -259,9 +259,6 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
           <Box sx={{ mt: 1.5 }}>
             <c.CategoryLines keep={`${keep}:lines:${topLevel}`} from={summary.from} to={summary.to} transactions={summary.transactions} categories={topLevel ? summary.byTopCategory : summary.byCategory} topLevel={topLevel} currency={currency} />
           </Box>
-          <Box sx={{ mt: 1.5 }}>
-            <FlowChart diagram={summary.diagram} flows={summary.flows} currency={currency} />
-          </Box>
         </>
       )}
 
@@ -518,6 +515,12 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
                   <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} />
                   <ConversionPanel conversion={report.conversion} />
                 </Part>
+              )}
+              {shown === 'analytics' && (
+                // Money moved between the accounts of every bank, in one card of its own, in the display currency.
+                <Box data-flow-card sx={{ mt: 2.5 }}>
+                  <FlowChart diagram={report.global.diagram} flows={report.global.flows} currency={report.currency} />
+                </Box>
               )}
 
               <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2.5 }}>

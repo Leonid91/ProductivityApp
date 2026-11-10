@@ -213,29 +213,70 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         MarkDuplicates(draft, draft.AccountId);
     }
 
+    /// <summary>Days apart the same operation can be dated in two files of one account (the day of the purchase, the day the bank posted it).</summary>
+    public const int DateShift = 3;
+
     /// <summary>
-    /// Marks rows already stored in the chosen account: the same date, the same amount and the same operation
-    /// (labels equal, one containing the other, or the same merchant). Matched one for one: two identical coffees
+    /// Marks rows already stored in the chosen account: the same amount and the same operation (labels equal, one
+    /// containing the other, or the same merchant), on the same day first. Matched one for one: two identical coffees
     /// the same day are two operations, and a card payment is never taken for a transfer of the same amount.
     /// </summary>
+    /// <remarks>
+    /// Then, among what is left on both sides, the same operation dated up to <see cref="DateShift"/> days apart (one
+    /// file gives the day of the purchase, the other the day it was posted), but only when one of the two files covers
+    /// the other's day without holding the operation itself: a file that covers a day and has nothing on it for that
+    /// amount and that shop shows the operation under another day. Two real coffees on both sides of the end of a
+    /// statement stay two. An operation entered by hand is the same operation when its brand is the bank's wording.
+    /// </remarks>
     private void MarkDuplicates(ImportDraft draft, long? accountId)
     {
         foreach (var r in draft.Rows) r.Duplicate = false;
         if (accountId is null || draft.Rows.Count == 0) return;
         var from = draft.Rows.Min(r => r.Date);
         var to = draft.Rows.Max(r => r.Date);
-        var existing = db.TransactionsForAccount(accountId.Value, from, to)
-            .GroupBy(t => (t.Date, t.Amount))
-            .ToDictionary(g => g.Key, g => g.Select(t => t.RawLabel).ToList());
+        var pool = db.TransactionsForAccount(accountId.Value, from.AddDays(-DateShift), to.AddDays(DateShift)).ToList();
+        var left = new HashSet<long>(pool.Select(t => t.Id));
+        var exact = pool.GroupBy(t => (t.Date, t.Amount)).ToDictionary(g => g.Key, g => g.ToList());
+        var unmatched = new List<DraftRow>();
         foreach (var r in draft.Rows)
         {
-            if (!existing.TryGetValue((r.Date, r.Amount), out var labels)) continue;
-            var i = labels.FindIndex(l => SameOperation(l, r.Label));
-            if (i < 0) continue;
+            var same = exact.GetValueOrDefault((r.Date, r.Amount))?.FirstOrDefault(t => left.Contains(t.Id) && SameOperation(Wording(t), r.Label));
+            if (same is null) { unmatched.Add(r); continue; }
             r.Duplicate = true;
-            labels.RemoveAt(i);
+            left.Remove(same.Id);
+        }
+        if (unmatched.Count == 0 || left.Count == 0) return;
+
+        // What each file says it covers: its period, or the days of its operations.
+        var fileFrom = draft.Parse.PeriodStart ?? from;
+        var fileTo = draft.Parse.PeriodEnd ?? to;
+        var statements = db.Statements().Where(st => st.AccountId == accountId.Value).ToDictionary(st => st.Id);
+        Dictionary<long, (DateOnly From, DateOnly To)>? spans = null;
+        (DateOnly From, DateOnly To)? Covers(long? statementId)
+        {
+            if (statementId is not { } id || !statements.TryGetValue(id, out var st)) return null;
+            if (st.PeriodStart is { } a && st.PeriodEnd is { } b) return (a, b);
+            spans ??= db.TransactionsForAccount(accountId.Value, DateOnly.MinValue, DateOnly.MaxValue)
+                .Where(t => t.StatementId is not null).GroupBy(t => t.StatementId!.Value)
+                .ToDictionary(g => g.Key, g => (g.Min(t => t.Date), g.Max(t => t.Date)));
+            return spans.TryGetValue(id, out var span) ? span : null;
+        }
+        foreach (var r in unmatched)
+        {
+            var near = pool
+                .Where(t => left.Contains(t.Id) && t.Amount == r.Amount && t.Date != r.Date && Math.Abs(t.Date.DayNumber - r.Date.DayNumber) <= DateShift)
+                .Where(t => SameOperation(Wording(t), r.Label))
+                .Where(t => (t.Date >= fileFrom && t.Date <= fileTo) || (Covers(t.StatementId) is { } c && r.Date >= c.From && r.Date <= c.To))
+                .OrderBy(t => Math.Abs(t.Date.DayNumber - r.Date.DayNumber)).ThenBy(t => t.Id)
+                .FirstOrDefault();
+            if (near is null) continue;
+            r.Duplicate = true;
+            left.Remove(near.Id);
         }
     }
+
+    /// <summary>What an operation stored says: the bank's wording, or the brand of one entered by hand.</summary>
+    private static string Wording(Transaction t) => t.RawLabel.Length > 0 ? t.RawLabel : t.Brand;
 
     public static bool SameOperation(string a, string b)
     {

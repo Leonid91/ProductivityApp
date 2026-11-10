@@ -77,6 +77,9 @@ internal sealed class AppServices : IDisposable
         Categories = new CategoryService(Db);
         Tags = new TagService(Db);
         Rates = new ExchangeRates(Db, () => Setting("ratesSource"));
+        // Movements between accounts in two currencies are paired with the rates of the bank in use.
+        var rates = Rates;
+        Transactions.Convert = (amount, from, to, day) => rates.Convert(amount, from, to, day)?.Amount;
         Holidays = new Holidays(Db, () => Setting("weekendDays"));
         if (Db.GetSetting("rulesVersion") != RulesVersion)
         {
@@ -110,6 +113,15 @@ internal sealed class AppServices : IDisposable
         {
             Open();
         }
+    }
+
+    /// <summary>
+    /// New rates (or another bank's) can pair halves of movements between accounts in two currencies that could not be
+    /// paired before: the movements are linked again when accounts are in more than one currency.
+    /// </summary>
+    public void RatesChanged()
+    {
+        if (Db.Accounts().Select(a => a.Currency).Distinct().Skip(1).Any()) Transactions.ReapplyRules();
     }
 
     public string Setting(string key) => Db.GetSetting(key) ?? DefaultSettings.GetValueOrDefault(key) ?? "";

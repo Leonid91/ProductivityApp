@@ -5,14 +5,28 @@ namespace ProductivityApp.Finance.Services;
 
 /// <summary>
 /// Finds the two halves of a movement between the person's own accounts (paying the credit card from chequing,
-/// moving money to savings...) so that neither half is counted as spending or income.
+/// moving money to savings, sending euros from a French bank to a Canadian one...) so that neither half is counted as
+/// spending or income.
 /// </summary>
 public static class TransferMatcher
 {
     /// <summary>Days allowed between the two halves (banks post them on different days).</summary>
     public const int Window = 4;
 
-    public static int Link(Database db)
+    /// <summary>
+    /// How far the amount received in another currency may be from the amount sent converted at the rate of its day: the
+    /// banks' own exchange rate and fees (a few percent).
+    /// </summary>
+    public const decimal CurrencyTolerance = 0.04m;
+
+    /// <summary>Converts an amount from one currency to another at the rate of a day (null when no rate is known).</summary>
+    public delegate decimal? Converter(decimal amount, string from, string to, DateOnly day);
+
+    /// <param name="convert">
+    /// Pairs the halves of a movement between accounts in two currencies (the amount received is the amount sent
+    /// converted, within <see cref="CurrencyTolerance"/>); without it only halves in the same currency are paired.
+    /// </param>
+    public static int Link(Database db, Converter? convert = null)
     {
         var accounts = db.Accounts().ToDictionary(a => a.Id);
         var changed = CardSpendingWithoutCard(db, accounts);
@@ -48,27 +62,69 @@ public static class TransferMatcher
                     bestGap = gap;
                 }
                 if (best is null) continue;
-                used.Add(o.Id);
-                used.Add(best.Id);
-                var cardInvolved = accounts[o.AccountId].Kind == AccountKind.CreditCard || accounts[best.AccountId].Kind == AccountKind.CreditCard
-                                   || o.CategoryId == Categories.CardPayments || best.CategoryId == Categories.CardPayments;
-                var category = cardInvolved ? Categories.CardPayments
-                    : o.CategoryId == Categories.Investments || best.CategoryId == Categories.Investments ? Categories.Investments
-                    : Categories.Transfers;
-                db.SetLink(o.Id, best.Id);
-                foreach (var t in new[] { o, best })
+                Pair(o, best);
+            }
+            // Then the halves in two currencies, among what is left: the closest amount once converted, then the closest day.
+            if (convert is null) return;
+            // What is left, by day: only the days around each outgoing half are looked at.
+            var left = txs.Where(t => t.Amount > 0 && !used.Contains(t.Id)).GroupBy(t => t.Date.DayNumber).ToDictionary(g => g.Key, g => g.ToList());
+            if (!txs.Select(t => t.Currency).Distinct().Skip(1).Any()) return;
+            foreach (var o in outgoing)
+            {
+                if (used.Contains(o.Id)) continue;
+                Transaction? best = null;
+                var bestScore = decimal.MaxValue;
+                var expectedIn = new Dictionary<string, decimal?>(StringComparer.Ordinal);
+                for (var day = o.Date.DayNumber - Window; day <= o.Date.DayNumber + Window; day++)
                 {
-                    if (t.CategorySource == ValueSource.User) continue;
-                    if (t.CategoryId == category && t.CategorySource == ValueSource.Linked) continue;
-                    t.CategoryId = category;
-                    t.CategorySource = ValueSource.Linked;
-                    db.UpdateTransaction(t);
-                    changed++;
+                    foreach (var i in left.GetValueOrDefault(day) ?? [])
+                    {
+                        if (used.Contains(i.Id) || i.AccountId == o.AccountId || i.Currency == o.Currency) continue;
+                        var days = Math.Abs(day - o.Date.DayNumber);
+                        if (!RelatedAcrossCurrencies(o, i, accounts)) continue;
+                        if (!expectedIn.TryGetValue(i.Currency, out var e)) expectedIn[i.Currency] = e = convert(-o.Amount, o.Currency, i.Currency, o.Date);
+                        if (e is not { } expected || expected <= 0) continue;
+                        var gap = Math.Abs(i.Amount - expected) / expected;
+                        if (gap > CurrencyTolerance) continue;
+                        var score = gap * 100 + days;
+                        if (score >= bestScore) continue;
+                        best = i;
+                        bestScore = score;
+                    }
                 }
+                if (best is not null) Pair(o, best);
             }
         });
         return changed;
+
+        void Pair(Transaction o, Transaction best)
+        {
+            used.Add(o.Id);
+            used.Add(best.Id);
+            var cardInvolved = accounts[o.AccountId].Kind == AccountKind.CreditCard || accounts[best.AccountId].Kind == AccountKind.CreditCard
+                               || o.CategoryId == Categories.CardPayments || best.CategoryId == Categories.CardPayments;
+            var category = cardInvolved ? Categories.CardPayments
+                : o.CategoryId == Categories.Investments || best.CategoryId == Categories.Investments ? Categories.Investments
+                : Categories.Transfers;
+            db.SetLink(o.Id, best.Id);
+            foreach (var t in new[] { o, best })
+            {
+                if (t.CategorySource == ValueSource.User) continue;
+                if (t.CategoryId == category && t.CategorySource == ValueSource.Linked) continue;
+                t.CategoryId = category;
+                t.CategorySource = ValueSource.Linked;
+                db.UpdateTransaction(t);
+                changed++;
+            }
+        }
     }
+
+    /// <summary>
+    /// Two amounts in two currencies are one movement only when the money is said to move: at least one side worded as a
+    /// transfer (or card payment, investment), and neither side a purchase, a salary or another known spending or income.
+    /// </summary>
+    private static bool RelatedAcrossCurrencies(Transaction o, Transaction i, Dictionary<long, Account> accounts) =>
+        (IsMovement(o) || IsMovement(i)) && !IsSpendingOrIncome(o) && !IsSpendingOrIncome(i) && Related(o, i, accounts);
 
     /// <summary>
     /// Two opposite amounts on two accounts are one movement when a credit card or a savings account is involved
