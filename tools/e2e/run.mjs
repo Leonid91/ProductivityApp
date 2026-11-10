@@ -809,7 +809,7 @@ try {
     && octBoc.conversion.lines.length > 0 && octBoc.conversion.lines.every((l) => l.unconverted === 0) && Math.abs(octBoc.global.balance - oct.global.balance) < Math.abs(oct.global.balance) * 0.02,
     `${octBoc.global.balance} with the Bank of Canada, ${oct.global.balance} with the ECB`)
   await p.engine('settings.set', { key: 'ratesSource', value: 'ecb' })
-  // Definitions > Exchange rates: one line per central bank the app reads (two to start with), the round button for
+  // Definitions > Exchange rates: one line per central bank the app reads (all three to start with), the round button for
   // the one in use, what each download holds; Refresh all; a new line is a choice among the banks; a wrong address is
   // checked in the background and the reason shown cleanly.
   await p.clickText('Settings', { selector: 'nav button' })
@@ -829,9 +829,19 @@ try {
   }))()`)
   let rt = await ratesTable()
   check('Definitions: Exchange rates after Bank, opened from the Settings row', rt.tab.includes('Exchange rates') && /^Bank Exchange rates Brands/.test(rt.tabs), rt.tabs)
-  check('the two central banks to start with, each with its currencies and last day read from its download', rt.rows.length === 2
+  check('the three central banks to start with, each with its currencies and last day read from its download', rt.rows.length === 3
     && rt.rows[0].name === 'European Central Bank' && rt.rows[0].url.startsWith('https://www.ecb.europa.eu/') && rt.rows[1].name === 'Bank of Canada' && rt.rows[1].url.startsWith('https://www.bankofcanada.ca/')
+    && rt.rows[2].name === 'US Federal Reserve' && rt.rows[2].url.startsWith('https://www.federalreserve.gov/')
     && rt.rows.every((r) => Number(r.currencies) > 20 && r.latest !== '' && r.error === null) && rt.head === 'In use|Central bank|Address of the rates file|Currencies|Rates up to|', JSON.stringify(rt.rows))
+  // Every piece of a line on one middle: the round button, the name, the address, the numbers, the delete icon.
+  const middles = await p.eval(`[...document.querySelectorAll('[data-rate-source]')].map((row) => {
+    const mid = (r) => r.top + r.height / 2
+    const text = (el) => { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) if (n.textContent.trim()) { const g = document.createRange(); g.selectNodeContents(n); return mid(g.getBoundingClientRect()) } return null }
+    const td = row.cells, del = td[5].querySelector('svg')
+    const all = [mid(td[0].querySelector('svg').getBoundingClientRect()), text(td[1]), mid(row.querySelector('[data-field=url]').getBoundingClientRect()), text(td[3]), text(td[4]), del && mid(del.getBoundingClientRect())].filter((x) => x !== null)
+    return +(Math.max(...all) - Math.min(...all)).toFixed(1)
+  })`)
+  check('each line aligned: round button, texts, address and delete icon on one middle', middles.every((d) => d <= 1.5), middles.join())
   check('the bank in use: its round button checked, its line tinted, the others plain', rt.rows[0].inUse && !rt.rows[1].inUse && rt.rows[0].tint !== rt.rows[1].tint, rt.rows.map((r) => r.tint).join())
   check('what to paste as the address: one short sentence', (rt.help.match(/[.!?](\s|$)/g) ?? []).length === 1 && rt.help.length < 110 && /not the address of its web page/.test(rt.help), rt.help)
   // Choose the Bank of Canada with its round button: its line tinted, the European Central Bank's plain.
@@ -840,6 +850,12 @@ try {
   check('a round button makes its bank the one in use', (await p.engine('rates.status')).sourceId === 'boc')
   await p.mouseClick('[data-rate-source="ecb"] input[type=radio]')
   await p.waitFor(`document.querySelector('[data-rate-source="ecb"] input[type=radio]').checked`, 10000, 'back to the ECB')
+  check('every central bank of the list in the table to start with: no more to add', await p.eval(`[...document.querySelectorAll('main button')].find(b => b.innerText === 'Add bank').disabled`))
+  // The US Federal Reserve deleted from its own button, after saying so.
+  await p.mouseClick('[data-rate-source="fed"] button[aria-label^="Delete"]')
+  await p.clickText('Delete', { selector: '[role=dialog] button' })
+  await p.waitFor(`document.querySelector('[data-rate-source="fed"]') === null`, 10000, 'the Fed deleted')
+  check('a bank not in use can be deleted', (await p.engine('rates.sources')).length === 2)
   // A new line: a choice among the central banks not in the table yet (the US Federal Reserve), with its address.
   await p.clickText('Add bank', { selector: 'main button' })
   await p.waitFor(`document.querySelector('[data-new-rate-source] [data-field=url]') !== null`, 5000, 'new line')
@@ -874,9 +890,10 @@ try {
   await p.clickText('European Central Bank', { selector: '[role=option]' })
   await p.waitFor(`document.querySelector('main [data-rates-error]') === null`, 90000, 'the good source checked')
   check('a good source: chosen silently', !(await p.eval(`[...document.querySelectorAll('.MuiSnackbar-root')].some(x => /rates/i.test(x.innerText))`)) && (await p.engine('rates.status')).error === null)
+  // Its own address back: its rates again.
   const fed = (await p.engine('rates.sources')).find((x) => x.format === 'fed')
-  await p.engine('rates.removeSource', { id: fed.id })
-  check('a bank not in use can be deleted', (await p.engine('rates.sources')).length === 2)
+  await p.engine('rates.saveSource', { id: fed.id, url: 'https://www.federalreserve.gov/datadownload/Output.aspx?rel=H10&series=60f32914ab61dfab590e0e470153e3ae&lastobs=5000&from=&to=&filetype=csv&label=include&layout=seriescolumn&type=package' })
+  check('the US Federal Reserve with its own address: its rates again', (await p.engine('rates.update', { id: fed.id })).error === null)
   // The display currency changes every amount: every bank in euros, the Canadian ones converted.
   await p.engine('settings.set', { key: 'currency', value: 'EUR' })
   const octEur = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })

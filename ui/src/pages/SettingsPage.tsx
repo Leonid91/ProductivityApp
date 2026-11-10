@@ -173,6 +173,11 @@ const quietDelete = {
  * wrong shows under the address), and what its last download holds: the number of currencies and the last day of
  * rates, read from the data itself (nothing is shown without it). A new line is one of the central banks the app reads.
  */
+/** The first line of every cell of a line of banks: the same height, its content centred on it, so the round button, the
+ * texts, the address and the delete icon share one middle (what shows under the address only adds lines below). */
+const RATES_LINE = 32
+const ratesLine = { height: RATES_LINE, display: 'flex', alignItems: 'center' } as const
+
 function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
   rates: ReturnType<typeof useRateSources>
   adding: boolean
@@ -237,11 +242,13 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
               const error = refused[s.id] ?? (busy ? null : s.error)
               return (
                 <TableRow key={s.id} data-rate-source={s.id} data-in-use={s.inUse || undefined}
-                  sx={{ bgcolor: s.inUse ? inUseTint : undefined, transition: 'background-color 160ms', verticalAlign: 'top', '& td': { py: 1.25 } }}>
-                  <TableCell padding="checkbox" sx={{ pt: '6px !important' }}>
-                    <Radio size="small" checked={s.inUse} onChange={() => void choose(s.id, sources)} slotProps={{ input: { 'aria-label': `Use the rates of the ${s.name}` } }} />
+                  sx={{ bgcolor: s.inUse ? inUseTint : undefined, transition: 'background-color 160ms', verticalAlign: 'top', '& td, & td.MuiTableCell-paddingCheckbox': { py: 1.25 } }}>
+                  <TableCell padding="checkbox">
+                    <Box sx={{ ...ratesLine, justifyContent: 'center' }}>
+                      <Radio size="small" checked={s.inUse} onChange={() => void choose(s.id, sources)} slotProps={{ input: { 'aria-label': `Use the rates of the ${s.name}` } }} />
+                    </Box>
                   </TableCell>
-                  <TableCell sx={{ pt: '13px !important', fontWeight: s.inUse ? 650 : 520 }}>{s.name}</TableCell>
+                  <TableCell sx={{ fontWeight: s.inUse ? 650 : 520 }}><Box sx={ratesLine}>{s.name}</Box></TableCell>
                   <TableCell>
                     <InputBase
                       key={s.url}
@@ -250,14 +257,15 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
                       inputProps={{ 'aria-label': `Address of the rates file of the ${s.name}`, 'data-field': 'url', spellCheck: false }}
                       onBlur={(e) => { const v = e.target.value.trim(); if (v !== s.url) void save({ id: s.id, url: v }) }}
                       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                      sx={{ ...inlineInput, fontSize: 13, fontWeight: 450, width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', '& input': { textOverflow: 'ellipsis' } }}
+                      sx={{ ...inlineInput, height: RATES_LINE, fontSize: 13, fontWeight: 450, width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', '& input': { textOverflow: 'ellipsis' } }}
                     />
                     {busy && <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}><CircularProgress size={12} />Downloading</Typography>}
                     {error && <Box sx={{ mt: 0.5 }}><RatesError message={error} /></Box>}
                   </TableCell>
-                  <TableCell align="right" className="tnum" data-currencies sx={{ pt: '13px !important' }}>{s.currencies > 0 ? s.currencies : ''}</TableCell>
-                  <TableCell className="tnum" data-latest sx={{ pt: '13px !important', pl: 3, whiteSpace: 'nowrap' }}>{s.latest ? formatDate(s.latest, settings.dateFormat) : ''}</TableCell>
-                  <TableCell padding="checkbox" sx={{ pt: '6px !important' }}>
+                  <TableCell align="right" className="tnum" data-currencies><Box sx={{ ...ratesLine, justifyContent: 'flex-end' }}>{s.currencies > 0 ? s.currencies : ''}</Box></TableCell>
+                  <TableCell className="tnum" data-latest sx={{ pl: 3, whiteSpace: 'nowrap' }}><Box sx={ratesLine}>{s.latest ? formatDate(s.latest, settings.dateFormat) : ''}</Box></TableCell>
+                  <TableCell padding="checkbox">
+                    <Box sx={{ ...ratesLine, justifyContent: 'center' }}>
                     {!s.inUse && (
                       <IconButton size="small" disableRipple aria-label={`Delete the ${s.name}`} sx={quietDelete} onClick={() => confirm({
                         title: `Delete the ${s.name}?`,
@@ -267,6 +275,7 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
                         <DeleteOutline fontSize="small" />
                       </IconButton>
                     )}
+                    </Box>
                   </TableCell>
                 </TableRow>
               )

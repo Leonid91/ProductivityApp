@@ -31,9 +31,10 @@ public sealed record RateSource(string Id, string Name, string Url, string? Base
 {
     public static readonly RateSource Ecb = From(CentralBank.Ecb, "ecb");
     public static readonly RateSource BankOfCanada = From(CentralBank.BankOfCanada, "boc");
+    public static readonly RateSource FederalReserve = From(CentralBank.FederalReserve, "fed");
 
     public static RateSource From(CentralBank bank, string id) => new(id, bank.Name, bank.DefaultUrl, bank.Currency, bank.Format);
 
     /// <summary>The sources every new database starts with.</summary>
-    public static readonly IReadOnlyList<RateSource> Defaults = [Ecb, BankOfCanada];
+    public static readonly IReadOnlyList<RateSource> Defaults = [Ecb, BankOfCanada, FederalReserve];
 }

@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 14;
+    private const int SchemaVersion = 15;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -191,6 +191,17 @@ public sealed class Database : IDisposable
                 UPDATE rate_sets SET fetched = (SELECT substr(value, 1, 10) FROM settings WHERE key = 'rates.' || rate_sets.source || '.updatedAt') WHERE slot = 0;
                 PRAGMA user_version = 14;
                 """);
+        }
+        if (version < 15)
+        {
+            // The US Federal Reserve joins the central banks every database has, after the ones already defined.
+            var fed = RateSource.FederalReserve;
+            Exec("""
+                INSERT INTO rate_sources(id, name, url, base, position, format)
+                SELECT $i, $n, $u, $b, COALESCE((SELECT MAX(position) + 1 FROM rate_sources), 0), $f
+                WHERE NOT EXISTS (SELECT 1 FROM rate_sources WHERE format = $f OR id = $i)
+                """, ("$i", fed.Id), ("$n", fed.Name), ("$u", fed.Url), ("$b", fed.Base), ("$f", fed.Format));
+            Exec("PRAGMA user_version = 15;");
         }
     }
 

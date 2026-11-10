@@ -523,3 +523,15 @@ real app with `tools/e2e/perf.mjs`.
 - Summary to Statements: the screen froze 1.2 s (one frame, 1 fps), now 0.14 s (longest frame 7 fps); Summary to
   Analytics 1.1 s, now 0.11 s. The period at the top of the screen changes view at once, the others one per frame
   (the screen stays at about 240 fps meanwhile).
+
+## November 10th, 2026 - The US Federal Reserve to start with; bank lines aligned - Commit 23
+
+### Added
+- The US Federal Reserve is one of the central banks every database starts with, after the European Central Bank and
+  the Bank of Canada; a database made before gets it at its next opening, after its own banks. Its rates are
+  downloaded by themselves like the others'.
+
+### Changed
+- Definitions > Exchange rates: the round button, the bank's name, the address, the numbers and the delete icon of a
+  line share one middle (the button cells had lost the line's top padding); what shows under an address only adds
+  lines below.

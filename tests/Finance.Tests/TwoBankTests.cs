@@ -4,6 +4,7 @@ using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Parsing;
 using ProductivityApp.Finance.Reports;
 using ProductivityApp.Finance.Services;
+using ProductivityApp.Finance.Storage;
 using ProductivityApp.Finance.Testing;
 
 namespace ProductivityApp.Finance.Tests;
@@ -141,9 +142,7 @@ public class TwoBankTests
         Assert.Equal("2025-10-10=0.8333333333;2025-10-08=0.8;", series["EUR"]);
         Assert.Equal("2025-10-10=1.3900;2025-10-09=1.4100;2025-10-08=1.4000;", series["CAD"]);
         var rates = new ExchangeRates(s.Db, () => "fed");
-        var fed = rates.SaveSource(null, "fed", CentralBank.FederalReserve.DefaultUrl);
-        rates = new ExchangeRates(s.Db, () => fed.Id);
-        rates.Save(fed, series);
+        rates.Save(RateSource.FederalReserve, series);
         // 100 EUR on 10 October: 120 USD, then 166.80 CAD through the dollar (100 x 1.39 / 0.8333...).
         Assert.Equal(120.00m, rates.Convert(100m, "EUR", "USD", new DateOnly(2025, 10, 10))!.Amount);
         Assert.Equal(166.80m, rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
@@ -152,13 +151,18 @@ public class TwoBankTests
     }
 
     [Fact]
-    public void The_sources_are_a_table_of_the_central_banks_the_app_reads_starting_with_two()
+    public void The_sources_are_a_table_of_the_central_banks_the_app_reads_starting_with_all_three()
     {
         using var s = new TempStore();
         var rates = new ExchangeRates(s.Db);
-        Assert.Equal(["European Central Bank", "Bank of Canada"], rates.Sources().Select(x => x.Name));
-        Assert.Equal(["ecb", "boc"], rates.Sources().Select(x => x.Format));
-        // A new line is one of the banks of the list, once: the US Federal Reserve, with its own address to start with.
+        Assert.Equal(["European Central Bank", "Bank of Canada", "US Federal Reserve"], rates.Sources().Select(x => x.Name));
+        Assert.Equal(["ecb", "boc", "fed"], rates.Sources().Select(x => x.Format));
+        Assert.Equal(CentralBank.FederalReserve.DefaultUrl, rates.Sources()[2].Url);
+        // A bank is in the table once; deleted, it can be added again: a new line is one of the banks of the list,
+        // with its own address to start with.
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "fed", CentralBank.FederalReserve.DefaultUrl));
+        rates.RemoveSource("fed");
+        Assert.Equal(2, rates.Sources().Count);
         Assert.Equal(["European Central Bank", "Bank of Canada", "US Federal Reserve"], CentralBank.All.Select(b => b.Name));
         var fed = rates.SaveSource(null, "fed", " " + CentralBank.FederalReserve.DefaultUrl + " ");
         Assert.Equal(("US Federal Reserve", "USD", CentralBank.FederalReserve.DefaultUrl), (fed.Name, fed.Base, fed.Url));
@@ -250,11 +254,34 @@ public class TwoBankTests
     }
 
     [Fact]
+    public void A_database_made_before_gets_the_US_Federal_Reserve_after_its_own_banks()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "finances-tests-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "test.db");
+        try
+        {
+            new Database(path).Dispose();
+            using (var cn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                cn.Open();
+                using var cmd = cn.CreateCommand();
+                cmd.CommandText = "DELETE FROM rate_sources WHERE id = 'fed'; UPDATE rate_sources SET position = 5 WHERE id = 'ecb'; PRAGMA user_version = 14;";
+                cmd.ExecuteNonQuery();
+            }
+            using (var db = new Database(path))
+                Assert.Equal(["boc", "ecb", "fed"], new ExchangeRates(db).Sources().Select(x => x.Id));
+            // Opened again: still once.
+            using (var db = new Database(path))
+                Assert.Single(new ExchangeRates(db).Sources(), x => x.Format == "fed");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
     public async Task Refreshing_downloads_every_bank_of_the_table_once_a_day_or_on_demand()
     {
         using var s = new TempStore();
         var rates = new ExchangeRates(s.Db);
-        rates.SaveSource(null, "fed", CentralBank.FederalReserve.DefaultUrl);
         var answer = new Answer(HttpStatusCode.OK, [], new()
         {
             ["www.ecb.europa.eu"] = Utf8(Rates), ["www.bankofcanada.ca"] = Utf8(BankOfCanada), ["www.federalreserve.gov"] = Utf8(FederalReserve),
