@@ -11,7 +11,7 @@ import { CategoryIcon } from '../components/CategoryIcon'
 import { ConfirmDialog, SectionCard, useCategoryColor, useCategorySections } from '../components/common'
 import { useRowOrder, type TreeEntry } from '../components/order'
 import { TagSelect } from '../components/tags'
-import { RowActions } from '../components/RowActions'
+import { RowActions, quietEdit } from '../components/RowActions'
 
 export const palette = ['#e53935', '#d81b60', '#8e24aa', '#5e35b1', '#3949ab', '#1e88e5', '#0288d1', '#00897b', '#43a047', '#689f38', '#afb42b', '#f9a825', '#fb8c00', '#f4511e', '#6d4c41', '#757575']
 
@@ -146,19 +146,22 @@ export function CategoriesPanel() {
                 <TableCell colSpan={2} data-section-label={kind} sx={{ pt: 2.5 }}>
                   <KindHeading kind={kind} label={label} />
                 </TableCell>
-                <TableCell padding="none" align="right" sx={{ pt: 2.5, pr: 1 }}>
-                  <Tooltip title={`New category in ${label}`}>
-                    <IconButton size="small" aria-label={`New category in ${label}`} data-add-kind={kind} onClick={() => setEditing({ id: null, name: '', parentId: null, kind, color: null })}>
-                      <Add fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
+                <TableCell padding="none" align="right" sx={{ pt: 2.5, pr: 0.5 }}>
+                  {/* In the column of the lines' +, the pencils' and delete buttons' places kept empty. */}
+                  <RowActions only>
+                    <Tooltip title={`New category in ${label}`}>
+                      <IconButton size="small" disableRipple aria-label={`New category in ${label}`} data-add-kind={kind} onClick={() => setEditing({ id: null, name: '', parentId: null, kind, color: null })} sx={quietEdit}>
+                        <Add fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </RowActions>
                 </TableCell>
               </TableRow>,
               ...order.rows.filter((e) => test(e.root)).map((e) => {
                 const { c, depth } = e
                 const color = colorOf(c)
                 return (
-                  <TableRow key={c.id} hover data-category={c.name} {...order.rowProps(e)} sx={{ '&:hover .row-action': { opacity: 1 } }}>
+                  <TableRow key={c.id} hover data-category={c.name} {...order.rowProps(e)}>
                     {order.handle(e)}
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, pl: depth * 3 }}>
@@ -176,7 +179,7 @@ export function CategoriesPanel() {
                         canDelete={!c.builtIn}
                       >
                         <Tooltip title="Add a subcategory">
-                          <IconButton className="row-action" size="small" aria-label="Add a subcategory" onClick={() => setEditing({ id: null, name: '', parentId: c.id, kind: c.kind, color: null })} sx={{ opacity: 0 }}>
+                          <IconButton size="small" disableRipple aria-label="Add a subcategory" onClick={() => setEditing({ id: null, name: '', parentId: c.id, kind: c.kind, color: null })} sx={quietEdit}>
                             <Add fontSize="small" />
                           </IconButton>
                         </Tooltip>

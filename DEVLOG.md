@@ -604,3 +604,9 @@ real app with `tools/e2e/perf.mjs`.
 - Each holiday calendar is checked on its own: checking Québec no longer checks Canada, unchecking Canada no longer
   unchecks Québec.
 - The pencils of operations, transfers, categories and tags no longer appear only under the mouse.
+
+## November 10th, 2026 - The + of the categories always shown, under the one of its heading - Commit 27
+
+### Changed
+- Definitions > Categories: the + of each line (a subcategory) is always shown, like the pencil, in the column of the
+  + of its heading (a new category of the kind).

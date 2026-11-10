@@ -26,27 +26,33 @@ export const ROW_EDIT_WIDTH = 48
  * deletes) the delete button, last. Both always shown. A line that cannot be deleted keeps the delete button's place
  * empty, so every pencil of the table stays in one column. Other actions of the line come before the pencil.
  */
-export function RowActions({ onEdit, editLabel = 'Edit', onDelete, deleteLabel = 'Delete', canDelete = true, deleteIcon, children }: {
-  onEdit: () => void
+export function RowActions({ onEdit, editLabel = 'Edit', onDelete, deleteLabel = 'Delete', canDelete = true, deleteIcon, only = false, children }: {
+  onEdit?: () => void
   editLabel?: string
   /** Given in a table that deletes lines. */
   onDelete?: () => void
   deleteLabel?: string
   canDelete?: boolean
   deleteIcon?: React.ReactNode
+  /** Only the other actions, the pencil's and the delete button's places kept empty: a heading's actions, aligned with its lines'. */
+  only?: boolean
   children?: React.ReactNode
 }) {
   return (
     <Box data-row-actions sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.25, verticalAlign: 'middle' }}>
       {children}
-      <Tooltip title={editLabel} enterDelay={600}>
-        <IconButton size="small" disableRipple aria-label={editLabel} data-row-edit onClick={onEdit} sx={quietEdit}>
-          <EditOutlined sx={{ fontSize: 18 }} />
-        </IconButton>
-      </Tooltip>
-      {onDelete && (
+      {only ? (
+        <IconButton size="small" aria-hidden tabIndex={-1} sx={{ ...quietEdit, visibility: 'hidden' }}><EditOutlined sx={{ fontSize: 18 }} /></IconButton>
+      ) : (
+        <Tooltip title={editLabel} enterDelay={600}>
+          <IconButton size="small" disableRipple aria-label={editLabel} data-row-edit onClick={onEdit} sx={quietEdit}>
+            <EditOutlined sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+      )}
+      {(onDelete || only) && (
         <Box sx={{ width: 34, display: 'flex', justifyContent: 'center' }}>
-          {canDelete && (
+          {!only && canDelete && (
             <Tooltip title={deleteLabel} enterDelay={600}>
               <IconButton size="small" disableRipple aria-label={deleteLabel} data-row-delete onClick={onDelete} sx={quietDelete}>
                 {deleteIcon ?? <DeleteOutline fontSize="small" />}

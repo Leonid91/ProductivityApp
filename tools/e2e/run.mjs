@@ -1361,7 +1361,7 @@ try {
 
   // Every table: a pencil at the far right of each line, always shown; in a table that deletes, the delete button after
   // it, last.
-  const pencils = () => p.eval(`[...document.querySelectorAll('main table tbody tr')].filter(r => r.querySelector('[data-row-actions]')).map(r => {
+  const pencils = () => p.eval(`[...document.querySelectorAll('main table tbody tr')].filter(r => r.querySelector('[data-row-edit]')).map(r => {
     const buttons = [...r.querySelectorAll('button')].filter(b => b.getBoundingClientRect().width > 0)
     const edit = r.querySelector('[data-row-edit]'), del = r.querySelector('[data-row-delete]')
     const right = Math.max(...buttons.map(b => b.getBoundingClientRect().right))
