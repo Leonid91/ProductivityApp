@@ -116,6 +116,13 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                     <Typography variant="body2" noWrap title={tx?.rawLabel ?? m.label}>{m.label}</Typography>
                   </Box>
+                  {/* An international transfer: each side in its own currency, and what the banks kept. */}
+                  {m.sent != null && m.sentCurrency && m.received != null && m.receivedCurrency && (
+                    <Typography data-international variant="caption" color="text.secondary" className="tnum" sx={{ display: 'block' }}>
+                      {money(m.sent, m.sentCurrency)} sent, {money(m.received, m.receivedCurrency)} received
+                      {m.lost != null && <>, {money(m.lost, currency)} lost to exchange and fees</>}
+                    </Typography>
+                  )}
                 </TableCell>
                 <TableCell>{place(m.from, m.fromOutside, m.fromType)}</TableCell>
                 <TableCell padding="none"><East sx={{ fontSize: 16, color: 'text.disabled', display: 'block' }} /></TableCell>

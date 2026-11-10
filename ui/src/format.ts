@@ -32,8 +32,11 @@ export function formatDate(isoDate: string, format: string): string {
   }
 }
 
-/** Example shown next to each format in the menu. */
-export const formatExample = (format: string) => formatDate('2025-10-03', format)
+/** Example shown for each format in the menus: today's date (the computer's own day), or the format itself when it cannot be known. */
+export const formatExample = (format: string) => {
+  const d = new Date()
+  return Number.isNaN(d.getTime()) ? format.replace('month', 'Month') : formatDate(iso(d.getFullYear(), d.getMonth() + 1, d.getDate()), format)
+}
 
 const moneyFormats = new Map<string, Intl.NumberFormat>()
 

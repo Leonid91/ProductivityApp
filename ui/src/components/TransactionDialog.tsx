@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Autocomplete, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment, ListItemIcon, ListItemText, ListSubheader,
+  Alert, Autocomplete, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment,
   MenuItem, TextField, ToggleButton, ToggleButtonGroup,
 } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
@@ -8,8 +8,7 @@ import dayjs, { type Dayjs } from 'dayjs'
 import { api, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { today } from '../format'
-import { CategoryIcon } from './CategoryIcon'
-import { ConfirmDialog, useCategoryColor, useCategorySections } from './common'
+import { CategorySelect, ConfirmDialog } from './common'
 
 export const pickerFormats: Record<string, string> = {
   'DD month YYYY': 'DD MMMM YYYY', 'YYYY-MM-DD': 'YYYY-MM-DD', 'DD-MM-YYYY': 'DD-MM-YYYY', 'DD/MM/YYYY': 'DD/MM/YYYY', 'MM/DD/YYYY': 'MM/DD/YYYY',
@@ -23,9 +22,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
   defaultDate?: string
   onClose: () => void
 }) {
-  const { tree, accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
-  const colorOf = useCategoryColor()
-  const categorySections = useCategorySections()
+  const { accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
   const [date, setDate] = useState<Dayjs | null>(dayjs())
   const [direction, setDirection] = useState<'out' | 'in'>('out')
   const [amount, setAmount] = useState('')
@@ -65,6 +62,19 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
 
   const value = Number(amount.replace(',', '.'))
   const valid = date?.isValid() && Number.isFinite(value) && value > 0 && brand.trim().length > 0 && accountId !== ''
+
+  // Exactly the same operation already that day (same amount, brand and account): said while typing, never refused
+  // (two identical coffees in a day happen).
+  const [same, setSame] = useState(0)
+  const signed = Math.round(value * 100) / 100 * (direction === 'out' ? -1 : 1)
+  const day = date?.isValid() ? date.format('YYYY-MM-DD') : null
+  useEffect(() => {
+    if (!open || !valid || !day) { setSame(0); return }
+    let live = true
+    const t = setTimeout(() => api.tx.sameOnDay(day, signed, brand.trim(), accountId, tx?.id ?? null)
+      .then((r) => { if (live) setSame(r.count) }, () => undefined), 250)
+    return () => { live = false; clearTimeout(t) }
+  }, [open, valid, day, signed, brand, accountId, tx])
 
 
   // Money coming back from an investment (or a transfer in): the person may say how much of it was gain.
@@ -138,29 +148,7 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
           onInputChange={(_, v) => setBrand(v)}
           renderInput={(p) => <TextField {...p} label="Brand Name" />}
         />
-        <TextField
-          select
-          label="Category"
-          value={categoryId}
-          onChange={(e) => setCategoryId(e.target.value)}
-          // A category's colour shows everywhere, here too: the chosen value and every item.
-          slotProps={{ select: { sx: colorOf(category(categoryId)) ? { color: colorOf(category(categoryId)), fontWeight: 600, '& .MuiListItemIcon-root': { color: colorOf(category(categoryId)) } } : undefined } }}
-        >
-          {categorySections.flatMap(([, label, test]) => [
-            <ListSubheader key={label} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</ListSubheader>,
-            ...tree.filter((e) => test(e.root)).map(({ c, depth }) => {
-              const color = colorOf(c)
-              return (
-                <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + depth * 2.25, ...(color ? { color, fontWeight: 600 } : {}) }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <ListItemIcon sx={{ minWidth: 32, color: color ?? undefined }}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
-                    <ListItemText slotProps={{ primary: { sx: color ? { color, fontWeight: 600 } : undefined } }}>{c.name}</ListItemText>
-                  </Box>
-                </MenuItem>
-              )
-            }),
-          ])}
-        </TextField>
+        <CategorySelect value={categoryId} onChange={setCategoryId} />
         <TextField select label="Account" value={accountId} error={accountId === ''} onChange={(e) => setAccountId(Number(e.target.value))}>
           {accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name} · {banks.find((b) => b.id === a.bankId)?.name}</MenuItem>)}
         </TextField>
@@ -172,10 +160,15 @@ export function TransactionDialog({ open, tx, brands, defaultDate, onClose }: {
             onChange={(e) => setEarned(e.target.value.replace(/[^\d.,]/g, ''))}
             error={!earnedValid}
             helperText={earnedValid
-              ? 'Only this part counts as income; the rest is your own money coming back. Leave empty if you do not know: nothing is guessed.'
+              ? 'Only this part counts as income. The rest is your own money coming back. Leave empty if you do not know: nothing is guessed.'
               : 'Between 0 and the amount received.'}
             slotProps={{ input: { className: 'tnum' }, htmlInput: { inputMode: 'decimal' } }}
           />
+        )}
+        {same > 0 && (
+          <Alert data-same-operation severity="warning" variant="outlined" sx={{ py: 0 }}>
+            {same === 1 ? 'The same operation is already on this day.' : `The same operation is already ${same} times on this day.`}
+          </Alert>
         )}
         <TextField label="Note" value={note} onChange={(e) => setNote(e.target.value)} multiline minRows={1} maxRows={4} />
       </DialogContent>

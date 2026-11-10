@@ -16,7 +16,13 @@ mkdirSync(reports, { recursive: true })
 
 const checks = []
 const check = (name, ok, detail = '') => { checks.push({ name, ok: !!ok, detail }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`) }
-const shot = (p, name) => p.shot(join(out, name))
+// Every screen photographed is also read: no phrase of the interface is joined to the next by a semicolon.
+const semicolons = []
+const shot = async (p, name) => {
+  const text = await p.eval(`document.body.innerText`).catch(() => '')
+  for (const m of String(text).matchAll(/[A-Za-z0-9)]; [A-Za-z]/g)) semicolons.push(`${name}: ${String(text).slice(Math.max(0, m.index - 30), m.index + 30).replace(/\s+/g, ' ')}`)
+  return p.shot(join(out, name))
+}
 const text = (p) => p.eval('document.body.innerText')
 
 const p = await launch(exe, ['--offscreen', '--data-dir', data, '--size', '1440x920'], 9333)
@@ -565,7 +571,7 @@ try {
   check('first level only (default): Food in the charts, not the categories in it', firstLevel.pie.includes('Food (test)') && !firstLevel.pie.some((n) => leafNames.includes(n))
     && firstLevel.lines.includes(catId('Food (test)')) && !firstLevel.lines.includes('groceries') && !firstLevel.lines.includes(catId('Nested 4')), firstLevel.pie.join(', '))
   // The setting, in Settings > Display > Periods: on by default; off, the charts go down to every nested category.
-  const firstLevelSwitch = `document.querySelector('[aria-label="Show only first level categories in charts"]')`
+  const firstLevelSwitch = `document.querySelector('[aria-label="Expenses per category charts: main categories only"]')`
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('General', { selector: 'button' })
   await p.waitFor(`${firstLevelSwitch} !== null`, 5000, 'first level setting')
@@ -833,7 +839,7 @@ try {
   })()`)
   check('Display: global currency and exchange rates as rows, values aligned with the date format', display.map((r) => r.label).join() === 'Global display currency,Exchange rates,Date format'
     && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[1].value === 'Bank of Canada'
-    && (await p.eval(`document.querySelector('[data-rates-link]')?.innerText`)) === 'Edit banks', JSON.stringify(display))
+    && (await p.eval(`document.querySelector('[data-rates-link]')?.innerText`)) === 'Select source', JSON.stringify(display))
   await shot(p, '24c-display-settings.png')
   check('the Bank of Canada by default, rates against CAD', oct.conversion.source === 'Bank of Canada' && oct.conversion.base === 'CAD')
   await p.engine('settings.set', { key: 'ratesSource', value: 'ecb' })
@@ -1266,7 +1272,26 @@ try {
   await sleep(500)
   await shot(p, '16-add-operation.png')
   check('a new operation goes in an account of a bank', await p.eval(`(() => { const d = document.querySelector('[role=dialog]'); return !d.innerText.includes('Cash & manual') && [...d.querySelectorAll('[role=combobox]')].some(c => c.innerText.includes(' · ')) })()`))
+  // Entering exactly an operation the day already has: said while typing, not refused (two coffees happen).
+  const firstAccount = (await p.engine('accounts.list'))[0]
+  const todayIso = new Date().toLocaleDateString('en-CA')
+  const coffee = await p.engine('tx.create', { input: { date: todayIso, amount: -4.75, brand: 'E2E Coffee', categoryId: 'restaurants', accountId: firstAccount.id, note: null } })
+  const typeIn = async (selector, value) => {
+    await p.eval(`(() => { const i = document.querySelector('${selector}'); i.focus(); i.select() })()`)
+    await p.send('Input.insertText', { text: value })
+    await sleep(150)
+  }
+  await p.eval(`(() => { const d = document.querySelector('[role=dialog]'); const sel = [...d.querySelectorAll('[role=combobox]')].find(c => c.innerText.includes(' · ')); return !!sel })()`)
+  await typeIn('[role=dialog] input[inputmode=decimal]', '4.75')
+  await typeIn('[role=dialog] .MuiAutocomplete-root input', 'E2E Coffee')
+  await p.eval(`document.activeElement.blur()`)
+  const sameShown = await p.waitFor(`document.querySelector('[data-same-operation]') !== null`, 5000, 'same operation warning').then(() => true, () => false)
+  await shot(p, '16b-same-operation-warning.png')
+  const addEnabled = await p.eval(`[...document.querySelectorAll('[role=dialog] button')].find(b => b.innerText === 'Add')?.disabled === false`)
+  check('the same operation on the same day: a warning while typing, adding still possible', sameShown && addEnabled
+    && (await p.eval(`document.querySelector('[data-same-operation]')?.innerText`)) === 'The same operation is already on this day.', `${sameShown} ${addEnabled}`)
   await p.clickText('Cancel', { selector: '[role=dialog] button' })
+  await p.engine('tx.delete', { id: coffee.id })
 
   // calendar, settings
   await p.clickText('Calendar', { selector: 'nav button' })
@@ -1312,6 +1337,11 @@ try {
   await shot(p, '19f-account-added.png')
   await p.clickText('Definitions', { selector: 'button' })
   check('definitions in order Bank, Exchange rates, Brands, Categories, Tags, Holidays', (await p.eval(`[...document.querySelectorAll('main [role=group]')][1].innerText`)).split(/\s+/).join(' ') === 'Bank Exchange rates Brands Categories Tags Holidays')
+  // One brand learned for three statement wordings (three operations renamed to it by hand).
+  const relabel = (await p.engine('periods.report', { from: '2025-08-01', to: '2025-12-31', granularity: 'range' })).banks
+    .flatMap((b) => b.summary.transactions).filter((t) => t.amount < 0 && t.rawLabel && t.categoryId !== 'transfers')
+  const distinct = [...new Map(relabel.map((t) => [t.rawLabel.split(' ')[0], t])).values()].slice(0, 3)
+  for (const t of distinct) await p.engine('tx.setBrand', { id: t.id, brand: 'Voyages Exemple' })
   await p.clickText('Brands', { selector: 'main button' })
   await sleep(1000)
   await shot(p, '18-brands.png')
@@ -1320,6 +1350,12 @@ try {
   check('each learned brand listed once', !learnedText.includes('Every operation of this brand') && new Set(learnedBrands).size === learnedBrands.length, learnedBrands.join(', '))
   const wordings = await p.eval(`[...document.querySelectorAll('[data-learned] tbody tr')].map(r => r.children[1].innerText.trim())`)
   check('every learned correction shows its statement wordings', wordings.every((w) => w.length > 1 && w !== '—'), wordings.join(' | '))
+  // The wordings one after the other, comma-separated, a line breaking only between two of them.
+  await p.eval(`document.querySelector('[data-learned]').scrollIntoView({ block: 'center' })`)
+  await sleep(400)
+  await shot(p, '18b-learned-wordings.png')
+  const wordingCells = await p.eval(`[...document.querySelectorAll('[data-learned] [data-wordings]')].map(c => ({ text: c.innerText, parts: [...c.children].map(x => getComputedStyle(x).whiteSpace) }))`)
+  check('learned wordings: comma-separated, each kept whole on its line', wordingCells.length > 0 && wordingCells.every((c) => c.parts.every((w) => w === 'nowrap') && (c.parts.length < 2 || c.text.includes(', '))), JSON.stringify(wordingCells.slice(0, 3)))
   await p.clickText('Bank', { selector: 'button' })
   await sleep(600)
   await shot(p, '19c-settings-banks.png')
@@ -1436,6 +1472,10 @@ try {
   await definition('Brands')(); await sleep(800)
   await p.eval(`[...document.querySelectorAll('main table tbody tr')].find(r => r.querySelector('[data-row-edit]')?.getAttribute('aria-label') === ${JSON.stringify('Edit ' + brandBefore.brand)}).querySelector('[data-row-edit]').click()`)
   await p.waitFor(`document.querySelector('[data-brand-dialog] [data-field=name]') !== null`, 5000, 'brand dialog')
+  await sleep(300)
+  await shot(p, '25b-brand-dialog.png')
+  check('the brand dialog: brand and category as the same kind of field (a brand list, a category list)', await p.eval(`(() => { const d = document.querySelector('[data-brand-dialog]'); return !!d.querySelector('.MuiAutocomplete-root input[data-field=name]') && d.querySelectorAll('.MuiOutlinedInput-root').length === 2 && /Brand Name/.test(d.innerText) && /Category/.test(d.innerText) && !d.querySelector('.MuiChip-root') })()`),
+    await p.eval(`(() => { const d = document.querySelector('[data-brand-dialog]'); return JSON.stringify({ auto: !!d.querySelector('.MuiAutocomplete-root input[data-field=name]'), outlined: d.querySelectorAll('.MuiOutlinedInput-root').length, labels: [...d.querySelectorAll('label')].map(l => l.textContent.trim()), chips: d.querySelectorAll('.MuiChip-root').length }) })()`))
   await typeInto('[data-brand-dialog] [data-field="name"]', brandBefore.brand + ' Renamed')
   await p.clickText('Save', { selector: '[data-brand-dialog] button' })
   await p.waitFor(`document.querySelector('[data-brand-dialog]') === null`, 10000, 'brand saved')
@@ -1468,6 +1508,74 @@ try {
     && afterMove.conversion.lines.length > 0 && afterMove.conversion.lines.every((l) => l.unconverted === 0) && afterMove.businessDays === 22, `${afterMove.businessDays} business days`)
   await p.engine('data.moveDatabase', { folder: data })
 
+  // ---- Four banks in three currencies, Wise between them (October 2026): every statement imported into a new account
+  // at its bank; transfers into Wise, between its currencies and out of it, inside each bank, and from France to Canada
+  // directly are one movement each; the money moved drawn readable, the month and the year.
+  const fourDir = join(samples, 'four banks')
+  const fourList = JSON.parse(readFileSync(join(fourDir, 'accounts.json'), 'utf8'))
+  const camel = (v) => v[0].toLowerCase() + v.slice(1)
+  const bankIdOf = {}
+  for (const b of await p.engine('banks.list')) bankIdOf[b.name] = b.id
+  for (const f of fourList) {
+    if (!bankIdOf[f.bank]) {
+      const banks = await p.engine('banks.save', { bank: { id: 0, name: f.bank, country: f.country, system: camel(f.system), currency: f.currency } })
+      bankIdOf[f.bank] = banks.find((b) => b.name === f.bank).id
+    }
+    const draft = await p.engine('import.parseBytes', { name: f.file, base64: readFileSync(join(fourDir, f.file)).toString('base64') })
+    await p.engine('import.choose', { draftId: draft.id, kind: camel(f.kind), bankId: bankIdOf[f.bank] })
+    await p.engine('import.commit', { draftId: draft.id, newAccountName: f.account, currency: f.currency, kind: camel(f.kind), bankId: bankIdOf[f.bank] })
+  }
+  const fourOct = await p.engine('periods.report', { from: '2026-10-01', to: '2026-10-31', granularity: 'month' })
+  const moves = fourOct.global.movements
+  const fourMoved = (from, to) => moves.some((m) => m.from === from && m.to === to)
+  check('four banks with Wise: into Wise, between its currencies, out of it, and from France to Canada directly, each one movement',
+    fourMoved('Northwind chequing', 'Wise CAD') && fourMoved('Wise CAD', 'Wise EUR') && fourMoved('Wise EUR', 'Compte courant') && fourMoved('Contoso checking', 'Wise USD')
+    && fourMoved('Wise USD', 'Wise CAD') && fourMoved('Compte courant', 'Northwind chequing') && fourMoved('Northwind chequing', 'Northwind savings') && fourMoved('Compte courant', 'Livret A'),
+    moves.map((m) => `${m.from} > ${m.to}`).join(' | '))
+  const direct = moves.find((m) => m.from === 'Compte courant' && m.to === 'Northwind chequing')
+  check('an international transfer: each side in its own currency, what the banks kept in the display currency', direct?.sent === 820 && direct?.sentCurrency === 'EUR'
+    && direct?.received === 1296.26 && direct?.receivedCurrency === 'CAD' && direct?.lost > 0 && direct?.lost < 40, JSON.stringify(direct))
+  check('four banks: the diagram has each bank holding its accounts, investments outside', fourOct.global.diagram.banks.length === 4
+    && fourOct.global.diagram.nodes.filter((n) => !n.outside).length === 11 && fourOct.global.diagram.nodes.some((n) => n.outside), fourOct.global.diagram.banks.map((b) => b.name).join(', '))
+  // Seen in the app, the month and the year.
+  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Month', { selector: 'button' })
+  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  const fourSec = 'section[data-period="2026-10-01"]'
+  await p.waitFor(`document.querySelector('${fourSec}') !== null`, 20000, 'October 2026')
+  await p.eval(`document.querySelector('${fourSec}').scrollIntoView({ block: 'start' })`)
+  await p.waitFor(`document.querySelector('${fourSec} [data-flow-card] [data-flowchart]') !== null`, 30000, 'four banks money moved')
+  await p.eval(`(() => { const f = document.querySelector('${fourSec} [data-flow-card]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
+  await sleep(900)
+  await shot(p, '25a-four-banks-month.png')
+  await p.eval(`document.querySelector('main').scrollBy({ top: 600 })`)
+  await sleep(500)
+  await shot(p, '25b-four-banks-month-lower.png')
+  const legend = await p.eval(`document.querySelector('${fourSec} [data-flow-card] [data-lost]')?.innerText ?? ''`)
+  check('the money-moved card says what was lost to exchange and fees on transfers between currencies', /Lost to exchange and fees/.test(legend) && /\$/.test(legend), legend)
+  // The movements table: an international transfer written in both currencies.
+  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await sleep(900)
+  // The transfers of every bank, opened.
+  await p.eval(`[...document.querySelectorAll('${fourSec} .MuiAccordionSummary-root')].filter(e => e.innerText.includes('Transfers, card payments') && e.getAttribute('aria-expanded') !== 'true').forEach(e => e.click())`)
+  await sleep(900)
+  const intl = await p.eval(`[...document.querySelectorAll('${fourSec} [data-international]')].map(e => e.innerText)`)
+  check('the movements table writes an international transfer in both currencies', intl.some((t) => t.includes('€820.00 sent') && t.includes('$1,296.26 received')), intl.join(' | '))
+  await p.clickText('Year', { selector: 'button' })
+  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  const yearSec = 'section[data-period="2026-01-01"]'
+  await p.waitFor(`document.querySelector('${yearSec}') !== null`, 20000, 'year 2026')
+  await p.eval(`document.querySelector('${yearSec}').scrollIntoView({ block: 'start' })`)
+  await p.waitFor(`document.querySelector('${yearSec} [data-flow-card] [data-flowchart]') !== null`, 30000, 'year money moved')
+  await p.eval(`(() => { const f = document.querySelector('${yearSec} [data-flow-card]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
+  await sleep(900)
+  await shot(p, '25c-four-banks-year.png')
+  await p.clickText('Month', { selector: 'button' })
+  await p.clickText('Statements', { selector: '[data-period-view] button' })
+
+  check('no phrase joined to the next by a semicolon on any screen photographed', semicolons.length === 0, semicolons.slice(0, 3).join(' | '))
   check('no script errors in the interface', p.consoleErrors.length === 0, p.consoleErrors.slice(0, 3).join(' | '))
 } catch (e) {
   failed = true

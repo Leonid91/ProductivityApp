@@ -15,6 +15,7 @@
     <Compile Include="..\..\tests\Finance.Tests\Fixtures\BncGenerator.cs" Link="BncGenerator.cs" />
     <Compile Include="..\..\tests\Finance.Tests\Fixtures\ScotiaGenerator.cs" Link="ScotiaGenerator.cs" />
     <Compile Include="..\..\tests\Finance.Tests\Fixtures\CaisseEpargneGenerator.cs" Link="CaisseEpargneGenerator.cs" />
+    <Compile Include="..\..\tests\Finance.Tests\Fixtures\FourBanksGenerator.cs" Link="FourBanksGenerator.cs" />
   </ItemGroup>
 
 </Project>

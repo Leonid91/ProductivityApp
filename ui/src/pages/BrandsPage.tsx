@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, InputBase, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Autocomplete, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, InputBase, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import Search from '@mui/icons-material/SearchRounded'
 import Storefront from '@mui/icons-material/StorefrontRounded'
 import { api, type BrandInfo, type BrandRule } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, plural } from '../format'
-import { CategoryPill, EmptyState, Money, SectionCard } from '../components/common'
+import { CategoryPill, CategorySelect, EmptyState, Money, SectionCard } from '../components/common'
 import { useRowOrder } from '../components/order'
 import { ROW_ACTIONS_WIDTH, ROW_EDIT_WIDTH, RowActions } from '../components/RowActions'
 
@@ -13,8 +13,8 @@ import { ROW_ACTIONS_WIDTH, ROW_EDIT_WIDTH, RowActions } from '../components/Row
  * A brand changed from its pencil: its name (renamed on every operation, with what was learned for it) and its
  * category (for every operation of the brand, and learned for the next imports).
  */
-function BrandDialog({ brand, categoryId, onClose }: { brand: string | null; categoryId: string | null; onClose: () => void }) {
-  const { dataChanged, notify, fail, category } = useApp()
+function BrandDialog({ brand, categoryId, brands, onClose }: { brand: string | null; categoryId: string | null; brands: string[]; onClose: () => void }) {
+  const { dataChanged, notify, fail } = useApp()
   const [name, setName] = useState('')
   const [chosen, setChosen] = useState<string | null>(null)
   useEffect(() => { if (brand !== null) { setName(brand); setChosen(categoryId) } }, [brand, categoryId])
@@ -36,11 +36,15 @@ function BrandDialog({ brand, categoryId, onClose }: { brand: string | null; cat
     <Dialog open={brand !== null} onClose={onClose} maxWidth="xs" fullWidth data-brand-dialog>
       <DialogTitle>Edit {brand}</DialogTitle>
       <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
-        <TextField autoFocus label="Brand name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Typography variant="body2" color="text.secondary" sx={{ minWidth: 70 }}>Category</Typography>
-          {chosen ? <CategoryPill id={chosen} onChange={setChosen} /> : <Typography variant="body2">{category('other').name}</Typography>}
-        </Box>
+        {/* The same fields as an operation's: a brand of the list (or a new name), and a category dropdown. */}
+        <Autocomplete
+          freeSolo
+          options={brands}
+          inputValue={name}
+          onInputChange={(_, v) => setName(v)}
+          renderInput={(p) => <TextField {...p} autoFocus label="Brand Name" slotProps={{ ...p.slotProps, htmlInput: { ...p.slotProps.htmlInput, 'data-field': 'name' } }} />}
+        />
+        <CategorySelect value={chosen ?? 'other'} onChange={setChosen} />
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         <Button onClick={onClose}>Cancel</Button>
@@ -180,11 +184,13 @@ export function BrandsPanel() {
               {learnedOrder.rows.map((l) => (
                 <TableRow key={l.brand} hover {...learnedOrder.rowProps(l)}>
                   {learnedOrder.handle(l)}
-                  <TableCell sx={{ color: 'text.secondary', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12.5 }}>
-                    {l.wordings.slice(0, 3).map((w) => <div key={w}>{w.replace(/^#(.*)\|.*$/, '$1')}</div>)}
-                    {l.wordings.length > 3 && <div>+{l.wordings.length - 3} more</div>}
+                  {/* One wording after the other, comma-separated, a line breaking only between two wordings. */}
+                  <TableCell data-wordings sx={{ color: 'text.secondary', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12.5, lineHeight: 1.6, maxWidth: '62ch' }}>
+                    {l.wordings.map((w, i) => (
+                      <Box component="span" key={w} sx={{ whiteSpace: 'nowrap' }}>{w.replace(/^#(.*)\|.*$/, '$1')}{i < l.wordings.length - 1 ? ',' : ''}{i < l.wordings.length - 1 ? ' ' : ''}</Box>
+                    ))}
                   </TableCell>
-                  <TableCell>{l.brand}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{l.brand}</TableCell>
                   <TableCell>
                     {l.categoryId ? <CategoryPill id={l.categoryId} onChange={(id) => void setCategory(l.brand, id)} /> : <Typography variant="body2" color="text.secondary">—</Typography>}
                   </TableCell>
@@ -199,7 +205,7 @@ export function BrandsPanel() {
           </Table>
         </SectionCard>
       )}
-      <BrandDialog brand={editing?.brand ?? null} categoryId={editing?.categoryId ?? null} onClose={() => setEditing(null)} />
+      <BrandDialog brand={editing?.brand ?? null} categoryId={editing?.categoryId ?? null} brands={brands.map((b) => b.brand)} onClose={() => setEditing(null)} />
     </Box>
   )
 }

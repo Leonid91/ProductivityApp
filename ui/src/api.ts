@@ -96,13 +96,20 @@ export interface MovementView {
   /** The bank of an own account; null for the outside. */
   fromBank: string | null
   toBank: string | null
+  /** An international transfer: what was sent and received, each in its own currency, and what the banks kept (in the period's currency). */
+  sent?: number
+  sentCurrency?: string
+  received?: number
+  receivedCurrency?: string
+  lost?: number
 }
 
 export interface OutsideParty { name: string; sent: number; received: number }
 /** An account box (centre x, y; size w, h) or the outside blob (an ellipse) with who is behind it. */
 /** title: the account's full name (inside its bank it is named without the bank's name it starts with). */
 export interface DiagramNode { id: string; name: string; type: string; outside: boolean; x: number; y: number; w: number; h: number; parties: OutsideParty[]; title?: string | null }
-export interface DiagramArrow { from: string; to: string; amount: number; count: number; outside: boolean; path: string; head: string; width: number; labelX: number; labelY: number }
+/** lost: what the banks kept on the international transfers of the arrow (their rate and fees). */
+export interface DiagramArrow { from: string; to: string; amount: number; count: number; outside: boolean; path: string; head: string; width: number; labelX: number; labelY: number; lost?: number | null }
 /** A bank: a larger box holding its accounts, its name at the top (centre x, y; size w, h). */
 export interface DiagramBank { name: string; x: number; y: number; w: number; h: number }
 export interface FlowDiagram { width: number; height: number; nodes: DiagramNode[]; arrows: DiagramArrow[]; banks: DiagramBank[] }
@@ -365,6 +372,9 @@ export const api = {
     /** The operation as its bank wrote it (not converted). */
     get: (id: number) => invoke<TransactionView>('tx.get', { id }),
     create: (input: TransactionInput) => invoke<TransactionView>('tx.create', { input }),
+    /** How many operations of that day are exactly this one (same amount, brand and account). */
+    sameOnDay: (date: string, amount: number, brand: string, accountId: number | null, except: number | null) =>
+      invoke<{ count: number }>('tx.sameOnDay', { date, amount, brand, accountId, except }),
     update: (id: number, input: TransactionInput, allOfBrand = true) => invoke<TransactionView>('tx.update', { id, input, allOfBrand }),
     remove: (id: number) => invoke<null>('tx.delete', { id }),
   },

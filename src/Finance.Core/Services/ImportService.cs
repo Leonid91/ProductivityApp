@@ -226,7 +226,9 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
     /// file gives the day of the purchase, the other the day it was posted), but only when one of the two files covers
     /// the other's day without holding the operation itself: a file that covers a day and has nothing on it for that
     /// amount and that shop shows the operation under another day. Two real coffees on both sides of the end of a
-    /// statement stay two. An operation entered by hand is the same operation when its brand is the bank's wording.
+    /// statement stay two. An operation entered by hand is the person's: never taken for a line of a file (it has no
+    /// bank wording); the person is warned when entering it if the same one is already there (see
+    /// <see cref="TransactionService.SameOnDay"/>).
     /// </remarks>
     private void MarkDuplicates(ImportDraft draft, long? accountId)
     {
@@ -240,7 +242,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         var unmatched = new List<DraftRow>();
         foreach (var r in draft.Rows)
         {
-            var same = exact.GetValueOrDefault((r.Date, r.Amount))?.FirstOrDefault(t => left.Contains(t.Id) && SameOperation(Wording(t), r.Label));
+            var same = exact.GetValueOrDefault((r.Date, r.Amount))?.FirstOrDefault(t => left.Contains(t.Id) && SameOperation(t.RawLabel, r.Label));
             if (same is null) { unmatched.Add(r); continue; }
             r.Duplicate = true;
             left.Remove(same.Id);
@@ -265,7 +267,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         {
             var near = pool
                 .Where(t => left.Contains(t.Id) && t.Amount == r.Amount && t.Date != r.Date && Math.Abs(t.Date.DayNumber - r.Date.DayNumber) <= DateShift)
-                .Where(t => SameOperation(Wording(t), r.Label))
+                .Where(t => SameOperation(t.RawLabel, r.Label))
                 .Where(t => (t.Date >= fileFrom && t.Date <= fileTo) || (Covers(t.StatementId) is { } c && r.Date >= c.From && r.Date <= c.To))
                 .OrderBy(t => Math.Abs(t.Date.DayNumber - r.Date.DayNumber)).ThenBy(t => t.Id)
                 .FirstOrDefault();
@@ -274,9 +276,6 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             left.Remove(near.Id);
         }
     }
-
-    /// <summary>What an operation stored says: the bank's wording, or the brand of one entered by hand.</summary>
-    private static string Wording(Transaction t) => t.RawLabel.Length > 0 ? t.RawLabel : t.Brand;
 
     public static bool SameOperation(string a, string b)
     {

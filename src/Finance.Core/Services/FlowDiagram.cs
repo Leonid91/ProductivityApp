@@ -1,3 +1,4 @@
+using System.Text;
 using System.Globalization;
 using ProductivityApp.Finance.Model;
 
@@ -14,7 +15,9 @@ public sealed record DiagramNode(string Id, string Name, string Type, bool Outsi
 /// One arrow: the total moved from one place to another. <see cref="Path"/> is the curve (SVG path, no fill) ending at the
 /// base of <see cref="Head"/>, a filled triangle pointing at the destination. The amount sits at (LabelX, LabelY).
 /// </summary>
-public sealed record DiagramArrow(string From, string To, decimal Amount, int Count, bool Outside, string Path, string Head, double Width, double LabelX, double LabelY);
+/// <remarks><see cref="Lost"/>: what the banks kept on the international transfers of the arrow (their rate and fees), or null.</remarks>
+public sealed record DiagramArrow(string From, string To, decimal Amount, int Count, bool Outside, string Path, string Head, double Width, double LabelX, double LabelY,
+    decimal? Lost = null);
 
 /// <summary>A bank: a box of the same shape as the accounts, larger, its name at the top, holding its accounts; centred on (X, Y).</summary>
 public sealed record DiagramBank(string Name, double X, double Y, double W, double H);
@@ -34,27 +37,74 @@ public sealed record DiagramBank(string Name, double X, double Y, double W, doub
 public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> Nodes, List<DiagramArrow> Arrows, List<DiagramBank> Banks)
 {
     public const string OutsideId = "__outside";
-    private const double W = 1000, MinNodeW = 210, NodeH = 60, OutsideGap = 170, Margin = 14, CharW = 8;
+    private const double W = 1000, MinNodeW = 210, NodeH = 60, BaseOutsideGap = 170, Margin = 14, CharW = 8;
 
     /// <summary>Inside a bank: room around its accounts (its name above them) and between them, for the arrows.</summary>
-    private const double PadX = 28, PadTop = 46, PadBottom = 28, GapX = 90, GapY = 96;
+    private const double PadX = 28, PadTop = 46, PadBottom = 28, BaseGapX = 130, BaseGapY = 104;
 
     /// <summary>Between two banks side by side, and between two rows of banks.</summary>
-    private const double BankGap = 130, BankRowGap = 150;
+    private const double BaseBankGap = 130, BaseBankRowGap = 150;
 
     /// <summary>Banks in two columns with the outside box between them: room on each side of it, and between two rows.</summary>
-    private const double SideGap = 80, MiddleRowGap = 80;
+    private const double BaseSideGap = 80, BaseMiddleRowGap = 80;
 
     public static FlowDiagram Build(IReadOnlyList<MovementView> movements)
     {
         // Laid out, then again with taller or wider boxes when the arrows of one side need more room than it has (every
         // box keeps the same size), and lower when an arrow or a label would leave the top edge. Only when a box can
         // grow no wider are all arrows drawn a little thinner, the same for all, so their thickness still follows the money.
-        var (top, h, w, k) = (Margin, NodeH, 0.0, 1.0);
-        Layout r = default;
-        for (var round = 0; round < 8; round++)
+        // Several layouts are drawn when there are several banks (orders of the banks, the outside box between them or
+        // below): the one with the fewest arrows crossing, lines through boxes and crowded amounts is kept.
+        var key = Signature(movements);
+        lock (Remembered) { if (Remembered.TryGetValue(key, out var known)) return known; }
+        // Each candidate drawn once as it is to be scored (side by side on the processor's cores); the best one then gets
+        // the room it needs.
+        var first = Build(movements, Margin, NodeH, 0, 1, 1, 0);
+        var scores = new double[first.Candidates];
+        scores[0] = first.Score;
+        Parallel.For(1, first.Candidates, c => scores[c] = Build(movements, Margin, NodeH, 0, 1, 1, c).Score);
+        // The best one laid out with its room; when it stays crowded (a line through a box, an amount without a free
+        // place), the next best, until one is clear (or the best of them).
+        Layout? kept = null;
+        foreach (var c in Enumerable.Range(0, scores.Length).OrderBy(c => scores[c]).Take(3))
         {
-            r = Build(movements, top, h, w, k);
+            var settled = Settle(movements, c);
+            if (kept is null || (kept.Value.Crowded && !settled.Crowded) || (settled.Crowded == kept.Value.Crowded && settled.Score < kept.Value.Score)) kept = settled;
+            if (!settled.Crowded) break;
+        }
+        var diagram = kept!.Value.Diagram;
+        lock (Remembered)
+        {
+            if (Remembered.Count >= 200) Remembered.Clear();
+            Remembered[key] = diagram;
+        }
+        return diagram;
+    }
+
+    /// <summary>Diagrams already laid out, by what they show (a period seen again is not laid out again).</summary>
+    private static readonly Dictionary<string, FlowDiagram> Remembered = new(StringComparer.Ordinal);
+
+    /// <summary>Everything a diagram is made from, as one text.</summary>
+    private static string Signature(IReadOnlyList<MovementView> movements)
+    {
+        var sb = new StringBuilder();
+        foreach (var m in movements)
+            sb.Append(CultureInfo.InvariantCulture, $"{m.From}|{m.To}|{m.FromOutside}|{m.ToOutside}|{m.FromAccount}|{m.ToAccount}|{m.FromBank}|{m.ToBank}|{m.FromType}|{m.ToType}|{m.Amount}|{m.Lost}\n");
+        return sb.ToString();
+    }
+
+    /// <summary>One candidate layout, laid out again until its boxes and arrows have their room.</summary>
+    private static Layout Settle(IReadOnlyList<MovementView> movements, int candidate)
+    {
+        var (top, h, w, k, room) = (Margin, NodeH, 0.0, 1.0, 1.0);
+        Layout r = default;
+        LastRounds = 0;
+        for (var round = 0; round < 14; round++)
+        {
+            LastRounds++;
+            r = Build(movements, top, h, w, k, room, candidate);
+            // An amount that finds no free place, or a line through a box: more room between the boxes, everywhere.
+            if (r.Crowded && room < 2.6) { room *= 1.2; continue; }
             if (r.NeedH > h + 0.5) { h = Math.Min(r.NeedH, MaxNodeH); if (r.NeedH > MaxNodeH) k *= Shrink(r.NeedH - 16, MaxNodeH - 16); continue; }
             if (r.NeedW > r.NodeW + 0.5)
             {
@@ -65,14 +115,22 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             if (r.Top < Margin) { top += Margin - r.Top; continue; }
             break;
         }
-        return r.Diagram;
+        return r;
     }
 
     private const double MaxNodeH = 132;
 
+    /// <summary>The narrowest account box when banks stack their accounts (they then leave free lanes on their sides).</summary>
+    private const double StackedNodeW = 176;
+
+    /// <summary>How many times the chosen layout of the last diagram was laid out (to check that every layout settles quickly).</summary>
+    [ThreadStatic] public static int LastRounds;
+
     private static double Shrink(double need, double have) => Math.Clamp(have / need, 0.4, 0.98);
 
-    private readonly record struct Layout(FlowDiagram Diagram, double Top, double NodeW, double MaxW, double NeedW, double NeedH);
+    /// <param name="Score">How good it is (lower is better): arrows crossing, lines through boxes, crowded amounts, length and height.</param>
+    /// <param name="Candidates">How many candidate layouts there are.</param>
+    private readonly record struct Layout(FlowDiagram Diagram, double Top, double NodeW, double MaxW, double NeedW, double NeedH, bool Crowded, double Score = 0, int Candidates = 1);
 
     /// <summary>How thick an arrow is (before any shrinking): from 2.5 for the smallest amount to 11 for the largest.</summary>
     private static double Size(decimal amount, decimal max) => 2.5 + 8.5 * Math.Sqrt((double)(amount / max));
@@ -96,9 +154,13 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
     /// <param name="NodeH">Height of every box.</param>
     /// <param name="MinW">Width every box has at least (to give the arrows of a side their room).</param>
     /// <param name="K">How much thinner than their full size all arrows are drawn (1 = full size).</param>
-    private static Layout Build(IReadOnlyList<MovementView> movements, double Top, double NodeH, double MinW, double K)
+    /// <param name="Room">How much more room than usual between boxes (1 = the usual gaps).</param>
+    /// <param name="Candidate">Which candidate layout (see <see cref="Build(IReadOnlyList{MovementView})"/>).</param>
+    private static Layout Build(IReadOnlyList<MovementView> movements, double Top, double NodeH, double MinW, double K, double Room, int Candidate)
     {
-        if (movements.Count == 0) return new Layout(new FlowDiagram(W, 0, [], [], []), Margin, 0, 0, 0, 0);
+        if (movements.Count == 0) return new Layout(new FlowDiagram(W, 0, [], [], []), Margin, 0, 0, 0, 0, false);
+        double GapX = BaseGapX * Room, GapY = BaseGapY * Room, BankGap = BaseBankGap * Room, BankRowGap = BaseBankRowGap * Room,
+            SideGap = BaseSideGap * Room, MiddleRowGap = BaseMiddleRowGap * Room, OutsideGap = BaseOutsideGap * Room;
 
         // Places: own accounts (each account its own box, even when two accounts of two banks have one name) and the
         // single outside box.
@@ -108,6 +170,7 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         static string Key(long? account, string name) => account is { } id ? "a" + id.ToString(CultureInfo.InvariantCulture) : "n:" + name;
         var moved = new Dictionary<string, decimal>(StringComparer.Ordinal);
         var edges = new Dictionary<(string From, string To), (decimal Amount, int Count)>();
+        var lostOf = new Dictionary<(string From, string To), decimal>();
         var parties = new Dictionary<string, (decimal Sent, decimal Received)>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in movements)
         {
@@ -117,6 +180,7 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             if (!m.ToOutside) { types.TryAdd(to, m.ToType ?? ""); names.TryAdd(to, m.To); bankOf.TryAdd(to, m.ToBank ?? Movements.OtherAccounts); moved[to] = moved.GetValueOrDefault(to) + m.Amount; }
             var e = edges.GetValueOrDefault((from, to));
             edges[(from, to)] = (e.Amount + m.Amount, e.Count + 1);
+            if (m.Lost is { } l) lostOf[(from, to)] = lostOf.GetValueOrDefault((from, to)) + l;
             if (m.ToOutside) { var p = parties.GetValueOrDefault(Party(m.To)); parties[Party(m.To)] = (p.Sent + m.Amount, p.Received); }
             if (m.FromOutside) { var p = parties.GetValueOrDefault(Party(m.From)); parties[Party(m.From)] = (p.Sent, p.Received + m.Amount); }
         }
@@ -144,26 +208,36 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         var groups = accounts.GroupBy(a => bankOf[a], StringComparer.Ordinal)
             .Select(g => (Bank: g.Key, Accounts: g.ToList(), Moved: g.Sum(a => moved[a])))
             .OrderByDescending(g => g.Moved).ThenBy(g => g.Bank, StringComparer.Ordinal).ToList();
-        static int Cols(int n) => n <= 1 ? 1 : n <= 4 ? 2 : 3;
+        var stacked = groups.Count >= 2;
+        int Cols(int n) => stacked || n <= 1 ? 1 : n <= 4 ? 2 : 3;
+        // A bank of accounts one above the other: room on its sides for the arrows going past an account.
+        var padX = stacked && groups.Any(g => g.Accounts.Count > 2) ? PadX + 26 : PadX;
         var widest = groups.Max(g => Cols(g.Accounts.Count));
-        var maxW = Math.Max(MinNodeW, Math.Min(420, (W - 2 * Margin - 2 * PadX - (widest - 1) * GapX) / widest));
+        var maxW = Math.Max(MinNodeW, Math.Min(420, (W - 2 * Margin - 2 * padX - (widest - 1) * GapX) / widest));
         var longest = accounts.Select(a => names[a]).Append("Outside the app").Max(a => a.Length);
-        var nodeW = Math.Max(Math.Clamp(longest * CharW + 28, MinNodeW, maxW), Math.Min(MinW, maxW));
+        var nodeW = Math.Max(Math.Clamp(longest * CharW + 28, stacked ? StackedNodeW : MinNodeW, maxW), Math.Min(MinW, maxW));
         var sizes = groups.Select(g =>
         {
             var cols = Cols(g.Accounts.Count);
             var rows = (int)Math.Ceiling(g.Accounts.Count / (double)cols);
             // Wide enough for its name too.
-            var w = Math.Max(cols * nodeW + (cols - 1) * GapX + 2 * PadX, g.Bank.Length * 8.6 + 2 * PadX);
+            var w = Math.Max(cols * nodeW + (cols - 1) * GapX + 2 * padX, g.Bank.Length * 8.6 + 2 * padX);
             return (W: Math.Min(w, W - 2 * Margin), H: PadTop + rows * NodeH + (rows - 1) * GapY + PadBottom, Cols: cols);
         }).ToList();
         // Where each bank goes (its centre), then the outside box.
         var place = new (double X, double Y)[groups.Count];
-        double outsideX = W / 2, outsideY;
+        double outsideX = W / 2, outsideY = 0;
         var bottomOfBanks = Top;
+        void Placement(bool between)
+        {
+        outsideX = W / 2;
+        bottomOfBanks = Top;
         var leftW = groups.Where((_, g) => g % 2 == 0).Max(g => sizes[groups.IndexOf(g)].W);
         var rightW = groups.Count > 1 ? groups.Where((_, g) => g % 2 == 1).Max(g => sizes[groups.IndexOf(g)].W) : 0;
-        var middle = parties.Count > 0 && groups.Count >= 3 && leftW + rightW + nodeW + 2 * SideGap <= W - 2 * Margin;
+        // The room between the columns and the outside box grows with the rest, as far as the width allows (the kind of
+        // layout never changes with it).
+        var middle = between && parties.Count > 0 && groups.Count >= 3 && leftW + rightW + nodeW + 2 * BaseSideGap <= W - 2 * Margin;
+        var sideGap = Math.Min(SideGap, (W - 2 * Margin - leftW - rightW - nodeW) / 2);
         if (middle)
         {
             // Two columns of banks, the outside box between them, half way down.
@@ -171,8 +245,8 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             for (var g = 0; g < groups.Count; g += 2)
             {
                 var rowH = Math.Max(sizes[g].H, g + 1 < groups.Count ? sizes[g + 1].H : 0);
-                place[g] = (W / 2 - nodeW / 2 - SideGap - sizes[g].W / 2, y0 + sizes[g].H / 2);
-                if (g + 1 < groups.Count) place[g + 1] = (W / 2 + nodeW / 2 + SideGap + sizes[g + 1].W / 2, y0 + sizes[g + 1].H / 2);
+                place[g] = (W / 2 - nodeW / 2 - sideGap - sizes[g].W / 2, y0 + sizes[g].H / 2);
+                if (g + 1 < groups.Count) place[g + 1] = (W / 2 + nodeW / 2 + sideGap + sizes[g + 1].W / 2, y0 + sizes[g + 1].H / 2);
                 bottomOfBanks = y0 + rowH;
                 y0 += rowH + MiddleRowGap;
             }
@@ -185,8 +259,8 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             var narrow = Enumerable.Range(0, groups.Count).Where(g => sizes[g].Cols == 1).ToList();
             var room = W - 2 * Margin;
             List<int> tail = parties.Count == 0 ? []
-                : narrow.Count >= 2 && sizes[narrow[^2]].W + sizes[narrow[^1]].W + nodeW + 2 * SideGap <= room ? [narrow[^2], narrow[^1]]
-                : narrow.Count >= 1 && sizes[narrow[^1]].W + nodeW + SideGap <= room ? [narrow[^1]]
+                : narrow.Count >= 2 && sizes[narrow[^2]].W + sizes[narrow[^1]].W + nodeW + 2 * BaseSideGap <= room ? [narrow[^2], narrow[^1]]
+                : narrow.Count >= 1 && sizes[narrow[^1]].W + nodeW + BaseSideGap <= room ? [narrow[^1]]
                 : [];
             var rest = Enumerable.Range(0, groups.Count).Where(g => !tail.Contains(g)).ToList();
             var y0 = Top;
@@ -215,22 +289,60 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             {
                 var (l, r) = (tail[0], tail[1]);
                 var rowH = Math.Max(sizes[l].H, sizes[r].H);
-                place[l] = (W / 2 - nodeW / 2 - SideGap - sizes[l].W / 2, y0 + sizes[l].H / 2);
-                place[r] = (W / 2 + nodeW / 2 + SideGap + sizes[r].W / 2, y0 + sizes[r].H / 2);
+                var gap = Math.Min(SideGap, (room - sizes[l].W - sizes[r].W - nodeW) / 2);
+                place[l] = (W / 2 - nodeW / 2 - gap - sizes[l].W / 2, y0 + sizes[l].H / 2);
+                place[r] = (W / 2 + nodeW / 2 + gap + sizes[r].W / 2, y0 + sizes[r].H / 2);
                 outsideY = y0 + rowH / 2;
                 bottomOfBanks = y0 + rowH;
             }
             else if (tail.Count == 1)
             {
                 var t = tail[0];
-                var x0 = (W - (sizes[t].W + SideGap + nodeW)) / 2;
+                var gap = Math.Min(SideGap, room - sizes[t].W - nodeW);
+                var x0 = (W - (sizes[t].W + gap + nodeW)) / 2;
                 place[t] = (x0 + sizes[t].W / 2, y0 + sizes[t].H / 2);
-                outsideX = x0 + sizes[t].W + SideGap + nodeW / 2;
+                outsideX = x0 + sizes[t].W + gap + nodeW / 2;
                 outsideY = y0 + sizes[t].H / 2;
                 bottomOfBanks = y0 + sizes[t].H;
             }
             else outsideY = bottomOfBanks + OutsideGap + NodeH / 2;
         }
+        }
+
+        // The order of the banks: the busiest first, or, for up to six banks, the order whose arrows are shortest (the
+        // banks sending money to each other, and to the outside, side by side).
+        var original = groups.Select((x, n) => (Group: x, Size: sizes[n])).ToList();
+        var candidates = new List<(List<int> Order, bool Between)>();
+        // The outside box between the banks is only a choice from three banks on.
+        foreach (var between in groups.Count >= 3 && parties.Count > 0 ? new[] { true, false } : [false])
+        {
+            if (groups.Count is <= 1 or > 6) { candidates.Add(([.. Enumerable.Range(0, groups.Count)], between)); continue; }
+            var bankOfAccount = accounts.ToDictionary(a => a, a => bankOf[a], StringComparer.Ordinal);
+            var links2 = edges.Keys.Where(e => e.From != e.To).ToList();
+            var ranked = new List<(double Length, List<int> Order)>();
+            foreach (var order in Orders(groups.Count))
+            {
+                groups = [.. order.Select(n => original[n].Group)];
+                sizes = [.. order.Select(n => original[n].Size)];
+                Placement(between);
+                var centre = groups.Select((x, n) => (x.Bank, P: place[n])).ToDictionary(x => x.Bank, x => x.P, StringComparer.Ordinal);
+                (double X, double Y) At(string node) => node == OutsideId ? (outsideX, outsideY) : centre[bankOfAccount[node]];
+                var straight = links2.Where(e => e.From == OutsideId || e.To == OutsideId || bankOfAccount[e.From] != bankOfAccount[e.To])
+                    .Select(e => (P: At(e.From), Q: At(e.To))).ToList();
+                // Short arrows, and arrows that would not cross one another drawn straight from bank to bank.
+                var crossings = 0;
+                for (var u = 0; u < straight.Count; u++)
+                    for (var v = u + 1; v < straight.Count; v++)
+                        if (Cross(straight[u].P, straight[u].Q, straight[v].P, straight[v].Q)) crossings++;
+                ranked.Add((straight.Sum(x => Math.Sqrt((x.P.X - x.Q.X) * (x.P.X - x.Q.X) + (x.P.Y - x.Q.Y) * (x.P.Y - x.Q.Y)))
+                    + 400 * crossings + 0.05 * (bottomOfBanks - Top), order));
+            }
+            candidates.AddRange(ranked.OrderBy(x => x.Length).Take(3).Select(x => (x.Order, between)));
+        }
+        var chosen = candidates[Math.Min(Candidate, candidates.Count - 1)];
+        groups = [.. chosen.Order.Select(n => original[n].Group)];
+        sizes = [.. chosen.Order.Select(n => original[n].Size)];
+        Placement(chosen.Between);
 
         var nodes = new List<DiagramNode>();
         var banks = new List<DiagramBank>();
@@ -242,6 +354,7 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             banks.Add(bank);
             var list = groups[g].Accounts;
             var bankTop = bank.Y - bh / 2;
+            var slots = new List<(double X, double Y)>();
             for (var a = 0; a < list.Count; a++)
             {
                 var r = a / cols;
@@ -249,8 +362,38 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
                 // The last row, when not full, centred in its bank.
                 var inRow = Math.Min(cols, list.Count - r * cols);
                 var rowW = inRow * nodeW + (inRow - 1) * GapX;
-                var ax = bank.X - rowW / 2 + nodeW / 2 + c * (nodeW + GapX);
-                var ay = bankTop + PadTop + NodeH / 2 + r * (NodeH + GapY);
+                slots.Add((bank.X - rowW / 2 + nodeW / 2 + c * (nodeW + GapX), bankTop + PadTop + NodeH / 2 + r * (NodeH + GapY)));
+            }
+            // Each account where its money goes: the point it is pulled to is the middle of the other banks (and the
+            // outside box) it moves money with, each counted once per arrow. The accounts pulled furthest from the
+            // middle of their bank choose first, each the free place nearest its point; the others keep their order.
+            (double X, double Y)? Pull(string account)
+            {
+                var others = edges.Keys.Where(e => e.From != e.To && (e.From == account || e.To == account))
+                    .Select(e => e.From == account ? e.To : e.From)
+                    .Where(o => o == OutsideId || bankOf.GetValueOrDefault(o) != bankOf[account])
+                    .Select(o => o == OutsideId ? (outsideX, outsideY) : place[groups.FindIndex(x => x.Bank == bankOf[o])]).ToList();
+                return others.Count == 0 ? null : (others.Average(q => q.Item1), others.Average(q => q.Item2));
+            }
+            var pulls = list.ToDictionary(a => a, Pull, StringComparer.Ordinal);
+            var slotOf = new int[list.Count];
+            var free = Enumerable.Range(0, slots.Count).ToList();
+            foreach (var a in list.Where(a => pulls[a] is not null)
+                         .OrderByDescending(a => Math.Abs(pulls[a]!.Value.Y - bank.Y) + Math.Abs(pulls[a]!.Value.X - bank.X) / 2))
+            {
+                var target = pulls[a]!.Value;
+                var slot = free.OrderBy(n => Math.Abs(slots[n].X - target.X) / 2 + Math.Abs(slots[n].Y - target.Y)).First();
+                slotOf[list.IndexOf(a)] = slot;
+                free.Remove(slot);
+            }
+            foreach (var a in list.Where(a => pulls[a] is null))
+            {
+                slotOf[list.IndexOf(a)] = free[0];
+                free.RemoveAt(0);
+            }
+            for (var a = 0; a < list.Count; a++)
+            {
+                var (ax, ay) = slots[slotOf[a]];
                 nodes.Add(new DiagramNode(list[a], names[list[a]], types[list[a]], false, ax, ay, nodeW, NodeH, [], titles[list[a]]));
                 bankBox[list[a]] = bank;
             }
@@ -269,63 +412,86 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         // Every arrow as thick as its money, its head in proportion (and never too small to see).
         var size = links.Select(l => Size(l.Value.Amount, max)).ToArray();
 
-        // 1. Sides: for each arrow, the pair of sides giving the shortest curve that goes through no other box. A side
-        // already used by other arrows costs a little more (the short sides of a box much more), so arrows spread out.
+        // 1. Sides: for each arrow, the pair of sides and the curve that go through no other box, cross as few of the other
+        // arrows as possible and turn as little as possible. A side already used by other arrows costs a little more (the
+        // short sides of a box much more), so arrows spread out. Chosen once for every arrow (the largest first), then once
+        // more each knowing all the others.
         var ends = new List<End>();
         var used = new Dictionary<(string, Sides), int>();
         // How far each arrow's curve reaches out of its boxes (null: by the distance between them). A shallower curve
         // runs between two rows of accounts, or between accounts and the edge of their bank, where a deep one cannot.
         var reachOf = new double?[links.Count];
-        // An arrow that cannot reach its box in one curve without crossing another box bends once in a gap between
-        // banks (beside a bank, or between two rows of banks).
+        // An arrow that cannot reach its box in one curve without crossing another box or arrow bends once in a gap
+        // between banks (beside a bank, or between two rows of banks).
         var viaOf = new Via?[links.Count];
-        var vias = Gaps(banks, nodes.FirstOrDefault(n => n.Outside));
-        double Crowd(DiagramNode n, Sides side) => used.GetValueOrDefault((n.Id, side)) * (side is Sides.Left or Sides.Right ? 45 : 8);
+        var vias = Gaps(banks, nodes.FirstOrDefault(n => n.Outside), BankGap, BankRowGap);
+        var choice = new (Sides A, Sides B)[links.Count];
+        var lines = new (double X, double Y)[]?[links.Count];
+        // The top of an account on the first row of its bank is under the bank's name: never used.
+        bool UnderName(DiagramNode n, Sides side) => side == Sides.Top && bankBox.TryGetValue(n.Id, out var k) && n.Y - n.H / 2 - (k.Y - k.H / 2) < PadTop + 4;
+        double Crowd(DiagramNode n, Sides side) => used.GetValueOrDefault((n.Id, side)) * (side is Sides.Left or Sides.Right ? 45 : 8) + (UnderName(n, side) ? 5000 : 0);
+        for (var pass = 0; pass < 3; pass++)
+        {
+            for (var i = 0; i < links.Count; i++)
+            {
+                var (from, to) = links[i].Key;
+                var (a, b) = (byId[from], byId[to]);
+                var others = Enumerable.Range(0, links.Count).Where(j => j != i && lines[j] is not null).Select(j => lines[j]!).ToList();
+                // The last pass: only an arrow still crossing another is drawn again, crossing then costing much more.
+                if (pass == 2 && Crossings(lines[i]!, others) == 0) continue;
+                var crossingCost = pass == 2 ? 3 * CrossingCost : CrossingCost;
+                if (pass >= 1) { used[(a.Id, choice[i].A)]--; used[(b.Id, choice[i].B)]--; }
+                var best = (Cost: double.MaxValue, A: Sides.Bottom, B: Sides.Top, Reach: (double?)null, Via: (Via?)null, Line: Array.Empty<(double X, double Y)>());
+                // Every candidate costed without the other arrows, then the most promising ones with them.
+                var tried = new List<(double Cost, Sides A, Sides B, double? Reach, Via? Via, Route C)>();
+                void Try(Sides sa, Sides sb, double? reach, Via? via, double extra)
+                {
+                    var (ax, ay, anx, any) = Port(a, sa, 0);
+                    var (bx, by, bnx, bny) = Port(b, sb, 0);
+                    var c = Route.Of(ax, ay, anx, any, bx, by, bnx, bny, reach, via);
+                    tried.Add((Cost(c, nodes, a, b, banks, bankBox) + extra + Crowd(a, sa) + Crowd(b, sb), sa, sb, reach, via, c));
+                }
+                void Pick()
+                {
+                    foreach (var t in tried.OrderBy(t => t.Cost).Take(12))
+                    {
+                        if (t.Cost >= best.Cost) break;
+                        var line = Line(t.C);
+                        var cost = t.Cost + crossingCost * Crossings(line, others);
+                        if (cost < best.Cost) best = (cost, t.A, t.B, t.Reach, t.Via, line);
+                    }
+                    tried.Clear();
+                }
+                foreach (var sa in AllSides)
+                    foreach (var sb in AllSides)
+                        foreach (var reach in Reaches)
+                            Try(sa, sb, reach, null, (sa == Natural(a, b) ? 0 : 6) + (sb == Natural(b, a) ? 0 : 6) + (reach is null ? 0 : 4));
+                Pick();
+                // Crossing a box or another arrow: through a gap between banks, when that crosses less.
+                if (best.Cost >= CrossingCost)
+                    foreach (var via in vias.OrderBy(v => Math.Abs(v.X - (a.X + b.X) / 2) + Math.Abs(v.Y - (a.Y + b.Y) / 2)).Take(10))
+                    {
+                        var at = new DiagramNode("", "", "", false, via.X, via.Y, 1, 1, []);
+                        foreach (var sa in AllSides)
+                            foreach (var sb in AllSides)
+                                Try(sa, sb, null, via, 20 + (sa == Natural(a, at) ? 0 : 6) + (sb == Natural(b, at) ? 0 : 6));
+                    }
+                Pick();
+                choice[i] = (best.A, best.B);
+                reachOf[i] = best.Reach;
+                viaOf[i] = best.Via;
+                lines[i] = best.Line;
+                used[(a.Id, best.A)] = used.GetValueOrDefault((a.Id, best.A)) + 1;
+                used[(b.Id, best.B)] = used.GetValueOrDefault((b.Id, best.B)) + 1;
+            }
+        }
         for (var i = 0; i < links.Count; i++)
         {
             var (from, to) = links[i].Key;
             var (a, b) = (byId[from], byId[to]);
-            var best = (Cost: double.MaxValue, A: Sides.Bottom, B: Sides.Top, Reach: (double?)null);
-            foreach (var sa in AllSides)
-                foreach (var sb in AllSides)
-                    foreach (var reach in Reaches)
-                    {
-                        var (ax, ay, anx, any) = Port(a, sa, 0);
-                        var (bx, by, bnx, bny) = Port(b, sb, 0);
-                        var c = Route.Of(ax, ay, anx, any, bx, by, bnx, bny, reach, null);
-                        var cost = Cost(c, nodes, a, b, banks, bankBox) + (sa == Natural(a, b) ? 0 : 6) + (sb == Natural(b, a) ? 0 : 6) + Crowd(a, sa) + Crowd(b, sb)
-                            + (reach is null ? 0 : 4);
-                        if (cost < best.Cost) best = (cost, sa, sb, reach);
-                    }
-            reachOf[i] = best.Reach;
-            // Crossing something: through a gap between banks, when that crosses less.
-            if (best.Cost >= 400)
-            {
-                var bestVia = (Cost: best.Cost, A: best.A, B: best.B, Via: (Via?)null);
-                foreach (var via in vias)
-                    foreach (var sa in AllSides)
-                        foreach (var sb in AllSides)
-                        {
-                            var (ax, ay, anx, any) = Port(a, sa, 0);
-                            var (bx, by, bnx, bny) = Port(b, sb, 0);
-                            var c = Route.Of(ax, ay, anx, any, bx, by, bnx, bny, null, via);
-                            var at = new DiagramNode("", "", "", false, via.X, via.Y, 1, 1, []);
-                            var cost = Cost(c, nodes, a, b, banks, bankBox) + 20 + Crowd(a, sa) + Crowd(b, sb)
-                                + (sa == Natural(a, at) ? 0 : 6) + (sb == Natural(b, at) ? 0 : 6);
-                            if (cost < bestVia.Cost) bestVia = (cost, sa, sb, via);
-                        }
-                if (bestVia.Via is not null)
-                {
-                    best = (bestVia.Cost, bestVia.A, bestVia.B, null);
-                    reachOf[i] = null;
-                    viaOf[i] = bestVia.Via;
-                }
-            }
             var (half, _) = HeadSize(size[i], K);
-            ends.Add(new End(i, a, b, true, best.A, Pair(from, to)) { Room = K * size[i] });
-            ends.Add(new End(i, b, a, false, best.B, Pair(from, to)) { Room = 2 * half });
-            used[(a.Id, best.A)] = used.GetValueOrDefault((a.Id, best.A)) + 1;
-            used[(b.Id, best.B)] = used.GetValueOrDefault((b.Id, best.B)) + 1;
+            ends.Add(new End(i, a, b, true, choice[i].A, Pair(from, to)) { Room = K * size[i] });
+            ends.Add(new End(i, b, a, false, choice[i].B, Pair(from, to)) { Room = 2 * half });
         }
 
         // 2. Points: each end its own stretch of its side, as wide as its line (leaving) or its head (arriving), ordered
@@ -335,7 +501,14 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         foreach (var group in ends.GroupBy(e => (e.Node.Id, e.Side)))
         {
             var horizontal = group.Key.Side is Sides.Top or Sides.Bottom;
-            var ordered = group.OrderBy(e => horizontal ? e.Other.X : e.Other.Y).ThenBy(e => horizontal ? e.Other.Y : e.Other.X).ThenBy(e => e.PairOrder).ToList();
+            // Ordered by where each arrow heads a little way from the box (not where its other box is: two arrows
+            // between the same two boxes may leave in two directions), so none crosses another as they leave.
+            (double X, double Y) Heading(End e)
+            {
+                var line = lines[e.Arrow]!;
+                return e.Leaving ? line[Math.Min(6, line.Length - 1)] : line[Math.Max(0, line.Length - 7)];
+            }
+            var ordered = group.OrderBy(e => horizontal ? Heading(e).X : Heading(e).Y).ThenBy(e => horizontal ? e.Other.X : e.Other.Y).ThenBy(e => e.PairOrder).ToList();
             var span = horizontal ? nodeW - 40 : NodeH - 16;
             var need = ordered.Sum(e => e.Room) + EndGap * (ordered.Count - 1);
             if (horizontal) needW = Math.Max(needW, need + 40); else needH = Math.Max(needH, need + 16);
@@ -398,7 +571,9 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             // The banks' names stay readable.
             .Concat(banks.Select(b => (L: b.X - b.W / 2, T: b.Y - b.H / 2, R: b.X + b.W / 2, B: b.Y - b.H / 2 + PadTop - 6)))
             .Concat(drawn.Select(d => d.HeadBox)).ToList();
-        var samples = drawn.Select(d => Enumerable.Range(0, 41).Select(k => d.C.At(k / 40.0)).ToList()).ToList();
+        var samples = drawn.Select(d => Enumerable.Range(0, 81).Select(k => d.C.At(k / 80.0)).ToList()).ToList();
+        // A line through a box: the boxes need more room between them.
+        var crowded = drawn.Any(d => samples[drawn.IndexOf(d)].Skip(4).SkipLast(4).Any(q => nodes.Any(n => Math.Abs(q.X - n.X) < n.W / 2 - 1 && Math.Abs(q.Y - n.Y) < n.H / 2 - 1)));
         var arrows = new List<DiagramArrow>();
         double top = double.MaxValue, bottom = Math.Max(nodes.Max(n => n.Y + n.H / 2), banks.Count == 0 ? 0 : banks.Max(b => b.Y + b.H / 2));
         for (var i = 0; i < drawn.Count; i++)
@@ -407,9 +582,12 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             var w = Formatting.Money(d.Amount, "CAD").Length * 7.4 + 14;
             var label = d.C.At(0.5);
             var bestCost = double.MaxValue;
-            // On the curve first; when two short arrows run side by side, just beside it (touching it).
+            // How long the arrow is: an amount on it must leave enough of it to be seen.
+            var length = samples[i].Zip(samples[i].Skip(1), (u, v) => Math.Sqrt((u.X - v.X) * (u.X - v.X) + (u.Y - v.Y) * (u.Y - v.Y))).Sum();
+            // On the curve first; when that would hide too much of a short arrow, or two arrows run side by side, just
+            // beside it (touching it), or a little further.
             foreach (var t in new[] { 0.5, 0.44, 0.56, 0.38, 0.62, 0.32, 0.68, 0.26, 0.74, 0.2, 0.8 })
-            foreach (var side in new[] { 0, 1, -1 })
+            foreach (var side in new[] { 0, 1, -1, 2, -2 })
             {
                 var p = d.C.At(t);
                 if (side != 0)
@@ -419,28 +597,103 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
                     var len = Math.Max(1e-6, Math.Sqrt((bx2 - ax) * (bx2 - ax) + (by2 - ay) * (by2 - ay)));
                     // Moved off the line along its normal, far enough that the line runs along the label's edge.
                     double nx = -(by2 - ay) / len, ny = (bx2 - ax) / len;
-                    var off = Math.Abs(nx) * (w / 2) + Math.Abs(ny) * 11 + d.Width / 2;
-                    p = (p.X + side * nx * off, p.Y + side * ny * off);
+                    var off = (Math.Abs(nx) * (w / 2) + Math.Abs(ny) * 11 + d.Width / 2) * (Math.Abs(side) == 2 ? 1.6 : 1);
+                    p = (p.X + Math.Sign(side) * nx * off, p.Y + Math.Sign(side) * ny * off);
                 }
                 double l = p.X - w / 2 - 3, r = p.X + w / 2 + 3, tp = p.Y - 14, bt = p.Y + 14;
-                var cost = Math.Abs(t - 0.5) * 20 + (side == 0 ? 0 : 60)
+                // The part of its own arrow it hides: at least VisibleLine of the arrow is left to see.
+                var hidden = length * samples[i].Count(q => q.X > l && q.X < r && q.Y > tp && q.Y < bt) / samples[i].Count;
+                var cost = Math.Abs(t - 0.5) * 20 + (side == 0 ? 0 : Math.Abs(side) == 1 ? 60 : 90)
                     + 1000 * taken.Count(b => r > b.L && l < b.R && bt > b.T && tp < b.B)
-                    + 40 * samples.Where((_, j) => j != i).Sum(list => list.Count(q => q.X > l && q.X < r && q.Y > tp && q.Y < bt));
+                    + (length - hidden < VisibleLine ? 1000 : 0)
+                    // Never on a bank's border line, never out of the drawing.
+                    + 300 * banks.Count(b => OnBorder(b, l, tp, r, bt))
+                    + (l < 2 || r > W - 2 ? 1000 : 0)
+                    + 40 * samples.Where((_, j) => j != i).Sum(list => list.Count(q => q.X > l && q.X < r && q.Y > tp && q.Y < bt)) / 2;
                 if (cost < bestCost) { bestCost = cost; label = p; }
             }
+            if (bestCost >= 1000) crowded = true;
             taken.Add((label.X - w / 2, label.Y - 11, label.X + w / 2, label.Y + 11));
             top = Math.Min(top, Math.Min(label.Y - 11, samples[i].Min(q => q.Y) - d.Width / 2));
             bottom = Math.Max(bottom, Math.Max(label.Y + 11, samples[i].Max(q => q.Y) + d.Width / 2));
             arrows.Add(new DiagramArrow(d.From, d.To, d.Amount, d.Count, d.From == OutsideId || d.To == OutsideId, d.C.Svg(), d.Head,
-                Math.Round(d.Width, 2), Math.Round(label.X, 1), Math.Round(label.Y, 1)));
+                Math.Round(d.Width, 2), Math.Round(label.X, 1), Math.Round(label.Y, 1), lostOf.TryGetValue((d.From, d.To), out var lost) ? lost : null));
         }
-        return new Layout(new FlowDiagram(W, Math.Ceiling(bottom + Margin), nodes, arrows, banks), arrows.Count == 0 ? Margin : Math.Min(top, Top), nodeW, maxW, needW, needH);
+        // How good it is: arrows crossing one another, lines through boxes, amounts without a free place, then length
+        // and height.
+        var crossed = 0;
+        for (var u = 0; u < samples.Count; u++)
+            for (var v = u + 1; v < samples.Count; v++)
+                crossed += Crossings([.. samples[u]], [[.. samples[v]]]) > 0 ? 1 : 0;
+        var through = samples.Sum(line => line.Skip(4).SkipLast(4).Count(q => nodes.Any(n => Math.Abs(q.X - n.X) < n.W / 2 - 1 && Math.Abs(q.Y - n.Y) < n.H / 2 - 1)));
+        var drawnLength = samples.Sum(line => line.Zip(line.Skip(1), (u, v) => Math.Sqrt((u.X - v.X) * (u.X - v.X) + (u.Y - v.Y) * (u.Y - v.Y))).Sum());
+        var score = 1000 * crossed + 300 * through + (crowded ? 2000 : 0) + 0.2 * drawnLength + 0.3 * bottom;
+        return new Layout(new FlowDiagram(W, Math.Ceiling(bottom + Margin), nodes, arrows, banks), arrows.Count == 0 ? Margin : Math.Min(top, Top), nodeW, maxW, needW, needH, crowded,
+            score, candidates.Count);
     }
 
     private enum Sides { Top, Bottom, Left, Right }
 
+    /// <summary>Every order of n banks (n at most six), the first one unchanged.</summary>
+    private static IEnumerable<List<int>> Orders(int n)
+    {
+        var items = Enumerable.Range(0, n).ToList();
+        IEnumerable<List<int>> Permute(List<int> rest)
+        {
+            if (rest.Count <= 1) { yield return [.. rest]; yield break; }
+            for (var k = 0; k < rest.Count; k++)
+            {
+                var first = rest[k];
+                var others = rest.Where((_, m) => m != k).ToList();
+                foreach (var tail in Permute(others)) yield return [first, .. tail];
+            }
+        }
+        return Permute(items);
+    }
+
+    /// <summary>True when the rectangle (l, t, r, b) lies across a border line of the bank.</summary>
+    private static bool OnBorder(DiagramBank k, double l, double t, double r, double b)
+    {
+        double kl = k.X - k.W / 2, kr = k.X + k.W / 2, kt = k.Y - k.H / 2, kb = k.Y + k.H / 2;
+        if (r < kl || l > kr || b < kt || t > kb) return false;
+        var inside = l > kl && r < kr && t > kt && b < kb;
+        return !inside;
+    }
+
+    /// <summary>What crossing another arrow costs a route (a box costs more: crossing one is never chosen when avoidable).</summary>
+    private const double CrossingCost = 260;
+
+    /// <summary>The part of every arrow left to see beside its amount, at least.</summary>
+    public const double VisibleLine = 28;
+
+    /// <summary>A route as a line of points, to find where it crosses others.</summary>
+    private static (double X, double Y)[] Line(Route c) => [.. Enumerable.Range(0, 25).Select(k => c.At(k / 24.0))];
+
+    /// <summary>How many times a line crosses the other lines (touching at an end does not count).</summary>
+    private static int Crossings((double X, double Y)[] line, List<(double X, double Y)[]> others)
+    {
+        var count = 0;
+        double minX = line.Min(p => p.X), maxX = line.Max(p => p.X), minY = line.Min(p => p.Y), maxY = line.Max(p => p.Y);
+        foreach (var o in others)
+        {
+            if (o.Length == 0 || o.Max(p => p.X) < minX || o.Min(p => p.X) > maxX || o.Max(p => p.Y) < minY || o.Min(p => p.Y) > maxY) continue;
+            for (var k = 0; k + 1 < line.Length; k++)
+                for (var m = 0; m + 1 < o.Length; m++)
+                    if (Cross(line[k], line[k + 1], o[m], o[m + 1])) count++;
+        }
+        return count;
+    }
+
+    /// <summary>True when segment a-b crosses segment c-d (strictly: neither touches the other at an end).</summary>
+    public static bool Cross((double X, double Y) a, (double X, double Y) b, (double X, double Y) c, (double X, double Y) d)
+    {
+        static double Side((double X, double Y) p, (double X, double Y) q, (double X, double Y) r) => (q.X - p.X) * (r.Y - p.Y) - (q.Y - p.Y) * (r.X - p.X);
+        double d1 = Side(c, d, a), d2 = Side(c, d, b), d3 = Side(a, b, c), d4 = Side(a, b, d);
+        return ((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) && ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9));
+    }
+
     /// <summary>The reaches tried for each arrow (see <c>reachOf</c>).</summary>
-    private static readonly double?[] Reaches = [null, 40, 65, 100, 150, 220];
+    private static readonly double?[] Reaches = [null, 40, 70, 120, 190];
 
     private static readonly Sides[] AllSides = [Sides.Top, Sides.Bottom, Sides.Left, Sides.Right];
 
@@ -478,7 +731,7 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
     private readonly record struct Via(double X, double Y, bool Vertical);
 
     /// <summary>The middle of every gap beside a bank (running up and down) and above and below it (running across).</summary>
-    private static List<Via> Gaps(List<DiagramBank> banks, DiagramNode? outside)
+    private static List<Via> Gaps(List<DiagramBank> banks, DiagramNode? outside, double BankGap, double BankRowGap)
     {
         var list = new List<Via>();
         foreach (var b in banks)
@@ -486,8 +739,9 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             double left = b.X - b.W / 2, right = b.X + b.W / 2, top = b.Y - b.H / 2, bottom = b.Y + b.H / 2;
             var below = outside is not null && outside.Y > bottom && banks.All(o => o.Y - o.H / 2 < bottom + 1)
                 ? bottom + (outside.Y - outside.H / 2 - bottom) / 2 : bottom + BankRowGap / 2;
-            foreach (var x in new[] { left - BankGap / 2, right + BankGap / 2 })
-                if (x > 10 && x < W - 10) list.Add(new Via(x, b.Y, true));
+            // Beside the bank: the middle of the gap to the next bank, or of the free lane along the edge of the drawing.
+            foreach (var x in new[] { left - BankGap / 2, right + BankGap / 2, left / 2, (right + W) / 2 })
+                if (x > 16 && x < W - 16 && (x < left - 14 || x > right + 14)) list.Add(new Via(x, b.Y, true));
             foreach (var x in new[] { b.X, left - BankGap / 2, right + BankGap / 2 })
             {
                 if (x <= 10 || x >= W - 10) continue;
@@ -518,8 +772,9 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             double ty = v.Vertical ? (Math.Sign(y3 - y0) is var sy && sy != 0 ? sy : 1) : 0;
             var r1 = Math.Clamp(Math.Sqrt((v.X - x0) * (v.X - x0) + (v.Y - y0) * (v.Y - y0)) * 0.45, 28, 160);
             var r2 = Math.Clamp(Math.Sqrt((x3 - v.X) * (x3 - v.X) + (y3 - v.Y) * (y3 - v.Y)) * 0.45, 28, 160);
-            return new Route(new Bez(x0, y0, x0 + n0x * r1, y0 + n0y * r1, v.X - tx * r1, v.Y - ty * r1, v.X, v.Y),
-                new Bez(v.X, v.Y, v.X + tx * r2, v.Y + ty * r2, x3 + n3x * r2, y3 + n3y * r2, x3, y3));
+            var (a1, a2) = (Room(x0, y0, n0x, n0y, r1), Room(x3, y3, n3x, n3y, r2));
+            return new Route(new Bez(x0, y0, x0 + n0x * a1, y0 + n0y * a1, v.X - tx * r1, v.Y - ty * r1, v.X, v.Y),
+                new Bez(v.X, v.Y, v.X + tx * r2, v.Y + ty * r2, x3 + n3x * a2, y3 + n3y * a2, x3, y3));
         }
     }
 
@@ -528,7 +783,16 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
     {
         var dist = Math.Sqrt((x3 - x0) * (x3 - x0) + (y3 - y0) * (y3 - y0));
         var reach = reachOut ?? Math.Clamp(dist * 0.45, 28, 180);
-        return new Bez(x0, y0, x0 + n0x * reach, y0 + n0y * reach, x3 + n3x * reach, y3 + n3y * reach, x3, y3);
+        // Never further out than the edge of the drawing (a curve bulges about three quarters of its reach).
+        return new Bez(x0, y0, x0 + n0x * Room(x0, y0, n0x, n0y, reach), y0 + n0y * Room(x0, y0, n0x, n0y, reach),
+            x3 + n3x * Room(x3, y3, n3x, n3y, reach), y3 + n3y * Room(x3, y3, n3x, n3y, reach), x3, y3);
+    }
+
+    /// <summary>How far a curve may reach from (x, y) along (nx, ny): <paramref name="reach"/>, or less near a side edge of the drawing.</summary>
+    private static double Room(double x, double y, double nx, double ny, double reach)
+    {
+        var free = nx > 0.5 ? W - Margin - 4 - x : nx < -0.5 ? x - Margin - 4 : double.MaxValue;
+        return Math.Max(12, Math.Min(reach, free / 0.75));
     }
 
     /// <summary>A point on a side of a box, <paramref name="along"/> from the side's middle, and the side's outward normal.</summary>
@@ -552,11 +816,19 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         var sameBank = bankA is not null && bankA == bankB;
         double cost = 0, px = c.X0, py = c.Y0;
         var steps = c.B is null ? 40 : 60;
+        double turn = 0, heading = double.NaN;
         for (var k = 1; k <= steps; k++)
         {
             var (x, y) = c.At(k / (double)steps);
             var step = Math.Sqrt((x - px) * (x - px) + (y - py) * (y - py));
             cost += step;
+            // How much the line turns along the way: a natural curve turns little; a hairpin or a loop much.
+            if (step > 1e-6)
+            {
+                var h = Math.Atan2(y - py, x - px);
+                if (!double.IsNaN(heading)) { var dh = Math.Abs(h - heading); turn += Math.Min(dh, 2 * Math.PI - dh); }
+                heading = h;
+            }
             (px, py) = (x, y);
             foreach (var n in nodes)
             {
@@ -564,7 +836,8 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
                 var pad = n == a || n == b ? -2 : 14;
                 if (Math.Abs(x - n.X) < n.W / 2 + pad && Math.Abs(y - n.Y) < n.H / 2 + pad) cost += 400;
             }
-            if (x < 6 || x > W - 6) cost += 200;
+            // Out of the drawing: as bad as through a box.
+            if (x < Margin || x > W - Margin) cost += 400;
             if (sameBank && (Math.Abs(x - bankA!.X) > bankA.W / 2 - 6 || Math.Abs(y - bankA.Y) > bankA.H / 2 - 6)) cost += 400;
             foreach (var bank in banks)
             {
@@ -575,9 +848,12 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
                 if (other && !sameBank) cost += 400;
                 // Leaving its own bank (for another bank or the outside): out of it by the shortest way.
                 else if (!sameBank) cost += 2.5 * step;
-                if (y < bank.Y - bank.H / 2 + PadTop - 8) cost += 120;
+                // A bank's name is never crossed (as a box).
+                if (y < bank.Y - bank.H / 2 + PadTop - 8 && Math.Abs(x - bank.X) < Math.Min(bank.W / 2, bank.Name.Length * 4.6 + 16)) cost += 400;
             }
         }
+        // Turning more than a U (a loop, or a hairpin then back) costs, the more the more it turns.
+        if (turn > 1.1 * Math.PI) cost += 220 * (turn - 1.1 * Math.PI);
         return cost;
     }
 

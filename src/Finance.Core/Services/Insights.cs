@@ -94,11 +94,19 @@ public static class RecurringDetector
 /// One movement of money, seen once: from an account (or the outside) to another account (or the outside).
 /// FromType / ToType name the type of an own account ("Chequing account"), FromBank / ToBank its bank; null for the
 /// outside. FromAccount / ToAccount are the own accounts (two accounts of two banks can have the same name).
+/// Between two currencies (an international transfer): what was sent and what was received, each in its own currency,
+/// and <see cref="Lost"/>, what the banks kept (their rate and fees) in the currency of the period: the amount sent at
+/// the rate of its day, less the amount received.
 /// </summary>
 public sealed record MovementView(
     string Date, string CategoryId, string Label, decimal Amount, string From, string To, bool FromOutside, bool ToOutside,
     long EditId, long? OtherId, string? FromType = null, string? ToType = null, long? FromAccount = null, long? ToAccount = null,
-    string? FromBank = null, string? ToBank = null);
+    string? FromBank = null, string? ToBank = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] decimal? Sent = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? SentCurrency = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] decimal? Received = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ReceivedCurrency = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] decimal? Lost = null);
 
 /// <summary>The total moved from one place to another over a period.</summary>
 public sealed record Flow(string From, string To, decimal Amount, bool FromOutside, bool ToOutside, int Count);
@@ -155,8 +163,13 @@ public static class Movements
                 // The amount sent, as the period shows it; the amount received when the sending half is out of the
                 // period (in two currencies the two differ by the banks' rate and fees).
                 var amount = Math.Abs(inPeriod.TryGetValue(out_.Id, out var sent) ? sent.Amount : t.Amount);
+                // As the banks wrote them (the period's may be converted): two currencies, an international transfer.
+                var (so, si) = (linked.GetValueOrDefault(out_.Id) ?? out_, linked.GetValueOrDefault(in_.Id) ?? in_);
+                var across = so.Currency != si.Currency;
                 list.Add(new MovementView(Iso(out_.Date), out_.CategoryId, out_.Brand, amount, Name(out_.AccountId), Name(in_.AccountId),
-                    false, false, out_.Id, in_.Id, FromAccount: out_.AccountId, ToAccount: in_.AccountId));
+                    false, false, out_.Id, in_.Id, FromAccount: out_.AccountId, ToAccount: in_.AccountId,
+                    Sent: across ? -so.Amount : null, SentCurrency: across ? so.Currency : null,
+                    Received: across ? si.Amount : null, ReceivedCurrency: across ? si.Currency : null));
                 continue;
             }
             var kind = accounts.TryGetValue(t.AccountId, out var acc) ? acc.Kind : AccountKind.Bank;

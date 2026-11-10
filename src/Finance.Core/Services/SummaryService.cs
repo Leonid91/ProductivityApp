@@ -226,14 +226,14 @@ public sealed class SummaryService(Database db)
             lines.AddRange(globalLines);
             var left = txs.Where(t => t.Currency != global && !toGlobal.ContainsKey(t.Id)).ToList();
             parts.Add(new BankPart(group.Key is { } k ? k.ToString(CultureInfo.InvariantCulture) : "other", name, global, bank?.Currency ?? global, bank?.System,
-                Build(converted, from, to, g, global, toGlobal, accounts, unconverted: left, diagram: false)));
+                Build(converted, from, to, g, global, toGlobal, accounts, unconverted: left, diagram: false, rates: rates)));
             everything.AddRange(converted);
             foreach (var (txId, c) in toGlobal) everyConversion[txId] = c;
         }
         everything.Sort((a, b) => a.Date != b.Date ? a.Date.CompareTo(b.Date) : a.Id.CompareTo(b.Id));
         var status = rates.Status(source);
         // The operations are in the banks' parts already: not listed again.
-        var globalSummary = Build(everything, from, to, g, global, everyConversion, accounts, listOperations: false);
+        var globalSummary = Build(everything, from, to, g, global, everyConversion, accounts, listOperations: false, rates: rates);
         return new PeriodReport
         {
             From = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
@@ -323,11 +323,16 @@ public sealed class SummaryService(Database db)
 
     private PeriodSummary Build(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g, string currency,
         Dictionary<long, (Transaction Original, Converted Rate)>? converted, Dictionary<long, Account> accounts, bool listOperations = true,
-        List<Transaction>? unconverted = null, bool diagram = true)
+        List<Transaction>? unconverted = null, bool diagram = true, ExchangeRates? rates = null)
     {
         var (recurring, byId) = History();
         var tags = db.TagIndex();
         var movements = Movements.Build(txs, byId, accounts, db.Banks().ToDictionary(b => b.Id, b => b.Name));
+        // An international transfer: what the banks kept, the amount sent at the rate of its day less the amount received.
+        if (rates is not null) movements = [.. movements.Select(m => m.Sent is { } s && m.SentCurrency is { } sc && m.Received is { } r && m.ReceivedCurrency is { } rc
+            && DateOnly.TryParse(m.Date, CultureInfo.InvariantCulture, out var day)
+            && rates.Convert(s, sc, rc, day) is { } expected && rates.Convert(expected.Amount - r, rc, currency, day) is { } lost
+                ? m with { Lost = lost.Amount } : m)];
         var fromIso = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var toIso = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 

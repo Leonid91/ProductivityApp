@@ -176,7 +176,7 @@ public static class ReportBuilder
             col.Item().Text("How amounts are converted").FontSize(10).SemiBold();
             col.Item().Text($"Rates: {c.Source}, rates against {c.Base} ({c.Url}){(c.Latest is { } latest ? $", published up to {Day(latest, dateFormat)}" : "")}.").FontSize(8);
             col.Item().Text("Each operation is converted at the rate published for its own day (on a weekend or holiday, the last rate published before it). "
-                + $"Between two currencies other than {c.Base} the rate goes through {c.Base}, the same day. Each converted amount is rounded to the cent; totals add the rounded amounts.").FontSize(8);
+                + $"Between two currencies other than {c.Base} the rate goes through {c.Base}, the same day. Each converted amount is rounded to the cent. Totals add the rounded amounts.").FontSize(8);
             if (c.Lines.Count == 0)
             {
                 col.Item().Text($"Nothing to convert: every amount is in {c.To}.").FontSize(8);

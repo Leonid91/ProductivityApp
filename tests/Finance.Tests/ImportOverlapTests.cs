@@ -29,7 +29,7 @@ namespace ProductivityApp.Finance.Tests;
 /// <item>two crossing files opened together, saved one after the other;</item>
 /// <item>a statement deleted, then imported again;</item>
 /// <item>operations corrected by hand, then a crossing statement;</item>
-/// <item>an operation entered by hand, then the statement holding it.</item>
+/// <item>an operation entered by hand, then the statement holding it (both stay; entering the same one warns).</item>
 /// </list>
 /// Two banks: a transfer between them in one currency (paired whatever the order of the imports, waiting outside
 /// while its other half is not imported, not paired twice by crossing statements), across the end of a month, two
@@ -318,22 +318,28 @@ public class ImportOverlapTests
     }
 
     [Fact]
-    public async Task An_operation_entered_by_hand_is_not_counted_again_by_its_statement()
+    public async Task An_operation_entered_by_hand_stays_and_the_person_is_told_of_the_same_one()
     {
         using var s = new TempStore();
         var first = await Import(s, Statement("Northwind Bank", [new(D(9, 3), "METRO #123 MONTREAL QC", -12m)], D(9, 1), D(9, 30)), null, s.Bank);
-        // Entered by hand: the purchase of the day, and one remembered a day early.
-        s.Transactions.Create(new TransactionInput("2026-10-14", -4.75m, "Cafe Exemple", "restaurants", first.AccountId, null));
-        s.Transactions.Create(new TransactionInput("2026-10-21", -38.20m, "Librairie Exemple", "shopping", first.AccountId, null));
+        // Entered by hand: what is entered by hand is the person's, whatever the files say later.
+        var coffee = s.Transactions.Create(new TransactionInput("2026-10-14", -4.75m, "Cafe Exemple", "restaurants", first.AccountId, null));
         var october = new List<FakeTransaction>
         {
             new(D(10, 14), "CAFE EXEMPLE MONTREAL", -4.75m),
-            new(D(10, 22), "LIBRAIRIE EXEMPLE", -38.20m),
             new(D(10, 25), "METRO #123 MONTREAL QC", -61.40m),
         };
         var r = await Import(s, Statement("Northwind Bank", october, D(10, 1), D(10, 31)), first.AccountId, s.Bank);
-        Assert.Equal((1, 2), (r.Added, r.SkippedDuplicates));
+        Assert.Equal((2, 0), (r.Added, r.SkippedDuplicates));
         Assert.Equal(4, Stored(s, first.AccountId).Count);
+        // Entering exactly the same operation again (same day, amount, brand and account): told, not refused. The day
+        // has two already: the one entered by hand and the statement's line (named "Cafe Exemple" too).
+        Assert.Equal(2, s.Transactions.SameOnDay("2026-10-14", -4.75m, "cafe exemple", first.AccountId, null));
+        Assert.Equal(1, s.Transactions.SameOnDay("2026-10-14", -4.75m, "Cafe Exemple", first.AccountId, coffee.Id));
+        Assert.Equal(0, s.Transactions.SameOnDay("2026-10-14", -5.75m, "Cafe Exemple", first.AccountId, null));
+        Assert.Equal(0, s.Transactions.SameOnDay("2026-10-15", -4.75m, "Cafe Exemple", first.AccountId, null));
+        s.Transactions.Create(new TransactionInput("2026-10-14", -4.75m, "Cafe Exemple", "restaurants", first.AccountId, null));
+        Assert.Equal(3, s.Transactions.SameOnDay("2026-10-14", -4.75m, "Cafe Exemple", first.AccountId, null));
     }
 
     // ======================================================================================== several banks
@@ -626,5 +632,81 @@ public class ImportOverlapTests
         var arrow = Assert.Single(d.Arrows);
         Assert.NotEqual(arrow.From, arrow.To);
         Assert.Equal(2, d.Banks.Count);
+    }
+
+    // ======================================================================================== four banks, Wise between them
+
+    /// <summary>
+    /// The statements of <see cref="FourBanksGenerator"/> imported, each into a new account at its bank, with invented
+    /// rates: 1 EUR = 1.60 CAD = 1.10 USD every day.
+    /// </summary>
+    private static async Task<(ExchangeRates Rates, Dictionary<string, long> Accounts)> FourBanks(TempStore s)
+    {
+        var rates = new ExchangeRates(s.Db);
+        var csv = new StringBuilder("Date,CAD,USD,\n");
+        for (var d = D(10, 31); d >= D(9, 25); d = d.AddDays(-1)) csv.Append(CultureInfo.InvariantCulture, $"{d:yyyy-MM-dd},1.6000,1.1000,\n");
+        rates.Save(RateSource.Ecb, Encoding.UTF8.GetBytes(csv.ToString()));
+        s.Transactions.Convert = (amount, from, to, day) => rates.Convert(amount, from, to, day)?.Amount;
+        var banks = new Dictionary<string, long>();
+        var ids = new Dictionary<string, long>();
+        foreach (var f in FourBanksGenerator.Statements())
+        {
+            if (!banks.TryGetValue(f.Bank, out var bank))
+                banks[f.Bank] = bank = s.Db.AddBank(new Bank { Name = f.Bank, Country = f.Country, System = f.System, Currency = f.Currency });
+            ids[f.Account] = (await Import(s, f.Bytes, f.FileName, null, bank, f.Currency, f.Kind, f.Account)).AccountId;
+        }
+        return (rates, ids);
+    }
+
+    [Fact]
+    public async Task Four_banks_in_three_currencies_with_Wise_between_them()
+    {
+        using var s = new TempStore();
+        var (rates, ids) = await FourBanks(s);
+        var txs = s.Db.AllTransactions();
+        Transaction Op(string account, decimal amount) => txs.Single(t => t.AccountId == ids[account] && t.Amount == amount);
+        void Paired(string from, decimal sent, string to, decimal received)
+        {
+            var (o, i) = (Op(from, sent), Op(to, received));
+            Assert.True(o.LinkedId == i.Id && i.LinkedId == o.Id, $"{from} {sent} and {to} {received} are not one movement");
+        }
+        // Into Wise, between its currencies, out of it; inside each bank; one bank to another without Wise.
+        Paired("Northwind chequing", -2000m, "Wise CAD", 2000m);
+        Paired("Wise CAD", -1985m, "Wise EUR", 1228.22m);
+        Paired("Wise EUR", -1228.22m, "Compte courant", 1228.22m);
+        Paired("Contoso checking", -1500m, "Wise USD", 1500m);
+        Paired("Wise USD", -1490m, "Wise CAD", 2120.00m);
+        Paired("Compte courant", -820m, "Northwind chequing", 1296.26m);
+        Paired("Northwind chequing", -900m, "Northwind savings", 900m);
+        Paired("Northwind chequing", -1240m, "Northwind card", 1240m);
+        Paired("Compte courant", -600m, "Livret A", 600m);
+        Paired("Contoso checking", -700m, "Contoso savings", 700m);
+        Paired("Contoso checking", -830m, "Contoso card", 830m);
+        // The exchanges inside Wise are only found the way of the transfer services: that way paired the most, it was kept.
+        Assert.Equal("transfer services", TransferMatcher.LastWay);
+
+        // October in Canadian dollars: only the purchases are spending, only the salaries income.
+        var r = s.Summaries.Report(D(10, 1), D(10, 31), Granularity.Month, "CAD", rates);
+        decimal Cad(decimal amount, string currency) => rates.Convert(amount, currency, "CAD", D(10, 15))!.Amount;
+        Assert.Equal(80m + 16.99m + Cad(12.40m, "EUR") + Cad(45m, "USD") + Cad(25m, "USD"), r.Global.Expenses);
+        Assert.Equal(4200m + Cad(2500m, "EUR") + Cad(3000m, "USD"), r.Global.Earnings);
+        Assert.Equal(r.Global.Expenses, r.Banks.Sum(b => b.Summary.Expenses));
+        // What the banks kept: 820.00 EUR are 1,312.00 CAD at the day's rate, 1,296.26 CAD arrived.
+        var direct = r.Global.Movements.Single(m => m.From == "Compte courant" && m.To == "Northwind chequing");
+        Assert.Equal((820m, "EUR", 1296.26m, "CAD", 15.74m), (direct.Sent, direct.SentCurrency, direct.Received, direct.ReceivedCurrency, direct.Lost));
+        // Inside Wise: 1,985.00 CAD are 1,240.63 EUR at the day's rate, 1,228.22 EUR arrived: 12.41 EUR kept, 19.86 CAD.
+        var exchange = r.Global.Movements.Single(m => m.From == "Wise CAD" && m.To == "Wise EUR");
+        Assert.Equal(Cad(12.41m, "EUR"), exchange.Lost);
+        // Investments go outside the app.
+        Assert.Equal(2, r.Global.Movements.Count(m => m.ToOutside && m.CategoryId == Categories.Investments));
+
+        // The diagram: four banks holding their accounts, the outside box, readable, at most one crossing.
+        var d = r.Global.Diagram;
+        Assert.Equal(["Banque Exemple", "Contoso Bank", "Northwind Bank", "Wise"], d.Banks.Select(b => b.Name).Order());
+        Assert.Equal(11, d.Nodes.Count(n => !n.Outside));
+        Assert.Single(d.Nodes, n => n.Outside);
+        Assert.Contains(d.Arrows, a => a.Lost == 15.74m);
+        DiagramChecks.AssertReadable(d);
+        Assert.True(DiagramChecks.Crossings(d) <= 1, $"{DiagramChecks.Crossings(d)} crossings");
     }
 }

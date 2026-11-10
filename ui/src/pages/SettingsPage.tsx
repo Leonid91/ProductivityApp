@@ -99,7 +99,7 @@ function RatesSourceRow({ onEdit }: { onEdit: () => void }) {
   return (
     <Row label="Exchange rates" note={!checking && error ? <RatesError message={error} /> : undefined}>
       {checking && <CircularProgress size={16} aria-label="Downloading the exchange rates" />}
-      <Button size="small" data-rates-link onClick={onEdit}>Edit banks</Button>
+      <Button size="small" data-rates-link onClick={onEdit}>Select source</Button>
       <TextField select size="small" value={sources.some((s) => s.id === current) ? current : ''} onChange={(e) => void choose(e.target.value, sources)} sx={{ width: 220 }}
         slotProps={{ htmlInput: { 'data-rates-source-select': '' } }}>
         {sources.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
@@ -357,7 +357,7 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
             </TextField>
           </Row>
           <Toggle label="Show all data in pie charts" setting="pieShowAll" />
-          <Toggle label="Show only first level categories in charts" setting="chartsTopLevel" />
+          <Toggle label="Expenses per category charts: main categories only" setting="chartsTopLevel" />
         </Group>
         <Group title="Calendar">
           {/* Where the weekend sits: Sunday first and Saturday last in North America, at the right from Monday, at the left from Saturday. */}

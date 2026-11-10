@@ -196,6 +196,24 @@ public class HolidayTests
     }
 
     [Fact]
+    public void The_year_of_a_pasted_link_is_found_by_the_app()
+    {
+        // Pasted as given by the site: the one year it names is the year to download, every year.
+        Assert.Equal("https://canada-holidays.ca/api/v1/provinces/QC?year={year}", Holidays.YearTemplate("https://canada-holidays.ca/api/v1/provinces/QC?year=2026"));
+        Assert.Equal("https://example.test/{year}/holidays.json", Holidays.YearTemplate("https://example.test/2025/holidays.json"));
+        // No year, two years, or a longer number: kept as it is.
+        Assert.Equal("https://example.test/all.ics", Holidays.YearTemplate("https://example.test/all.ics"));
+        Assert.Equal("https://example.test/2020-2030.ics", Holidays.YearTemplate("https://example.test/2020-2030.ics"));
+        Assert.Equal("https://example.test/id/120261", Holidays.YearTemplate("https://example.test/id/120261"));
+        // Saved from the table: kept with the year mark, downloaded for every year.
+        using var s = new TempStore();
+        var h = new Holidays(s.Db);
+        var saved = h.SaveCalendar(null, "Ontario", "https://canada-holidays.ca/api/v1/provinces/ON?year=2026", "ca");
+        Assert.Equal("https://canada-holidays.ca/api/v1/provinces/ON?year={year}", saved.Url);
+        Assert.Equal(12, Holidays.Addresses(saved.Url, 2026).Count);
+    }
+
+    [Fact]
     public void Weekend_days_are_the_ones_chosen()
     {
         Assert.Equal(Holidays.DefaultWeekend, Holidays.ParseWeekend(null));

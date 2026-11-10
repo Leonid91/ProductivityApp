@@ -336,7 +336,7 @@ const ConversionPanel = memo(function ConversionPanel({ conversion }: { conversi
       </Typography>
       <Typography variant="body2" color="text.secondary">
         Each operation is converted at the rate published for its own day (on a weekend or holiday, the last rate before it).
-        Between two currencies other than {conversion.base} the rate goes through {conversion.base}, the same day. Each converted amount is rounded to the cent; totals add the rounded amounts.
+        Between two currencies other than {conversion.base} the rate goes through {conversion.base}, the same day. Each converted amount is rounded to the cent. Totals add the rounded amounts.
       </Typography>
       {conversion.lines.length === 0 ? (
         <Typography variant="body2" sx={{ mt: 1 }}>Nothing to convert: every amount is in {conversion.to}.</Typography>
@@ -486,7 +486,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
           {shown === 'analytics' && report.salary && (
             // The net salary of the period per hour worked and per year, every bank together, in the display currency.
             <Typography data-salary className="tnum" sx={{ mt: 1, mb: 2.5, fontSize: 15.5 }}
-              title={`${money(report.salary.net, currency)} of salary over ${plural(report.salary.businessDays, 'business day')} of ${report.salary.hoursPerDay} hours; a year: ${report.salary.yearBusinessDays} business days`}>
+              title={`${money(report.salary.net, currency)} of salary over ${plural(report.salary.businessDays, 'business day')} of ${report.salary.hoursPerDay} hours. A year: ${report.salary.yearBusinessDays} business days`}>
               Your net salary per hour is <Box component="b" data-salary-hour sx={{ fontWeight: 680 }}>{money(report.salary.perHour, currency)}</Box> and
               per year is <Box component="b" data-salary-year sx={{ fontWeight: 680 }}>{money(report.salary.perYear, currency)}</Box>.
             </Typography>

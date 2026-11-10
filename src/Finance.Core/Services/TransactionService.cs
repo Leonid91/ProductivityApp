@@ -73,6 +73,19 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         return ReapplyRules();
     }
 
+    /// <summary>
+    /// How many operations already stored are exactly the one being entered: the same day, amount, brand and account
+    /// (<paramref name="except"/>: the one being edited). Two identical coffees in a day happen: the person is told,
+    /// nothing is refused.
+    /// </summary>
+    public int SameOnDay(string date, decimal amount, string brand, long? accountId, long? except)
+    {
+        if (!DateOnly.TryParseExact(date, "yyyy-MM-dd", out var day) || amount == 0 || brand.Trim().Length == 0) return 0;
+        var rounded = decimal.Round(amount, 2, MidpointRounding.AwayFromZero);
+        return db.Transactions(day, day).Count(t => t.Id != except && t.Amount == rounded
+            && string.Equals(t.Brand, brand.Trim(), StringComparison.OrdinalIgnoreCase) && (accountId is null || t.AccountId == accountId));
+    }
+
     public TransactionView Create(TransactionInput input)
     {
         var t = new Transaction();

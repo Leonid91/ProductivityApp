@@ -40,6 +40,16 @@ if (args.Length == 2 && args[0] == "generate")
         Write(Path.Combine(dir, "BNC " + BncGenerator.FileName(a, "pdf")), BncGenerator.Pdf(bnc, a));
         Write(Path.Combine(dir, "BNC " + BncGenerator.FileName(a, "csv")), BncGenerator.Csv(bnc, a));
     }
+    // Four banks in three currencies with Wise between them, October 2026, in a folder of their own (imported apart),
+    // with what each file is: its account, bank, country, banking system, currency and type.
+    var four = Directory.CreateDirectory(Path.Combine(dir, "four banks")).FullName;
+    var list = new List<object>();
+    foreach (var f in FourBanksGenerator.Statements())
+    {
+        Write(Path.Combine(four, f.FileName), f.Bytes);
+        list.Add(new { file = f.FileName, account = f.Account, bank = f.Bank, country = f.Country, system = f.System.ToString(), currency = f.Currency, kind = f.Kind.ToString() });
+    }
+    File.WriteAllText(Path.Combine(four, "accounts.json"), System.Text.Json.JsonSerializer.Serialize(list));
     return 0;
 }
 if (args.Length == 2 && args[0] == "parse")

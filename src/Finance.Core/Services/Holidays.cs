@@ -153,7 +153,7 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
     public HolidayCalendar SaveCalendar(string? id, string location, string url, string? parent = null)
     {
         location = location.Trim();
-        url = url.Trim();
+        url = YearTemplate(url.Trim());
         if (location.Length == 0) throw new ArgumentException("Write the place of the calendar.");
         if (location.Length > 80) throw new ArgumentException("The place is too long (80 characters at most).");
         CheckAddress(url);
@@ -217,6 +217,17 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         var real = url.Replace(YearMark, "2000", StringComparison.OrdinalIgnoreCase);
         if (url.Length > 2000 || !Uri.TryCreate(real, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || uri.Host.Length == 0)
             throw new ArgumentException("The address must be a full web address starting with https://.");
+    }
+
+    /// <summary>
+    /// A link as pasted (".../holidays?year=2026"): the one year it names becomes "{year}", so every year is
+    /// downloaded from it. A link naming no year, or several, is kept as it is.
+    /// </summary>
+    public static string YearTemplate(string url)
+    {
+        if (url.Contains(YearMark, StringComparison.OrdinalIgnoreCase)) return url;
+        var years = System.Text.RegularExpressions.Regex.Matches(url, @"(?<![0-9])(?:19|20)[0-9]{2}(?![0-9])");
+        return years.Count == 1 ? url[..years[0].Index] + YearMark + url[(years[0].Index + 4)..] : url;
     }
 
     /// <summary>The addresses a calendar is downloaded from: itself, or one per year when it has "{year}".</summary>

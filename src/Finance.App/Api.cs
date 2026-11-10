@@ -122,6 +122,11 @@ internal static class Api
         b.Register("tx.get", p => s.Db.AllTransactions().FirstOrDefault(t => t.Id == p.Get<long>("id")) is { } tx
             ? SummaryService.View(tx, s.Db.TagIndex()) : throw new ArgumentException("This operation no longer exists."));
         b.Register("tx.create", p => s.Transactions.Create(p.Get<TransactionInput>("input")));
+        // While an operation is entered: how many identical ones the day already has (a warning, never a refusal).
+        b.Register("tx.sameOnDay", p => new
+        {
+            count = s.Transactions.SameOnDay(p.Get<string>("date"), p.Get<decimal>("amount"), p.Get<string>("brand"), p.Opt<long?>("accountId"), p.Opt<long?>("except")),
+        });
         b.Register("tx.update", p => s.Transactions.Update(p.Get<long>("id"), p.Get<TransactionInput>("input"), p.Opt<bool?>("allOfBrand") ?? true));
         b.Register("tx.delete", p => { s.Transactions.Delete(p.Get<long>("id")); return null; });
 

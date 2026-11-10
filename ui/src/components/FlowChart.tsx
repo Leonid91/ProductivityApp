@@ -20,6 +20,9 @@ export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; 
   const between = flows.filter((f) => !f.fromOutside && !f.toOutside).reduce((s, f) => s + f.amount, 0)
   const out = flows.filter((f) => f.toOutside).reduce((s, f) => s + f.amount, 0)
   const inn = flows.filter((f) => f.fromOutside).reduce((s, f) => s + f.amount, 0)
+  // What the banks kept on international transfers (their rate and fees): the amount sent at the rate of its day, less the amount received.
+  const lost = diagram.arrows.reduce((s, a) => s + (a.lost ?? 0), 0)
+  const hasLost = diagram.arrows.some((a) => a.lost != null)
   const name = (id: string) => { const n = diagram.nodes.find((x) => x.id === id); return n ? n.title ?? n.name : id }
 
   return (
@@ -29,6 +32,7 @@ export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; 
         <Legend color={internal} label="Between your accounts" value={money(between, currency)} />
         <Legend color={outside} label="Sent outside the app" value={money(out, currency)} />
         <Legend color={outside} label="Received from outside the app" value={money(inn, currency)} />
+        {hasLost && <Legend data-lost label="Lost to exchange and fees" value={money(lost, currency)} />}
       </Box>
       {diagram.nodes.length === 0 ? (
         <Typography color="text.secondary" sx={{ py: 5, textAlign: 'center' }}>No transfers in this period</Typography>
@@ -46,7 +50,8 @@ export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; 
             const fade = hover !== null && hover !== i
             return (
               <g key={'a' + i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ opacity: fade ? 0.25 : 1, transition: 'opacity 120ms' }}>
-                <title>{`${name(a.from)} → ${name(a.to)}: ${money(a.amount, currency)} (${a.count} movement${a.count === 1 ? '' : 's'})`}</title>
+                <title>{`${name(a.from)} → ${name(a.to)}: ${money(a.amount, currency)} (${a.count} movement${a.count === 1 ? '' : 's'})`
+                  + (a.lost != null ? `. Lost to exchange and fees: ${money(a.lost, currency)}` : '')}</title>
                 <path d={a.path} fill="none" stroke={color} strokeOpacity={0.85} strokeWidth={a.width} strokeLinecap="round" />
               </g>
             )
@@ -87,10 +92,11 @@ function fit(name: string, w: number) {
   return name.length <= max ? name : name.slice(0, Math.max(1, max - 1)).trimEnd() + '…'
 }
 
-function Legend({ color, label, value }: { color: string; label: string; value: string }) {
+/** One figure of the legend: with the arrow of its colour when it names arrows of the drawing. */
+function Legend({ color, label, value, ...rest }: { color?: string; label: string; value: string; 'data-lost'?: boolean }) {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-      <Box component="span" sx={{ color, fontWeight: 800, fontSize: 16, lineHeight: 1 }}>→</Box>
+    <Box {...rest} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+      {color && <Box component="span" sx={{ color, fontWeight: 800, fontSize: 16, lineHeight: 1 }}>→</Box>}
       <Typography variant="body2" color="text.secondary">{label}</Typography>
       <Typography variant="body2" className="tnum" sx={{ fontWeight: 600 }}>{value}</Typography>
     </Box>

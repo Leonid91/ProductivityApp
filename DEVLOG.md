@@ -671,3 +671,34 @@ real app with `tools/e2e/perf.mjs`.
   without holding the operation itself.
 - An operation entered by hand, then imported with its statement, was counted twice: it is now recognised by its brand.
 - Two accounts with one name at two banks were drawn as one box.
+
+## November 10th, 2026 - Readable money moved, international transfers through Wise and Revolut - Commit 31
+
+### Changed
+- Money moved, laid out again from the ground up: accounts placed in their bank by where their money goes (the ones
+  moving money with another bank or the outside on its side); banks ordered so that those moving money together sit
+  side by side; arrows chosen knowing the others (no crossing where one can be avoided), natural curves without loops,
+  never over a bank's name, never out of the drawing; an amount never over its own arrow (it goes beside a short one),
+  a box, a bank's name, a head or another amount; more room between the boxes when it is too tight. Several layouts
+  are drawn and the clearest kept; a diagram already drawn is reused.
+- Transfers between two currencies: the way of the transfer services (Wise, Revolut: named in the wording or as the
+  bank of an account, a few more days between the halves, the exchanges between the currencies of an account held
+  there) is tried beside the general way, and the one pairing the most operations is kept, at every import.
+- What is lost to exchange and fees on a transfer between two currencies (the amount sent at the rate of its day, less
+  the amount received) is said in the money-moved card and on its arrow, in the display currency; the movements table writes
+  such a transfer in both currencies ("€820.00 sent, $1,296.26 received").
+- An operation entered by hand stays the person's: never taken for a line of a statement. Entering exactly an
+  operation the day already has (same amount, brand and account) is said while typing, never refused.
+- Brands: the dialog shows the brand and the category as the same kind of field (a list of brands, a category list).
+- Learned corrections: the statement wordings one after the other, comma-separated, a line breaking only between two.
+- Holidays: the year of a pasted link is found by the app (".../holidays?year=2026"), no "{year}" to write; the help
+  says only what link to paste.
+- Settings: the date format examples show today's date; "Expenses per category charts: main categories only" names
+  the charts it changes; "Select source" beside the exchange rates.
+- No phrase of the interface or the PDF joined to the next by a semicolon (the end-to-end check reads every screen).
+
+### Added
+- Unit tests: the layouts seen in real use (one bank in a month and in a year, several banks, four banks with Wise)
+  and 150 invented ones are checked for readability; four banks in three currencies with Wise between them imported
+  from their statements (every transfer one movement, totals, what the banks kept, the diagram).
+- The sample statements hold the four banks with Wise (October 2026), imported and looked at in the end-to-end check.

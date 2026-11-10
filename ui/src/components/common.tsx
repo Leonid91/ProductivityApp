@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import {
   Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
-  Tooltip, Typography, useTheme, type SxProps, type Theme,
+  TextField, Tooltip, Typography, useTheme, type SxProps, type Theme,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import Check from '@mui/icons-material/CheckRounded'
@@ -34,6 +34,41 @@ const kinds: CategoryKind[] = ['expense', 'income', 'transfer']
 export function useCategorySections(): [CategoryKind, string, (root: Category) => boolean][] {
   const { settings } = useApp()
   return kinds.map((kind) => [kind, settings[`section.${kind}`] ?? kind, (c: Category) => c.kind === kind])
+}
+
+/**
+ * The category field of a dialog: an outlined dropdown like the other fields, grouped by kind, nested categories
+ * indented under theirs, each in its colour with its icon.
+ */
+export function CategorySelect({ value, onChange, label = 'Category' }: { value: string; onChange: (id: string) => void; label?: string }) {
+  const { tree, category } = useApp()
+  const colorOf = useCategoryColor()
+  const categorySections = useCategorySections()
+  const chosen = colorOf(category(value))
+  return (
+    <TextField
+      select
+      label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      slotProps={{ select: { sx: chosen ? { color: chosen, fontWeight: 600, '& .MuiListItemIcon-root': { color: chosen } } : undefined } }}
+    >
+      {categorySections.flatMap(([, title, test]) => [
+        <ListSubheader key={title} sx={{ lineHeight: '30px', fontSize: 11.5, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '.04em' }}>{title}</ListSubheader>,
+        ...tree.filter((e) => test(e.root)).map(({ c, depth }) => {
+          const color = colorOf(c)
+          return (
+            <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + depth * 2.25, ...(color ? { color, fontWeight: 600 } : {}) }}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <ListItemIcon sx={{ minWidth: 32, color: color ?? undefined }}><CategoryIcon name={c.icon} fontSize="small" /></ListItemIcon>
+                <ListItemText slotProps={{ primary: { sx: color ? { color, fontWeight: 600 } : undefined } }}>{c.name}</ListItemText>
+              </Box>
+            </MenuItem>
+          )
+        }),
+      ])}
+    </TextField>
+  )
 }
 
 /** Category picker grouped by kind, nested categories indented under theirs; used in tables, drafts and dialogs. */

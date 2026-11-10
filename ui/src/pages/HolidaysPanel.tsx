@@ -9,7 +9,13 @@ import { ROW_ACTIONS_WIDTH, RowActions } from '../components/RowActions'
 import { SOURCE_LINE, SourceError, inlineInput, sourceLine, sourceRow, visuallyHidden } from '../components/sourceTable'
 
 /** What to paste as the address of a calendar, in one sentence. */
-const holidaysHelp = 'Paste the link of the holidays file (ICS or JSON), not of its web page; write {year} where the link names a year.'
+const holidaysHelp = 'The link of the holidays file itself (ICS or JSON), not of its web page.'
+
+/**
+ * A calendar's link as the person pasted it: the engine keeps "{year}" where the link names a year (to download every
+ * year), shown here with this year.
+ */
+const shownUrl = (url: string) => url.replace(/\{year\}/gi, String(new Date().getFullYear()))
 
 /** How far a province's or a state's place is set in under its country's. */
 const CHILD_INDENT = 28
@@ -108,19 +114,19 @@ function CalendarDialog({ open, calendar, calendars, free, onClose, onSaved }: {
   const hasUnder = calendar !== null && calendars.some((c) => c.parent === calendar.id)
   const pick = (p: HolidayPreset | undefined) => {
     setLocation(p?.location ?? '')
-    setUrl(p?.url ?? '')
+    setUrl(shownUrl(p?.url ?? ''))
     setParent(p?.parent && countries.some((c) => c.id === p.parent) ? p.parent : '')
   }
   useEffect(() => {
     if (!open) return
     setError(null)
-    if (calendar) { setLocation(calendar.location); setUrl(calendar.url); setParent(calendar.parent ?? '') }
+    if (calendar) { setLocation(calendar.location); setUrl(shownUrl(calendar.url)); setParent(calendar.parent ?? '') }
     else pick(free[0])
   }, [open, calendar]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = () => api.holidays.save({ id: calendar?.id, location, url, parent: parent || null }).then((r) => {
     notify(calendar ? 'Calendar saved' : 'Calendar added')
-    onSaved(r.calendars, r.id, !calendar || calendar.url !== url.trim())
+    onSaved(r.calendars, r.id, !calendar || shownUrl(calendar.url) !== url.trim())
     onClose()
   }, (e: unknown) => setError(e instanceof Error ? e.message : String(e)))
 
@@ -262,10 +268,10 @@ export function HolidaysTable({ holidays, adding, onAdded, confirm }: {
                   <TableCell>
                     <InputBase
                       key={c.url}
-                      defaultValue={c.url}
+                      defaultValue={shownUrl(c.url)}
                       fullWidth
                       inputProps={{ 'aria-label': `URL of the calendar ${c.location}`, 'data-field': 'url', spellCheck: false }}
-                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== c.url) void save(c, { url: v }) }}
+                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== shownUrl(c.url)) void save(c, { url: v }) }}
                       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                       sx={{ ...inlineInput, height: SOURCE_LINE, fontSize: 13, fontWeight: 450, width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', '& input': { textOverflow: 'ellipsis' } }}
                     />
