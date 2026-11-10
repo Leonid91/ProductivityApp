@@ -28,6 +28,7 @@ import { ExportDialog } from './ExportDialog'
 import { FlowChart } from './FlowChart'
 import { MovementsTable } from './MovementsTable'
 import { TransactionTable } from './TransactionTable'
+import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
 
 function Stat({ label, value, color, bg, note, ...rest }: { label: string; value: string; color?: string; bg: string; note?: string; 'data-part'?: string }) {
   return (
@@ -275,7 +276,7 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
 
 /** One bank's currency converted: totals before and after, the rates, and every rate by day on demand. */
 function ConversionRow({ line }: { line: ConversionLine }) {
-  const { settings } = useApp()
+  const { settings, go } = useApp()
   const [open, setOpen] = useState(false)
   const range = line.lowestRate === null ? '—'
     : line.lowestRate === line.highestRate ? `1 ${line.from} = ${rate(line.lowestRate)} ${line.to}`
@@ -292,10 +293,14 @@ function ConversionRow({ line }: { line: ConversionLine }) {
           {range}
           {line.rates.length > 0 && <Link component="button" data-rates-toggle sx={{ ml: 1, verticalAlign: 'baseline' }} onClick={() => setOpen(!open)}>{open ? 'Hide rates' : 'Rates by day'}</Link>}
         </TableCell>
+        {/* A conversion is made with the rates of the bank in use: its pencil opens Definitions > Exchange rates. */}
+        <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
+          <RowActions editLabel="Edit the exchange rates" onEdit={() => go('settings', 'rates')} />
+        </TableCell>
       </TableRow>
       {open && (
         <TableRow>
-          <TableCell colSpan={6} sx={{ py: 1 }}>
+          <TableCell colSpan={7} sx={{ py: 1 }}>
             <Box data-rates sx={{ maxHeight: 260, overflow: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', columnGap: 3 }}>
               {line.rates.map((r) => (
                 <Typography key={r.day} variant="body2" className="tnum" sx={{ py: 0.25 }}>
@@ -349,6 +354,7 @@ const ConversionPanel = memo(function ConversionPanel({ conversion }: { conversi
                 <TableCell align="right">Expenses</TableCell>
                 <TableCell align="right">Earnings</TableCell>
                 <TableCell>Rate</TableCell>
+                <TableCell sx={{ width: ROW_EDIT_WIDTH, px: 0 }} />
               </TableRow>
             </TableHead>
             <TableBody>{conversion.lines.map((l) => <ConversionRow key={`${l.group}:${l.from}:${l.to}`} line={l} />)}</TableBody>

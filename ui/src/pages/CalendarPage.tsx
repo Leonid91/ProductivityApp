@@ -162,7 +162,7 @@ export function CalendarPage() {
             initialView="dayGridMonth"
             initialDate={iso(month.y, month.m, 1)}
             headerToolbar={false}
-            firstDay={1}
+            firstDay={Number(settings.calendarFirstDay ?? 0)}
             fixedWeekCount={false}
             height="auto"
             events={events}

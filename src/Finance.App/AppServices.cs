@@ -35,6 +35,8 @@ internal sealed class AppServices : IDisposable
         ["ratesSource"] = "boc",
         // Weekend days, not business days: ISO numbers, Monday 1 to Sunday 7 (Definitions > Holidays).
         ["weekendDays"] = "6,7",
+        // The calendar's first day of the week: 0 Sunday (North America), 1 Monday (Europe), 6 Saturday (Middle East).
+        ["calendarFirstDay"] = "0",
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
         ["reportsFolder"] = "",
@@ -137,6 +139,8 @@ internal sealed class AppServices : IDisposable
             case "section.expense" or "section.income" or "section.transfer" when value.Trim().Length is 0 or > 40:
                 throw new ArgumentException("A name has 1 to 40 characters.");
             // Weekend days: ISO numbers of the week's days (Monday 1 to Sunday 7), comma separated; empty for none.
+            case "calendarFirstDay" when value is not ("0" or "1" or "6"):
+                throw new ArgumentException("The week starts on Sunday, Monday or Saturday.");
             case "weekendDays" when !System.Text.RegularExpressions.Regex.IsMatch(value, "^([1-7](,[1-7]){0,6})?$"):
                 throw new ArgumentException("Weekend days are numbers from 1 (Monday) to 7 (Sunday).");
             // The order the person gave the rows of a table: a list of row keys.
@@ -144,7 +148,7 @@ internal sealed class AppServices : IDisposable
                 throw new ArgumentException("Invalid row order.");
             case "currency" or "ratesSource" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers"
                 or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" or "chartsTopLevel"
-                or "section.expense" or "section.income" or "section.transfer" or "weekendDays":
+                or "section.expense" or "section.income" or "section.transfer" or "weekendDays" or "calendarFirstDay":
             case not null when key.StartsWith("order.", StringComparison.Ordinal):
                 Db.SetSetting(key, value);
                 break;

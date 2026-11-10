@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Box, IconButton, Menu, Pagination, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography, useTheme } from '@mui/material'
-import EditOutlined from '@mui/icons-material/EditOutlined'
+import { Box, Menu, Pagination, Table, TableBody, TableCell, TableHead, TableRow, Typography, useTheme } from '@mui/material'
 import East from '@mui/icons-material/EastRounded'
 import { api, type MovementView, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
@@ -11,6 +10,7 @@ import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './fi
 import { TagCell, useTagName } from './tags'
 import { HeaderButton } from './TransactionTable'
 import { useKept } from '../keep'
+import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
 
 const NONE_HIDDEN = new Set<string>()
 
@@ -90,7 +90,7 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
           <col style={{ width: '16%' }} />
           <col style={{ width: '12%' }} />
           <col style={{ width: '10%' }} />
-          <col style={{ width: 40 }} />
+          <col style={{ width: ROW_EDIT_WIDTH }} />
         </colgroup>
         <TableHead>
           <TableRow>
@@ -109,7 +109,7 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
           {visible.map((m) => {
             const tx = byId.get(m.editId)
             return (
-              <TableRow key={m.editId} hover sx={{ '&:hover .row-action': { opacity: 1 }, '& td': { py: 0.9 } }}>
+              <TableRow key={m.editId} hover sx={{ '& td': { py: 0.9 } }}>
                 <TableCell className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(m.date, settings.dateFormat)}</TableCell>
                 <TableCell><CategoryPill id={m.categoryId} onChange={(id) => void setCategory(m, id)} /></TableCell>
                 <TableCell>
@@ -122,14 +122,8 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
                 <TableCell>{place(m.to, m.toOutside, m.toType)}</TableCell>
                 <TableCell>{tx && <TagCell operationId={tx.id} own={tx.ownTags} all={tagsOf(m)} categoryName={category(tx.categoryId).name} />}</TableCell>
                 <TableCell align="right" className="tnum" sx={{ fontWeight: 560, whiteSpace: 'nowrap' }}>{money(m.amount, currency)}</TableCell>
-                <TableCell padding="none" align="right">
-                  {tx && (
-                    <Tooltip title="Edit">
-                      <IconButton className="row-action" size="small" aria-label="Edit" onClick={() => onEdit(tx)} sx={{ opacity: 0, transition: 'opacity 120ms', '&:focus-visible': { opacity: 1 } }}>
-                        <EditOutlined sx={{ fontSize: 17 }} />
-                      </IconButton>
-                    </Tooltip>
-                  )}
+                <TableCell padding="none" align="right" sx={{ pr: '4px !important' }}>
+                  {tx && <RowActions onEdit={() => onEdit(tx)} />}
                 </TableCell>
               </TableRow>
             )

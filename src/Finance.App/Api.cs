@@ -59,6 +59,8 @@ internal static class Api
             var saved = s.Holidays.SaveCalendar(p.Opt<string>("id"), p.Get<string>("location"), p.Get<string>("url"), p.Opt<string>("parent"));
             return new { id = saved.Id, calendars = s.Holidays.Views() };
         });
+        // The holidays of a year in the checked calendars together, each day once.
+        b.Register("holidays.total", p => { var year = p.Opt<int?>("year") ?? DateTime.Today.Year; return new { year, total = s.Holidays.TotalHolidays(year) }; });
         b.Register("holidays.setActive", p => { s.Holidays.SetActive(p.Get<string>("id"), p.Get<bool>("active")); return s.Holidays.Views(); });
         b.Register("holidays.remove", p => { s.Holidays.RemoveCalendar(p.Get<string>("id")); return s.Holidays.Views(); });
         // Downloads a calendar again, which checks its address too.
@@ -117,6 +119,8 @@ internal static class Api
 
         // ------------------------------------------------------------ brands & dictionary
         b.Register("brands.list", _ => Brands(s));
+        // A brand renamed everywhere (its operations and what was learned for it).
+        b.Register("brands.rename", p => new { changed = s.Transactions.RenameBrand(p.Get<string>("from"), p.Get<string>("to")) });
         b.Register("brands.setCategory", p => new { changed = s.Transactions.SetBrandCategory(p.Get<string>("brand"), p.Get<string>("categoryId")) });
         // Forgets every correction learned for a brand (its wordings and its category).
         b.Register("brands.forget", p =>

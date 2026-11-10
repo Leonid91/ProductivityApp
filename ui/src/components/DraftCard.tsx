@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Box, Button, Checkbox, Chip, InputBase, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
+  Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, InputBase, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material'
 import CheckCircle from '@mui/icons-material/CheckCircleRounded'
 import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
@@ -13,6 +13,38 @@ import { formatDate, money, plural, shortDate } from '../format'
 import { CategoryPill, Money } from './common'
 import { TemplateEditor } from './TemplateEditor'
 import { TagList, useCategoryTags } from './tags'
+import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
+
+/** A line of the statement being imported, changed from its pencil: its brand, its category, and whether it is imported. */
+function DraftRowDialog({ row, onClose, onSave }: {
+  row: { label: string; brand: string; categoryId: string; include: boolean; duplicate: boolean } | null
+  onClose: () => void
+  onSave: (change: { brand: string; categoryId: string; include: boolean }) => void
+}) {
+  const [brand, setBrand] = useState('')
+  const [categoryId, setCategoryId] = useState('other')
+  const [include, setInclude] = useState(true)
+  useEffect(() => { if (row) { setBrand(row.brand); setCategoryId(row.categoryId); setInclude(row.include) } }, [row])
+  return (
+    <Dialog open={row !== null} onClose={onClose} maxWidth="xs" fullWidth data-draft-row-dialog>
+      <DialogTitle>Edit the line</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <Typography variant="body2" color="text.secondary" className="selectable" sx={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12.5 }}>{row?.label}</Typography>
+        <TextField autoFocus label="Brand name" value={brand} onChange={(e) => setBrand(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'brand' } }} />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ minWidth: 70 }}>Category</Typography>
+          <CategoryPill id={categoryId} onChange={setCategoryId} />
+        </Box>
+        <FormControlLabel label={row?.duplicate ? 'Already imported' : 'Import this line'} disabled={row?.duplicate}
+          control={<Checkbox checked={include && !row?.duplicate} onChange={(e) => setInclude(e.target.checked)} />} />
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={brand.trim() === ''} onClick={() => { onSave({ brand: brand.trim(), categoryId, include }); onClose() }}>Save</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
 
 export function StatusChip({ draft }: { draft: Draft }) {
   if (draft.alreadyImported) return <Chip size="small" color="default" label="Already imported" />
@@ -91,6 +123,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
   const [bankName, setBankName] = useState(initial.bank ?? '')
   const [currency, setCurrency] = useState(banks.find((b) => b.id === initial.suggestedBankId)?.currency ?? (initial.currency || settings.currency))
   const [edits, setEdits] = useState<Map<number, DraftEdit>>(new Map())
+  const [editingRow, setEditingRow] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [editingColumns, setEditingColumns] = useState(false)
 
@@ -121,27 +154,29 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
   const kindLabel = (k: AccountKind, s = system) => accountKinds(s).find((x) => x.value === k)?.label ?? k
   const chosen = accountId !== '' && (accountId !== 'new' || (kind !== '' && bankId !== '' && (bankId !== 'new' || bankName.trim() !== '')))
 
-  const edit = (index: number, change: Partial<DraftEdit>) => {
-    const next = new Map(edits)
+  const edit = (index: number, change: Partial<DraftEdit>) => setEdits((prev) => {
+    const next = new Map(prev)
     const current = next.get(index) ?? { index, brand: null, categoryId: null, include: true }
     next.set(index, { ...current, ...change })
-    setEdits(next)
-  }
+    return next
+  })
 
   /** A new category for one line: for it only, or for every line of the same brand (and learned for later imports). */
-  const changeCategory = async (index: number, id: string) => {
+  const changeCategory = async (index: number, id: string, brandNow?: string) => {
     const row = draft.rows.find((r) => r.index === index)
     if (!row) return
-    const brand = edits.get(index)?.brand ?? row.brand
+    const brand = brandNow ?? edits.get(index)?.brand ?? row.brand
     const all = await askScope(brand, category(id).name)
     if (all === null) return
-    const next = new Map(edits)
-    const targets = all ? draft.rows.filter((r) => (edits.get(r.index)?.brand ?? r.brand).toLowerCase() === brand.toLowerCase()) : [row]
-    for (const r of targets) {
-      const current = next.get(r.index) ?? { index: r.index, brand: null, categoryId: null, include: true }
-      next.set(r.index, { ...current, categoryId: id, allOfBrand: all })
-    }
-    setEdits(next)
+    setEdits((prev) => {
+      const next = new Map(prev)
+      const targets = all ? draft.rows.filter((r) => (prev.get(r.index)?.brand ?? r.brand).toLowerCase() === brand.toLowerCase()) : [row]
+      for (const r of targets) {
+        const current = next.get(r.index) ?? { index: r.index, brand: null, categoryId: null, include: true }
+        next.set(r.index, { ...current, categoryId: id, allOfBrand: all })
+      }
+      return next
+    })
   }
 
   const included = useMemo(() => draft.rows.filter((r) => !r.duplicate && (edits.get(r.index)?.include ?? true)), [draft.rows, edits])
@@ -278,6 +313,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
                   <TableCell>Category</TableCell>
                   <TableCell>Tags</TableCell>
                   <TableCell align="right">Amount</TableCell>
+                  <TableCell sx={{ width: ROW_EDIT_WIDTH, px: 0 }} />
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -305,12 +341,30 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
                       <TableCell><CategoryPill id={e?.categoryId ?? r.categoryId} onChange={(id) => void changeCategory(r.index, id)} /></TableCell>
                       <TableCell><TagList ids={categoryTagsOf(e?.categoryId ?? r.categoryId)} /></TableCell>
                       <TableCell align="right"><Money value={r.amount} currency={currency} sign /></TableCell>
+                      <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
+                        <RowActions editLabel="Edit the line" onEdit={() => setEditingRow(r.index)} />
+                      </TableCell>
                     </TableRow>
                   )
                 })}
               </TableBody>
             </Table>
           </Box>
+          {(() => {
+            const r = editingRow === null ? undefined : draft.rows.find((x) => x.index === editingRow)
+            const e = r && edits.get(r.index)
+            return (
+              <DraftRowDialog
+                row={r ? { label: r.label, brand: e?.brand ?? r.brand, categoryId: e?.categoryId ?? r.categoryId, include: e?.include ?? true, duplicate: r.duplicate } : null}
+                onClose={() => setEditingRow(null)}
+                onSave={(change) => {
+                  if (!r) return
+                  edit(r.index, { brand: change.brand, include: change.include })
+                  if (change.categoryId !== (e?.categoryId ?? r.categoryId)) void changeCategory(r.index, change.categoryId, change.brand)
+                }}
+              />
+            )
+          })()}
         </>
       )}
 

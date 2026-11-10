@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
 import {
-  Autocomplete, Box, IconButton, InputBase, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
+  Autocomplete, Box, InputBase, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
   TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
 import Check from '@mui/icons-material/CheckRounded'
-import EditOutlined from '@mui/icons-material/EditOutlined'
 import FilterAlt from '@mui/icons-material/FilterAltRounded'
 import { api, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
@@ -15,6 +14,7 @@ import { CategoryPill, MenuDivider, Money } from './common'
 import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './filters'
 import { TagCell, useTagName } from './tags'
 import { useKept } from '../keep'
+import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
 
 const NONE_HIDDEN = new Set<string>()
 
@@ -175,7 +175,7 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
           <col style={{ width: frequency ? '15%' : '18%' }} />
           {frequency && <col style={{ width: '12%' }} />}
           <col style={{ width: '15%' }} />
-          <col style={{ width: 44 }} />
+          <col style={{ width: ROW_EDIT_WIDTH }} />
         </colgroup>
         <TableHead>
           <TableRow>
@@ -192,7 +192,7 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
           {visible.map((t) => {
             const transfer = category(t.categoryId).kind === 'transfer'
             return (
-              <TableRow key={t.id} hover sx={{ '&:hover .row-action': { opacity: 1 }, '& td': { py: 0.9 } }}>
+              <TableRow key={t.id} hover sx={{ '& td': { py: 0.9 } }}>
                 <TableCell className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(t.date, settings.dateFormat)}</TableCell>
                 <TableCell><CategoryPill id={t.categoryId} onChange={(id) => void setCategory(t, id)} /></TableCell>
                 <TableCell><BrandCell tx={t} brands={brands} onSaved={(n, b) => learned(n, b)} /></TableCell>
@@ -212,10 +212,8 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
                     </Typography>
                   )}
                 </TableCell>
-                <TableCell padding="none" align="right">
-                  <IconButton className="row-action" size="small" aria-label="Edit" onClick={() => onEdit(t)} sx={{ opacity: 0, transition: 'opacity 120ms', '&:focus-visible': { opacity: 1 } }}>
-                    <EditOutlined sx={{ fontSize: 17 }} />
-                  </IconButton>
+                <TableCell padding="none" align="right" sx={{ pr: '4px !important' }}>
+                  <RowActions onEdit={() => onEdit(t)} />
                 </TableCell>
               </TableRow>
             )

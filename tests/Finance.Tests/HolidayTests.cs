@@ -246,35 +246,67 @@ public class HolidayTests
         h.SetActive("us", false);
         h.SetActive("fr", false);
         h.SetActive("ca", false);
+        h.SetActive("qc", false);
         Assert.Equal(23, h.BusinessDays(from, to));
         Assert.Empty(h.List(from, to));
     }
 
     [Fact]
-    public void A_province_sits_under_its_country_checking_it_checks_the_country()
+    public void A_province_sits_under_its_country_each_checked_on_its_own()
     {
         using var s = new TempStore();
         var h = new Holidays(s.Db);
         bool Active(string id) => h.Find(id)!.Active;
-        // Canada alone: Québec can be left out.
+        // Canada alone: Québec unchecked, Canada stays checked.
         h.SetActive("qc", false);
-        Assert.True(Active("ca"));
-        Assert.False(Active("qc"));
-        // Canada unchecked unchecks Québec; Québec checked checks Canada again (the country's holidays apply in it).
-        h.SetActive("qc", true);
+        Assert.Equal((true, false), (Active("ca"), Active("qc")));
+        // Québec alone: checking it does not check Canada; unchecking Canada does not uncheck Québec.
         h.SetActive("ca", false);
-        Assert.False(Active("qc"));
         h.SetActive("qc", true);
-        Assert.True(Active("ca"));
+        Assert.Equal((false, true), (Active("ca"), Active("qc")));
+        h.SetActive("ca", true);
+        h.SetActive("ca", false);
+        Assert.Equal((false, true), (Active("ca"), Active("qc")));
         // Another province under Canada, after Québec; nothing under a province.
         var on = h.SaveCalendar(null, "Ontario", "https://example.test/on/{year}.json", "ca");
         Assert.Equal(["ca", "qc", on.Id, "us", "fr"], h.Calendars().Select(c => c.Id));
         Assert.Throws<ArgumentException>(() => h.SaveCalendar(null, "Montréal", "https://example.test/mtl.ics", "qc"));
+        // Edited: moved under the United States, then under no country; a country with provinces stays a country.
+        h.SaveCalendar(on.Id, "Ontario", on.Url, "us");
+        Assert.Equal(["ca", "qc", "us", on.Id, "fr"], h.Calendars().Select(c => c.Id));
+        h.SaveCalendar(on.Id, "Ontario", on.Url, null);
+        Assert.Null(h.Find(on.Id)!.Parent);
+        Assert.Throws<ArgumentException>(() => h.SaveCalendar("ca", "Canada (Federal)", HolidayCalendar.Canada.Url, "us"));
+        Assert.Throws<ArgumentException>(() => h.SaveCalendar("fr", "France", HolidayCalendar.France.Url, "fr"));
         // Deleting Canada deletes the provinces under it, with their holidays.
         h.Save("qc", Holidays.Parse(Utf8(QuebecJson(2026))), Downloaded);
         h.RemoveCalendar("ca");
-        Assert.Equal(["us", "fr"], h.Calendars().Select(c => c.Id));
+        Assert.Equal(["us", "fr", on.Id], h.Calendars().Select(c => c.Id));
         Assert.Null(s.Db.LoadHolidaySet("qc", 0));
+    }
+
+    [Fact]
+    public void The_total_of_holidays_counts_each_day_once_across_federal_provincial_and_countries()
+    {
+        using var s = new TempStore();
+        var h = new Holidays(s.Db);
+        h.Save("ca", Holidays.Parse(Utf8(FederalJson(2026))), Downloaded);
+        h.Save("qc", Holidays.Parse(Utf8(QuebecJson(2026))), Downloaded);
+        h.Save("fr", Holidays.Parse(Utf8(FranceJson)), Downloaded);
+        // Canada: 1 January, 11 November, 25 and 26 December (the day off on Monday the 28th is not another holiday).
+        h.SetActive("qc", false);
+        Assert.Equal(4, h.TotalHolidays(2026));
+        // Québec too: only Saint-Jean-Baptiste is new (1 January and Christmas are in both): 5, not 4 + 3.
+        h.SetActive("qc", true);
+        Assert.Equal(5, h.TotalHolidays(2026));
+        // France too: Toussaint is new; 11 November and Christmas are already counted: 6, not 5 + 3.
+        h.SetActive("fr", true);
+        Assert.Equal(6, h.TotalHolidays(2026));
+        // Québec alone.
+        h.SetActive("ca", false);
+        h.SetActive("fr", false);
+        Assert.Equal(3, h.TotalHolidays(2026));
+        Assert.Equal(0, h.TotalHolidays(2030));
     }
 
     [Fact]
@@ -430,6 +462,24 @@ public class HolidayTests
         // The holidays downloaded before stay in use.
         Assert.Equal(4, h.Of("fr").Length);
         Assert.Null(await Check("fr", HttpStatusCode.OK, FranceJson));
+    }
+
+    [Fact]
+    public void A_brand_is_renamed_everywhere()
+    {
+        using var s = new TempStore();
+        var bank = s.Db.AddBank(new Bank { Name = "Banque Exemple", System = BankingSystem.NorthAmerica, Currency = "CAD" });
+        var account = s.Db.AddAccount(new Account { Name = "Chequing", Currency = "CAD", Kind = AccountKind.Bank, BankId = bank });
+        s.Transactions.Create(new TransactionInput("2026-12-04", -20m, "Cafe Lune", "restaurants", account, null));
+        s.Transactions.Create(new TransactionInput("2026-12-05", -12m, "cafe lune", "restaurants", account, null));
+        s.Transactions.Create(new TransactionInput("2026-12-06", -30m, "Marché Vert", "groceries", account, null));
+        s.Transactions.SetBrandCategory("Cafe Lune", "groceries");
+        Assert.Equal(2, s.Transactions.RenameBrand("Cafe Lune", "Café de la Lune"));
+        var all = s.Db.AllTransactions();
+        Assert.Equal(["Café de la Lune", "Café de la Lune", "Marché Vert"], all.Select(t => t.Brand).Order());
+        // What was learned for it goes with it.
+        Assert.All(all.Where(t => t.Brand == "Café de la Lune"), t => Assert.Equal("groceries", t.CategoryId));
+        Assert.Throws<ArgumentException>(() => s.Transactions.RenameBrand("Marché Vert", " "));
     }
 
     [Fact]

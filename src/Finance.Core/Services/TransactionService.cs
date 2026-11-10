@@ -113,6 +113,31 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
     /// The category of a brand, set from the brand list: every operation of the brand and every wording learned for it
     /// take it. Returns how many operations changed.
     /// </summary>
+    /// <summary>
+    /// Renames a brand everywhere: every operation of it and every wording learned for it take the new name (kept as
+    /// the person's choice). Two brands renamed to one become one. Says how many operations changed.
+    /// </summary>
+    public int RenameBrand(string from, string to)
+    {
+        to = to.Trim();
+        if (to.Length == 0) throw new ArgumentException("The brand name is empty.");
+        if (to.Length > 80) throw new ArgumentException("The brand name is too long.");
+        if (to == from) return 0;
+        var txs = db.AllTransactions().Where(x => string.Equals(x.Brand, from, StringComparison.OrdinalIgnoreCase)).ToList();
+        db.InTransaction(() =>
+        {
+            foreach (var t in txs)
+            {
+                t.Brand = to;
+                t.BrandSource = ValueSource.User;
+                db.UpdateTransaction(t);
+            }
+            db.RenameBrandRules(from, to);
+        });
+        ReapplyRules();
+        return txs.Count;
+    }
+
     public int SetBrandCategory(string brand, string categoryId)
     {
         if (!Categories.Exists(categoryId)) throw new ArgumentException($"Unknown category '{categoryId}'.");

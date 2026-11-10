@@ -22,12 +22,8 @@ export const sourceLine = { height: SOURCE_LINE, display: 'flex', alignItems: 'c
 /** The padding of every cell of a line, the button cells' too (they lose it otherwise). */
 export const sourceRow = { verticalAlign: 'top', transition: 'background-color 160ms', '& td, & td.MuiTableCell-paddingCheckbox': { py: 1.25 } } as const
 
-/** The delete button of a line: a plain icon that turns red under the mouse, with no shape of its own around it. */
-export const quietDelete = {
-  color: 'text.secondary', borderRadius: '8px', transition: 'color 120ms',
-  '&:hover': { bgcolor: 'transparent', color: 'error.main' },
-  '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 1 },
-}
+/** The delete button of a line (shared with every table). */
+export { quietDelete } from './RowActions'
 
 /** Why a source gives nothing, in red under its address (or its choice in Settings). */
 export function SourceError({ message, ...data }: { message: string } & Record<`data-${string}`, string | boolean>) {

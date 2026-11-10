@@ -138,9 +138,9 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
     }
 
     /// <summary>
-    /// Adds a calendar (no id), under a country's calendar or not (<paramref name="parent"/>), or changes the place or
-    /// the address of one. A new address drops the holidays downloaded from the old one: they are downloaded again from
-    /// it, which checks it. A new calendar is not checked yet.
+    /// Adds a calendar (no id) or changes one: its place, its address, and the country's calendar it is under
+    /// (<paramref name="parent"/>, null for none). A new address drops the holidays downloaded from the old one: they
+    /// are downloaded again from it, which checks it. A new calendar is not checked yet.
     /// </summary>
     public HolidayCalendar SaveCalendar(string? id, string location, string url, string? parent = null)
     {
@@ -153,9 +153,11 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         if (id is not null && old is null) throw new ArgumentException("This calendar no longer exists.");
         if (Calendars().FirstOrDefault(c => c.Id != id && string.Equals(c.Location, location, StringComparison.OrdinalIgnoreCase)) is { } same)
             throw new ArgumentException($"{same.Location} is already in the table.");
-        if (old is null && parent is not null && Find(parent) is not { Parent: null })
+        if (parent is not null && (parent == id || Find(parent) is not { Parent: null }))
             throw new ArgumentException("A calendar can only be placed under a country's calendar.");
-        var saved = old is null ? new HolidayCalendar("h" + Guid.NewGuid().ToString("N")[..10], location, url, false, parent) : old with { Location = location, Url = url };
+        if (parent is not null && id is not null && Calendars().Any(c => c.Parent == id))
+            throw new ArgumentException($"{old!.Location} has calendars under it: it stays a country.");
+        var saved = old is null ? new HolidayCalendar("h" + Guid.NewGuid().ToString("N")[..10], location, url, false, parent) : old with { Location = location, Url = url, Parent = parent };
         db.InTransaction(() =>
         {
             db.SaveHolidayCalendar(saved);
@@ -166,21 +168,23 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
     }
 
     /// <summary>
-    /// Checks or unchecks a calendar: its holidays are shown and are not business days, or not. A province or a state
-    /// checked checks its country (the country's holidays apply in it); a country unchecked unchecks the ones under it.
+    /// Checks or unchecks a calendar, on its own (a province without its country, or a country without its provinces):
+    /// its holidays are shown and are not business days, or not.
     /// </summary>
     public void SetActive(string id, bool active)
     {
         var c = Find(id) ?? throw new ArgumentException("This calendar no longer exists.");
-        db.InTransaction(() =>
-        {
-            db.SaveHolidayCalendar(c with { Active = active });
-            if (active && c.Parent is not null && Find(c.Parent) is { Active: false } country) db.SaveHolidayCalendar(country with { Active = true });
-            if (!active)
-                foreach (var under in Calendars().Where(x => x.Parent == c.Id && x.Active)) db.SaveHolidayCalendar(under with { Active = false });
-        });
+        db.SaveHolidayCalendar(c with { Active = active });
         Reload();
     }
+
+    /// <summary>
+    /// The holidays of <paramref name="year"/> in the checked calendars together, each day counted once: a day that is
+    /// a holiday federally and in a province (or in two countries, or two holidays on one day) is one holiday; the day
+    /// off given for one falling on a weekend is not another.
+    /// </summary>
+    public int TotalHolidays(int year) =>
+        Calendars().Where(c => c.Active).SelectMany(c => Of(c.Id)).Where(h => h.Day.Year == year && !h.Observed).Select(h => h.Day).Distinct().Count();
 
     /// <summary>Deletes a calendar with its holidays; a country's, with the calendars under it.</summary>
     public void RemoveCalendar(string id)

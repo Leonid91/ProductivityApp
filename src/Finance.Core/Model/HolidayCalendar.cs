@@ -4,8 +4,8 @@ namespace ProductivityApp.Finance.Model;
 /// A calendar of public holidays defined in Definitions > Holidays: the place it is for (free text), the address of
 /// its file (ICS or JSON; "{year}" in it stands for each year when the file holds one year), whether it is checked
 /// (its holidays are shown on the calendar and are not business days), and the country it is part of (<see
-/// cref="Parent"/>: a province's or a state's calendar sits under its country's federal one, whose holidays apply in
-/// it too: checking it checks its country; unchecking the country unchecks it).
+/// cref="Parent"/>: a province's or a state's calendar sits under its country's federal one in the table; each one is
+/// checked on its own).
 /// </summary>
 public sealed record HolidayCalendar(string Id, string Location, string Url, bool Active, string? Parent = null)
 {

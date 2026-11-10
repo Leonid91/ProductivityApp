@@ -341,6 +341,8 @@ export const api = {
     /** A new calendar (no id; under a country's calendar: parent), or a new place or address for one. */
     save: (c: { id?: string; location: string; url: string; parent?: string | null }) => invoke<{ id: string; calendars: HolidayCalendar[] }>('holidays.save', c),
     setActive: (id: string, active: boolean) => invoke<HolidayCalendar[]>('holidays.setActive', { id, active }),
+    /** The holidays of a year (this one by default) in the checked calendars together, each day once. */
+    total: (year?: number) => invoke<{ year: number; total: number }>('holidays.total', { year }),
     remove: (id: string) => invoke<HolidayCalendar[]>('holidays.remove', { id }),
     /** Downloads a calendar again, which checks its address too. */
     update: (id: string) => invoke<HolidayCalendar>('holidays.update', { id }),
@@ -363,6 +365,8 @@ export const api = {
   brands: {
     list: () => invoke<{ brands: BrandInfo[]; rules: BrandRule[]; builtInCount: number }>('brands.list'),
     setCategory: (brand: string, categoryId: string) => invoke<{ changed: number }>('brands.setCategory', { brand, categoryId }),
+    /** A brand renamed everywhere: its operations and what was learned for it. */
+    rename: (from: string, to: string) => invoke<{ changed: number }>('brands.rename', { from, to }),
     forget: (brand: string) => invoke<{ changed: number }>('brands.forget', { brand }),
   },
   categories: {

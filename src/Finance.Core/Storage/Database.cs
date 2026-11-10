@@ -834,6 +834,20 @@ public sealed class Database : IDisposable
     /// <summary>Forgets everything learned for a brand: its wordings and its category.</summary>
     public void DeleteBrandRules(string brand) => Exec("DELETE FROM brand_rules WHERE brand = $b COLLATE NOCASE", ("$b", brand));
 
+    /// <summary>
+    /// The wordings and the category learned for a brand go to another name; when that name has a category of its own
+    /// already, it keeps it.
+    /// </summary>
+    public void RenameBrandRules(string from, string to) => InTransaction(() =>
+    {
+        if (!string.Equals(from, to, StringComparison.OrdinalIgnoreCase))
+            Exec("""
+                DELETE FROM brand_rules WHERE merchant_key = '' AND brand = $f COLLATE NOCASE
+                    AND EXISTS (SELECT 1 FROM brand_rules WHERE merchant_key = '' AND brand = $t COLLATE NOCASE)
+                """, ("$f", from), ("$t", to));
+        Exec("UPDATE brand_rules SET brand = $t WHERE brand = $f COLLATE NOCASE", ("$f", from), ("$t", to));
+    });
+
     /// <summary>Every wording learned for the brand takes the category too.</summary>
     public void SetBrandRulesCategory(string brand, string categoryId) =>
         Exec("UPDATE brand_rules SET category_id = $c WHERE brand = $b COLLATE NOCASE AND merchant_key <> ''", ("$b", brand), ("$c", categoryId));

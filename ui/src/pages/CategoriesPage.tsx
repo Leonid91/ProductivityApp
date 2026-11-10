@@ -4,8 +4,6 @@ import {
   Tooltip, Typography, type Theme,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
-import EditOutlined from '@mui/icons-material/EditOutlined'
-import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import Block from '@mui/icons-material/BlockRounded'
 import { api, type Category, type CategoryKind } from '../api'
 import { useApp } from '../AppContext'
@@ -13,6 +11,7 @@ import { CategoryIcon } from '../components/CategoryIcon'
 import { ConfirmDialog, SectionCard, useCategoryColor, useCategorySections } from '../components/common'
 import { useRowOrder, type TreeEntry } from '../components/order'
 import { TagSelect } from '../components/tags'
+import { RowActions } from '../components/RowActions'
 
 export const palette = ['#e53935', '#d81b60', '#8e24aa', '#5e35b1', '#3949ab', '#1e88e5', '#0288d1', '#00897b', '#43a047', '#689f38', '#afb42b', '#f9a825', '#fb8c00', '#f4511e', '#6d4c41', '#757575']
 
@@ -169,24 +168,19 @@ export function CategoriesPanel() {
                         <Typography variant="body2" sx={{ fontWeight: depth === 0 ? 600 : 520, color: color ?? 'text.primary' }}>{c.name}</Typography>
                       </Box>
                     </TableCell>
-                    <TableCell padding="none" align="right" sx={{ whiteSpace: 'nowrap', pr: 1 }}>
-                      <Tooltip title="Add a subcategory">
-                        <IconButton className="row-action" size="small" aria-label="Add a subcategory" onClick={() => setEditing({ id: null, name: '', parentId: c.id, kind: c.kind, color: null })} sx={{ opacity: 0 }}>
-                          <Add fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Edit">
-                        <IconButton className="row-action" size="small" aria-label="Edit" onClick={() => setEditing({ id: c.id, name: c.name, parentId: c.parentId, kind: c.kind, color: c.color })} sx={{ opacity: 0 }}>
-                          <EditOutlined fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title={c.builtIn ? '' : 'Delete'}>
-                        <span>
-                          <IconButton className="row-action" size="small" aria-label="Delete" disabled={c.builtIn} onClick={() => setConfirm(c)} sx={{ opacity: 0, visibility: c.builtIn ? 'hidden' : undefined }}>
-                            <DeleteOutline fontSize="small" />
+                    <TableCell padding="none" align="right" sx={{ whiteSpace: 'nowrap', pr: 0.5 }}>
+                      {/* Built-in categories cannot be deleted: their delete button's place stays empty. */}
+                      <RowActions
+                        onEdit={() => setEditing({ id: c.id, name: c.name, parentId: c.parentId, kind: c.kind, color: c.color })}
+                        onDelete={() => setConfirm(c)}
+                        canDelete={!c.builtIn}
+                      >
+                        <Tooltip title="Add a subcategory">
+                          <IconButton className="row-action" size="small" aria-label="Add a subcategory" onClick={() => setEditing({ id: null, name: '', parentId: c.id, kind: c.kind, color: null })} sx={{ opacity: 0 }}>
+                            <Add fontSize="small" />
                           </IconButton>
-                        </span>
-                      </Tooltip>
+                        </Tooltip>
+                      </RowActions>
                     </TableCell>
                   </TableRow>
                 )

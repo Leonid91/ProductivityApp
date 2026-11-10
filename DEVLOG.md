@@ -583,3 +583,24 @@ real app with `tools/e2e/perf.mjs`.
 ### Space
 - Exchange rates: about 8.6 MB per copy (European Central Bank 4.0, Bank of Canada 2.5, US Federal Reserve 2.2), about
   17 MB with the previous copy. Holidays: about 22 KB per copy for the four calendars, about 0.05 MB with both copies.
+
+## November 10th, 2026 - A pencil on every line, holidays total, week start - Commit 26
+
+### Added
+- Every table has a pencil at the far right of each line, always shown, opening the line in a dialog; in a table that
+  deletes, the delete button comes after it, last (a line that cannot be deleted keeps that place empty, so the pencils
+  stay in one column). New dialogs: banks, accounts, brands (a brand renamed on every operation, with what was learned
+  for it), imported statements (bank, account name, currency), column templates (name, recognition text), the lines of
+  a statement being imported (brand, category, imported or not), central banks and holiday calendars. The pencil of a
+  conversion opens Definitions > Exchange rates.
+- Definitions > Holidays: under the table, before the weekend days, the holidays of this year of the checked
+  calendars together, each day counted once (Canada (Federal) 12 and Québec 8 make 13, not 20).
+- Settings > General > Calendar: the week starts on Sunday (North America, by default), Monday (Europe: the weekend at
+  the right) or Saturday (Middle East: the weekend at the left); the weekend days of Definitions > Holidays follow.
+
+### Changed
+- A calendar and a central bank are added from their button, and changed from their pencil, in the same dialog; no
+  line is typed into the table any more. A calendar's country ("Part of") can be changed there.
+- Each holiday calendar is checked on its own: checking Québec no longer checks Canada, unchecking Canada no longer
+  unchecks Québec.
+- The pencils of operations, transfers, categories and tags no longer appear only under the mouse.

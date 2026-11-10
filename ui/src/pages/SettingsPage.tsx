@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputBase, MenuItem, Radio, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
-  Tooltip, Typography, alpha, useTheme,
+  Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, InputBase, MenuItem, Radio, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup,
+  Typography, alpha, useTheme,
 } from '@mui/material'
 import Add from '@mui/icons-material/AddRounded'
-import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
 import Refresh from '@mui/icons-material/RefreshRounded'
@@ -18,7 +17,8 @@ import { BrandsPanel } from './BrandsPage'
 import { CategoriesPanel } from './CategoriesPage'
 import { TagsPanel } from './TagsPage'
 import { HolidaysTable, useHolidayCalendars } from './HolidaysPanel'
-import { SOURCE_LINE, SourceError, inlineInput, quietDelete, sourceLine, sourceRow, visuallyHidden } from '../components/sourceTable'
+import { SOURCE_LINE, SourceError, inlineInput, sourceLine, sourceRow, visuallyHidden } from '../components/sourceTable'
+import { ROW_ACTIONS_WIDTH, RowActions } from '../components/RowActions'
 
 const systems: { value: BankingSystem; label: string }[] = [
   // Credit cards are accounts of their own, paid from the chequing account; or (France) debit cards only: purchases
@@ -155,13 +155,64 @@ function useRateSources(active: boolean) {
 
 
 /**
+ * A central bank added (from the Add bank button: one of the banks the app reads that is not in the table, with its
+ * address to start with) or changed (from its pencil: the address of its file). What is refused is said in the
+ * dialog; the address is downloaded at once, which checks it (what is wrong shows under it in the table).
+ */
+function RateSourceDialog({ open, source, free, onClose, onSaved }: {
+  open: boolean
+  /** The bank changed; null for a new one. */
+  source: RateSource | null
+  free: CentralBank[]
+  onClose: () => void
+  onSaved: (list: RateSource[], id: string, download: boolean) => void
+}) {
+  const { notify } = useApp()
+  const [bank, setBank] = useState('')
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!open) return
+    setError(null)
+    if (source) { setBank(source.format); setUrl(source.url) }
+    else { setBank(free[0]?.format ?? ''); setUrl(free[0]?.defaultUrl ?? '') }
+  }, [open, source]) // eslint-disable-line react-hooks/exhaustive-deps
+  const save = () => api.rates.saveSource(source ? { id: source.id, url } : { format: bank, url }).then((r) => {
+    notify(source ? 'Bank saved' : 'Bank added')
+    onSaved(r.sources, r.id, !source || source.url !== url.trim())
+    onClose()
+  }, (e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth data-rate-source-dialog>
+      <DialogTitle>{source ? `Edit the ${source.name}` : 'Add bank'}</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <TextField select label="Central bank" value={bank} disabled={source !== null} autoFocus={!source}
+          onChange={(e) => { setBank(e.target.value); setUrl(free.find((b) => b.format === e.target.value)?.defaultUrl ?? '') }}
+          slotProps={{ htmlInput: { 'data-field': 'bank' } }}>
+          {(source ? [{ format: source.format, name: source.name }] : free).map((b) => <MenuItem key={b.format} value={b.format}>{b.name}</MenuItem>)}
+        </TextField>
+        <TextField label="Address of the rates file" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" helperText={ratesHelp} autoFocus={source !== null}
+          slotProps={{ htmlInput: { 'data-field': 'url', spellCheck: false, style: { fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 13 } } }} />
+        {error && <RatesError message={error} />}
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={!bank || url.trim() === ''} onClick={() => void save()}>{source ? 'Save' : 'Add'}</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+/**
  * The central banks the exchange rates can come from, one line each: the round button chooses the one in use (its line
- * is tinted), the address of its file can be changed (checked at once by downloading it, in the background; what is
- * wrong shows under the address), and what its last download holds: the number of currencies and the last day of
- * rates, read from the data itself (nothing is shown without it). A new line is one of the central banks the app reads.
+ * is tinted), the address of its file can be changed in place or with its pencil (the same dialog as the Add bank
+ * button; checked at once by downloading it, in the background; what is wrong shows under the address), and what its
+ * last download holds: the number of currencies and the last day of rates, read from the data itself (nothing is
+ * shown without it). The bank in use cannot be deleted.
  */
 function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
   rates: ReturnType<typeof useRateSources>
+  /** The Add bank button was pressed: the dialog is open for a new bank. */
   adding: boolean
   onAdded: () => void
   confirm: (c: Confirm) => void
@@ -171,17 +222,10 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
   const { sources, setSources, free, refreshing } = rates
   const [checking, setChecking] = useState<Set<string>>(new Set())
   const [choosing, setChoosing] = useState<string | null>(null)
-  /** Addresses refused before being saved, by line ("" for the new one). */
+  const [editing, setEditing] = useState<RateSource | null>(null)
+  /** Addresses refused before being saved, by line. */
   const [refused, setRefused] = useState<Record<string, string>>({})
-  const [newBank, setNewBank] = useState('')
-  const [newUrl, setNewUrl] = useState('')
   const choose = useChooseRates(setSources, setChoosing)
-  useEffect(() => {
-    if (!adding) return
-    setNewBank(free[0]?.format ?? '')
-    setNewUrl(free[0]?.defaultUrl ?? '')
-    setRefused(({ '': _, ...rest }) => rest)
-  }, [adding]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const check = (id: string) => {
     setChecking((c) => new Set(c).add(id))
@@ -190,16 +234,12 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
       if (list.find((s) => s.id === id)?.inUse) dataChanged()
     }, () => undefined).finally(() => setChecking((c) => { const n = new Set(c); n.delete(id); return n }))
   }
-  const save = (s: { id?: string; format?: string; url: string }) =>
+  const save = (s: { id: string; url: string }) =>
     api.rates.saveSource(s).then((r) => {
       setSources(r.sources)
-      setRefused(({ [s.id ?? '']: _, ...rest }) => rest)
+      setRefused(({ [s.id]: _, ...rest }) => rest)
       check(r.id)
-      return true
-    }, (e: unknown) => {
-      setRefused((x) => ({ ...x, [s.id ?? '']: e instanceof Error ? e.message : String(e) }))
-      return false
-    })
+    }, (e: unknown) => setRefused((x) => ({ ...x, [s.id]: e instanceof Error ? e.message : String(e) })))
 
   if (!sources) return null
   const inUseTint = alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.12 : 0.06)
@@ -215,7 +255,7 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
               <TableCell>Address of the rates file</TableCell>
               <TableCell align="right" sx={{ width: 104 }}>Currencies</TableCell>
               <TableCell sx={{ width: 170, pl: 3 }}>Rates up to</TableCell>
-              <TableCell padding="checkbox" sx={{ width: 52 }} />
+              <TableCell sx={{ width: ROW_ACTIONS_WIDTH, px: 0 }} />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -246,47 +286,34 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
                   </TableCell>
                   <TableCell align="right" className="tnum" data-currencies><Box sx={{ ...sourceLine, justifyContent: 'flex-end' }}>{s.currencies > 0 ? s.currencies : ''}</Box></TableCell>
                   <TableCell className="tnum" data-latest sx={{ pl: 3, whiteSpace: 'nowrap' }}><Box sx={sourceLine}>{s.latest ? formatDate(s.latest, settings.dateFormat) : ''}</Box></TableCell>
-                  <TableCell padding="checkbox">
-                    <Box sx={{ ...sourceLine, justifyContent: 'center' }}>
-                    {!s.inUse && (
-                      <IconButton size="small" disableRipple aria-label={`Delete the ${s.name}`} sx={quietDelete} onClick={() => confirm({
-                        title: `Delete the ${s.name}?`,
-                        body: 'The rates downloaded from it are deleted too.',
-                        run: async () => { setSources(await api.rates.removeSource(s.id)); notify('Bank deleted') },
-                      })}>
-                        <DeleteOutline fontSize="small" />
-                      </IconButton>
-                    )}
+                  <TableCell sx={{ px: 0 }}>
+                    <Box sx={{ ...sourceLine, justifyContent: 'flex-end', pr: 0.5 }}>
+                      <RowActions
+                        editLabel={`Edit the ${s.name}`}
+                        onEdit={() => setEditing(s)}
+                        deleteLabel={`Delete the ${s.name}`}
+                        canDelete={!s.inUse}
+                        onDelete={() => confirm({
+                          title: `Delete the ${s.name}?`,
+                          body: 'The rates downloaded from it are deleted too.',
+                          run: async () => { setSources(await api.rates.removeSource(s.id)); notify('Bank deleted') },
+                        })}
+                      />
                     </Box>
                   </TableCell>
                 </TableRow>
               )
             })}
-            {adding && (
-              <TableRow data-new-rate-source sx={{ verticalAlign: 'top', '& td': { py: 1.25, borderBottom: 0 } }}>
-                <TableCell padding="checkbox" />
-                <TableCell>
-                  <TextField select size="small" fullWidth value={newBank} autoFocus
-                    onChange={(e) => { setNewBank(e.target.value); setNewUrl(free.find((b) => b.format === e.target.value)?.defaultUrl ?? '') }}
-                    slotProps={{ htmlInput: { 'aria-label': 'Central bank', 'data-field': 'bank' } }}>
-                    {free.map((b) => <MenuItem key={b.format} value={b.format}>{b.name}</MenuItem>)}
-                  </TextField>
-                </TableCell>
-                <TableCell>
-                  <TextField size="small" fullWidth value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="https://"
-                    slotProps={{ htmlInput: { 'aria-label': 'Address of the rates file', 'data-field': 'url', spellCheck: false, style: { fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 13 } } }} />
-                  {refused[''] && <Box sx={{ mt: 0.5 }}><RatesError message={refused['']} /></Box>}
-                </TableCell>
-                <TableCell colSpan={3} sx={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  <Button onClick={onAdded} sx={{ mr: 1 }}>Cancel</Button>
-                  <Button variant="contained" disabled={!newBank || newUrl.trim() === ''}
-                    onClick={() => void save({ format: newBank, url: newUrl }).then((ok) => { if (ok) { notify('Bank added'); onAdded() } })}>Add</Button>
-                </TableCell>
-              </TableRow>
-            )}
           </TableBody>
         </Table>
       </SectionCard>
+      <RateSourceDialog
+        open={adding || editing !== null}
+        source={editing}
+        free={free}
+        onClose={() => { setEditing(null); onAdded() }}
+        onSaved={(list, id, download) => { setSources(list); setRefused(({ [id]: _, ...rest }) => rest); if (download) check(id) }}
+      />
     </>
   )
 }
@@ -333,6 +360,15 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
           <Toggle label="Show only first level categories in charts" setting="chartsTopLevel" />
         </Group>
         <Group title="Calendar">
+          {/* Where the weekend sits: Sunday first and Saturday last in North America, at the right from Monday, at the left from Saturday. */}
+          <Row label="Week starts on">
+            <TextField select size="small" value={settings.calendarFirstDay ?? '0'} onChange={(e) => void setSetting('calendarFirstDay', e.target.value)} sx={{ width: 260 }}
+              slotProps={{ htmlInput: { 'data-calendar-first-day': '' } }}>
+              <MenuItem value="0">Sunday (North America)</MenuItem>
+              <MenuItem value="1">Monday (Europe)</MenuItem>
+              <MenuItem value="6">Saturday (Middle East)</MenuItem>
+            </TextField>
+          </Row>
           <Toggle label="Hide transfers" setting="calendarHideTransfers" />
           <Toggle label="Hide card statement payments" setting="calendarHideCardPayments" />
           <Toggle label="Hide investments" setting="calendarHideInvestments" />
@@ -376,8 +412,8 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
   )
 }
 
-/** The accounts of one bank: name, type (named by the bank's banking system) and currency. */
-function AccountsTable({ accounts, system, confirm }: { accounts: Account[]; system: BankingSystem; confirm: (c: Confirm) => void }) {
+/** The accounts of one bank: name, type (named by the bank's banking system) and currency; a pencil and a delete button each. */
+function AccountsTable({ accounts, system, confirm, onEdit }: { accounts: Account[]; system: BankingSystem; confirm: (c: Confirm) => void; onEdit: (a: Account) => void }) {
   const { notify, fail, dataChanged } = useApp()
   const keyOf = useCallback((a: Account) => String(a.id), [])
   const order = useRowOrder('accounts', accounts, keyOf)
@@ -393,7 +429,7 @@ function AccountsTable({ accounts, system, confirm }: { accounts: Account[]; sys
             <TableCell>Account Name</TableCell>
             <TableCell>Account Type</TableCell>
             <TableCell>Currency</TableCell>
-            <TableCell padding="checkbox" />
+            <TableCell sx={{ width: ROW_ACTIONS_WIDTH, px: 0 }} />
           </TableRow>
         </TableHead>
         <TableBody>
@@ -402,6 +438,7 @@ function AccountsTable({ accounts, system, confirm }: { accounts: Account[]; sys
               {order.handle(a)}
               <TableCell>
                 <InputBase
+                  key={a.name}
                   defaultValue={a.name}
                   inputProps={{ 'aria-label': 'Account name' }}
                   onBlur={(e) => {
@@ -417,16 +454,17 @@ function AccountsTable({ accounts, system, confirm }: { accounts: Account[]; sys
                 </TextField>
               </TableCell>
               <TableCell><CurrencySelect value={a.currency} onChange={(c) => void update(a, { currency: c }, 'Currency changed')} /></TableCell>
-              <TableCell padding="checkbox">
-                <Tooltip title="Delete">
-                  <IconButton size="small" aria-label="Delete" onClick={() => confirm({
+              <TableCell sx={{ px: 0, pr: 0.5 }} align="right">
+                <RowActions
+                  editLabel={`Edit ${a.name}`}
+                  onEdit={() => onEdit(a)}
+                  deleteLabel="Delete"
+                  onDelete={() => confirm({
                     title: `Delete ${a.name}?`,
                     body: 'Its statements and operations are deleted too.',
                     run: async () => { await api.accounts.remove(a.id); notify('Account deleted'); dataChanged() },
-                  })}>
-                    <DeleteOutline fontSize="small" />
-                  </IconButton>
-                </Tooltip>
+                  })}
+                />
               </TableCell>
             </TableRow>
           ))}
@@ -438,11 +476,12 @@ function AccountsTable({ accounts, system, confirm }: { accounts: Account[]; sys
 
 /**
  * One tab per bank, banks with accounts first (the first imported first); accounts are added with the button on the
- * right of the tabs (banks are added in Definitions > Bank).
+ * right of the tabs (banks are added in Definitions > Bank), and changed with their pencil, in the same dialog.
  */
 function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
   const { accounts, banks } = useApp()
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<Account | null>(null)
   const first = (bankId: number | null) => {
     const ids = accounts.filter((a) => a.bankId === bankId).map((a) => a.id)
     return ids.length ? Math.min(...ids) : Number.MAX_SAFE_INTEGER
@@ -461,29 +500,32 @@ function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
       </Box>
       {!bank ? <EmptyState icon={<AccountBalance />} title="No banks yet" />
         : mine.length === 0 ? <EmptyState icon={<AccountBalance />} title={`No accounts at ${bank.name} yet`} />
-        : <AccountsTable accounts={mine} system={bank.system} confirm={confirm} />}
-      <AddAccountDialog open={adding} bankId={bank?.id ?? null} onClose={() => setAdding(false)} />
+        : <AccountsTable accounts={mine} system={bank.system} confirm={confirm} onEdit={setEditing} />}
+      <AccountDialog open={adding || editing !== null} account={editing} bankId={bank?.id ?? null} onClose={() => { setAdding(false); setEditing(null) }} />
     </>
   )
 }
 
 const emptyBank: Bank = { id: 0, name: '', country: '', system: 'northAmerica', currency: 'CAD' }
 
-/** A new bank: name, country, banking system and the currency of its accounts. Calls back with the new bank's id. */
-function AddBankDialog({ open, onClose, onAdded }: { open: boolean; onClose: () => void; onAdded?: (id: number) => void }) {
+/**
+ * A bank added (from the Add bank button) or changed (from its pencil): name, country, banking system and the
+ * currency of its accounts. Calls back with the new bank's id.
+ */
+function BankDialog({ open, bank, onClose, onAdded }: { open: boolean; bank?: Bank | null; onClose: () => void; onAdded?: (id: number) => void }) {
   const { refreshBanks, dataChanged, notify, fail } = useApp()
   const [draft, setDraft] = useState<Bank>(emptyBank)
-  useEffect(() => { if (open) setDraft(emptyBank) }, [open])
-  const add = () => api.banks.save(draft).then((list) => {
-    notify('Bank added')
+  useEffect(() => { if (open) setDraft(bank ?? emptyBank) }, [open, bank])
+  const save = () => api.banks.save(draft).then((list) => {
+    notify(bank ? 'Bank saved' : 'Bank added')
     void refreshBanks()
     dataChanged()
-    onAdded?.(Math.max(...list.map((b) => b.id)))
+    if (!bank) onAdded?.(Math.max(...list.map((b) => b.id)))
     onClose()
   }, fail)
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth data-bank-dialog>
-      <DialogTitle>Add bank</DialogTitle>
+      <DialogTitle>{bank ? `Edit ${bank.name}` : 'Add bank'}</DialogTitle>
       <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
         <TextField autoFocus label="Bank name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
         <TextField label="Country" value={draft.country} onChange={(e) => setDraft({ ...draft, country: e.target.value })} slotProps={{ htmlInput: { 'data-field': 'country' } }} />
@@ -491,19 +533,22 @@ function AddBankDialog({ open, onClose, onAdded }: { open: boolean; onClose: () 
           {systems.map((x) => <MenuItem key={x.value} value={x.value}>{x.label}</MenuItem>)}
         </TextField>
         <TextField select label="Currency" value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value })}>
-          {currencies.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+          {[...new Set([draft.currency, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
         </TextField>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={draft.name.trim() === ''} onClick={() => void add()}>Add</Button>
+        <Button variant="contained" disabled={draft.name.trim() === ''} onClick={() => void save()}>{bank ? 'Save' : 'Add'}</Button>
       </DialogActions>
     </Dialog>
   )
 }
 
-/** A new account at one of the banks: name, type (named by the bank's banking system) and currency. */
-function AddAccountDialog({ open, bankId, onClose }: { open: boolean; bankId: number | null; onClose: () => void }) {
+/**
+ * An account added (from the Add account button, at one of the banks) or changed (from its pencil): its bank, name,
+ * type (named by the bank's banking system) and currency.
+ */
+function AccountDialog({ open, account, bankId, onClose }: { open: boolean; account: Account | null; bankId: number | null; onClose: () => void }) {
   const { banks, refreshAccounts, dataChanged, notify, fail } = useApp()
   const [bank, setBank] = useState<number | ''>('')
   const [name, setName] = useState('')
@@ -511,24 +556,33 @@ function AddAccountDialog({ open, bankId, onClose }: { open: boolean; bankId: nu
   const [currency, setCurrency] = useState('CAD')
   useEffect(() => {
     if (!open) return
+    if (account) {
+      setBank(account.bankId ?? '')
+      setName(account.name)
+      setKind(account.kind)
+      setCurrency(account.currency)
+      return
+    }
     const b = banks.find((x) => x.id === bankId) ?? banks[0]
     setBank(b?.id ?? '')
     setName('')
     setKind('bank')
     setCurrency(b?.currency ?? 'CAD')
-  }, [open, bankId, banks])
+  }, [open, account, bankId, banks])
   const system = banks.find((x) => x.id === bank)?.system ?? 'northAmerica'
-  const add = () => api.accounts.add({ bankId: Number(bank), name, kind, currency }).then(() => {
-    notify('Account added')
+  const save = () => (account
+    ? api.accounts.update(account, { name, kind, currency, bankId: Number(bank) })
+    : api.accounts.add({ bankId: Number(bank), name, kind, currency })).then(() => {
+    notify(account ? 'Account saved' : 'Account added')
     void refreshAccounts()
     dataChanged()
     onClose()
   }, fail)
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth data-account-dialog>
-      <DialogTitle>Add account</DialogTitle>
+      <DialogTitle>{account ? `Edit ${account.name}` : 'Add account'}</DialogTitle>
       <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
-        <TextField select label="Bank" value={bank} onChange={(e) => { const b = banks.find((x) => x.id === Number(e.target.value)); setBank(Number(e.target.value)); if (b) setCurrency(b.currency) }}>
+        <TextField select label="Bank" value={bank} onChange={(e) => { const b = banks.find((x) => x.id === Number(e.target.value)); setBank(Number(e.target.value)); if (b && !account) setCurrency(b.currency) }}>
           {banks.map((b) => <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>)}
         </TextField>
         <TextField autoFocus label="Account name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
@@ -541,20 +595,22 @@ function AddAccountDialog({ open, bankId, onClose }: { open: boolean; bankId: nu
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={bank === '' || name.trim() === ''} onClick={() => void add()}>Add</Button>
+        <Button variant="contained" disabled={bank === '' || name.trim() === ''} onClick={() => void save()}>{account ? 'Save' : 'Add'}</Button>
       </DialogActions>
     </Dialog>
   )
 }
 
-/** The banks the person can choose from: name, country, banking system and the currency of new accounts. */
+/** The banks the person can choose from: name, country, banking system and the currency of new accounts; a pencil and a delete button each. */
 function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
   const { banks, refreshBanks, dataChanged, notify, fail } = useApp()
   const keyOf = useCallback((b: Bank) => String(b.id), [])
   const order = useRowOrder('banks', banks, keyOf)
+  const [editing, setEditing] = useState<Bank | null>(null)
   const save = (b: Bank, message: string) => api.banks.save(b).then(() => { notify(message); void refreshBanks(); dataChanged() }, fail)
   const text = (b: Bank, field: 'name' | 'country', label: string) => (
     <InputBase
+      key={b[field]}
       defaultValue={b[field]}
       inputProps={{ 'aria-label': label }}
       onBlur={(e) => { const v = e.target.value.trim(); if (v !== b[field] && (v || field === 'country')) void save({ ...b, [field]: v }, 'Bank saved') }}
@@ -571,7 +627,7 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
             <TableCell>Country</TableCell>
             <TableCell>Banking System</TableCell>
             <TableCell>Currency</TableCell>
-            <TableCell padding="checkbox" />
+            <TableCell sx={{ width: ROW_ACTIONS_WIDTH, px: 0 }} />
           </TableRow>
         </TableHead>
         <TableBody>
@@ -586,20 +642,22 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
                 </TextField>
               </TableCell>
               <TableCell><CurrencySelect value={b.currency} onChange={(c) => void save({ ...b, currency: c }, 'Currency changed')} /></TableCell>
-              <TableCell padding="checkbox">
-                <Tooltip title="Delete">
-                  <IconButton size="small" aria-label="Delete" onClick={() => confirm({
+              <TableCell sx={{ px: 0, pr: 0.5 }} align="right">
+                <RowActions
+                  editLabel={`Edit ${b.name}`}
+                  onEdit={() => setEditing(b)}
+                  deleteLabel="Delete"
+                  onDelete={() => confirm({
                     title: `Delete ${b.name}?`,
                     run: async () => { await api.banks.remove(b.id); notify('Bank deleted'); void refreshBanks(); dataChanged() },
-                  })}>
-                    <DeleteOutline fontSize="small" />
-                  </IconButton>
-                </Tooltip>
+                  })}
+                />
               </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+      <BankDialog open={editing !== null} bank={editing} onClose={() => setEditing(null)} />
     </SectionCard>
   )
 }
@@ -651,7 +709,7 @@ export function SettingsPage() {
               </>
             )}
           </Box>
-          <AddBankDialog open={addingBank} onClose={() => setAddingBank(false)} />
+          <BankDialog open={addingBank} onClose={() => setAddingBank(false)} />
           {definition === 'bank' && <BanksTable confirm={setConfirm} />}
           {definition === 'rates' && <RatesSourcesTable rates={rates} adding={addingSource} onAdded={() => setAddingSource(false)} confirm={setConfirm} />}
           {definition === 'brands' && <BrandsPanel />}

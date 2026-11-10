@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box, Button, IconButton, LinearProgress, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
+  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import CloudUpload from '@mui/icons-material/CloudUploadRounded'
 import CheckCircle from '@mui/icons-material/CheckCircleRounded'
 import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
-import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import WarningAmber from '@mui/icons-material/WarningAmberRounded'
 import GppMaybe from '@mui/icons-material/GppMaybeRounded'
 import { api, currencies, type BankTemplate, type Draft, type StatementInfo } from '../api'
@@ -16,6 +15,78 @@ import { DraftCard } from '../components/DraftCard'
 import { FileBrowser } from '../components/FileBrowser'
 import { ConfirmDialog, PageHeader, SectionCard } from '../components/common'
 import { useRowOrder } from '../components/order'
+import { ROW_ACTIONS_WIDTH, RowActions } from '../components/RowActions'
+
+/** An imported statement changed from its pencil: the bank and the name of its account, and the account's currency. */
+function StatementDialog({ statement, onClose }: { statement: StatementInfo | null; onClose: () => void }) {
+  const { accounts, banks, dataChanged, notify, fail, refreshAccounts } = useApp()
+  const [bank, setBank] = useState(0)
+  const [name, setName] = useState('')
+  const [currency, setCurrency] = useState('CAD')
+  const account = accounts.find((a) => a.id === statement?.accountId)
+  useEffect(() => {
+    if (!statement) return
+    setBank(statement.bankId ?? 0)
+    setName(account?.name ?? statement.account)
+    setCurrency(statement.currency)
+  }, [statement]) // eslint-disable-line react-hooks/exhaustive-deps
+  const save = () => {
+    if (!account) return
+    api.accounts.update(account, { name, currency, ...(bank ? { bankId: bank } : {}) }).then(() => {
+      notify('Statement saved')
+      void refreshAccounts()
+      dataChanged()
+      onClose()
+    }, fail)
+  }
+  return (
+    <Dialog open={statement !== null} onClose={onClose} maxWidth="xs" fullWidth data-statement-dialog>
+      <DialogTitle>Edit {statement?.fileName}</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <TextField select label="Bank" value={bank} onChange={(e) => setBank(Number(e.target.value))}>
+          <MenuItem value={0}>No bank</MenuItem>
+          {banks.map((b) => <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>)}
+        </TextField>
+        <TextField autoFocus label="Account name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
+        <TextField select label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          {[...new Set([currency, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+        </TextField>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={!account || name.trim() === ''} onClick={save}>Save</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+/** A column template changed from its pencil: its name and the text of the statements it recognises. */
+function TemplateDialog({ template, onClose, onSaved }: { template: BankTemplate | null; onClose: () => void; onSaved: () => void }) {
+  const { notify } = useApp()
+  const [name, setName] = useState('')
+  const [match, setMatch] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (template) { setName(template.name); setMatch(template.matchText); setError(null) } }, [template])
+  const save = () => {
+    if (!template) return
+    api.templates.save({ ...template, name, matchText: match }).then(() => { notify('Template saved'); onSaved(); onClose() },
+      (e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }
+  return (
+    <Dialog open={template !== null} onClose={onClose} maxWidth="xs" fullWidth data-template-dialog>
+      <DialogTitle>Edit {template?.name}</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <TextField autoFocus label="Name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
+        <TextField label="Recognised by" value={match} onChange={(e) => setMatch(e.target.value)} helperText={error ?? 'Text found on the statements this template reads.'} error={error !== null}
+          slotProps={{ htmlInput: { 'data-field': 'match' } }} />
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={name.trim() === '' || match.trim() === ''} onClick={save}>Save</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
 
 function toBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -45,6 +116,8 @@ export function ImportPage() {
   const [statements, setStatements] = useState<StatementInfo[]>([])
   const [templates, setTemplates] = useState<BankTemplate[]>([])
   const [confirm, setConfirm] = useState<{ title: string; run: () => Promise<void> } | null>(null)
+  const [editingStatement, setEditingStatement] = useState<StatementInfo | null>(null)
+  const [editingTemplate, setEditingTemplate] = useState<BankTemplate | null>(null)
   const working = useRef(false)
 
   const reloadLists = useCallback(() => {
@@ -164,7 +237,7 @@ export function ImportPage() {
                 <TableCell>Period</TableCell>
                 <TableCell align="right">Operations</TableCell>
                 <TableCell align="center">Balances</TableCell>
-                <TableCell padding="checkbox" />
+                <TableCell sx={{ width: ROW_ACTIONS_WIDTH, px: '0 !important' }} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -205,13 +278,11 @@ export function ImportPage() {
                       ? <Tooltip title="Balanced to the cent"><CheckCircle sx={{ fontSize: 18, color: ok }} /></Tooltip>
                       : <Tooltip title="Not checked against balances"><ErrorOutline sx={{ fontSize: 18, color: 'warning.main' }} /></Tooltip>}
                   </TableCell>
-                  <TableCell padding="checkbox">
-                    <IconButton size="small" aria-label="Delete" onClick={() => setConfirm({
+                  <TableCell padding="none" align="right" sx={{ pr: '4px !important' }}>
+                    <RowActions editLabel={`Edit ${s.fileName}`} onEdit={() => setEditingStatement(s)} onDelete={() => setConfirm({
                       title: `Delete ${s.fileName} and its ${plural(s.transactionCount, 'operation')}?`,
                       run: async () => { await api.statements.remove(s.id); notify('Statement deleted'); dataChanged() },
-                    })}>
-                      <DeleteOutline fontSize="small" />
-                    </IconButton>
+                    })} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -228,7 +299,7 @@ export function ImportPage() {
                 <TableCell padding="none" />
                 <TableCell>Name</TableCell>
                 <TableCell>Recognised by</TableCell>
-                <TableCell padding="checkbox" />
+                <TableCell sx={{ width: ROW_ACTIONS_WIDTH, px: 0 }} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -237,13 +308,11 @@ export function ImportPage() {
                   {templateOrder.handle(t)}
                   <TableCell>{t.name}</TableCell>
                   <TableCell sx={{ color: 'text.secondary' }}>“{t.matchText}”</TableCell>
-                  <TableCell padding="checkbox">
-                    <IconButton size="small" aria-label="Delete" onClick={() => setConfirm({
+                  <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
+                    <RowActions editLabel={`Edit the template ${t.name}`} onEdit={() => setEditingTemplate(t)} onDelete={() => setConfirm({
                       title: `Delete the template ${t.name}?`,
                       run: async () => { await api.templates.remove(t.id); reloadLists() },
-                    })}>
-                      <DeleteOutline fontSize="small" />
-                    </IconButton>
+                    })} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -252,6 +321,8 @@ export function ImportPage() {
         </SectionCard>
       )}
 
+      <StatementDialog statement={editingStatement} onClose={() => setEditingStatement(null)} />
+      <TemplateDialog template={editingTemplate} onClose={() => setEditingTemplate(null)} onSaved={reloadLists} />
       <FileBrowser open={browsing} mode="pdfs" title="Choose statements" onClose={() => setBrowsing(false)} onPick={addPaths} />
       <ConfirmDialog
         open={confirm !== null}

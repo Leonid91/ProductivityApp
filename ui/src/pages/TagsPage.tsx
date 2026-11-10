@@ -1,9 +1,7 @@
 import { useState } from 'react'
 import {
-  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
+  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material'
-import EditOutlined from '@mui/icons-material/EditOutlined'
-import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import Block from '@mui/icons-material/BlockRounded'
 import LocalOffer from '@mui/icons-material/LocalOfferOutlined'
 import { api, type Tag } from '../api'
@@ -11,6 +9,7 @@ import { useApp } from '../AppContext'
 import { ConfirmDialog, EmptyState, SectionCard } from '../components/common'
 import { TagChip } from '../components/tags'
 import { palette, swatch } from './CategoriesPage'
+import { RowActions } from '../components/RowActions'
 
 type Editing = { id: number | null; name: string; color: string | null }
 
@@ -93,21 +92,12 @@ export function TagsPanel({ adding, onAdded }: { adding: boolean; onAdded: () =>
             </TableHead>
             <TableBody>
               {tags.map((t) => (
-                <TableRow key={t.id} hover data-tag-row={t.name} sx={{ '&:hover .row-action': { opacity: 1 } }}>
+                <TableRow key={t.id} hover data-tag-row={t.name}>
                   <TableCell><TagChip tag={t} /></TableCell>
                   <TableCell sx={{ color: 'text.secondary' }}>{categoriesOf(t.id).join(', ')}</TableCell>
                   <TableCell align="right" className="tnum">{t.operations}</TableCell>
-                  <TableCell padding="none" align="right" sx={{ whiteSpace: 'nowrap', pr: 1 }}>
-                    <Tooltip title="Edit">
-                      <IconButton className="row-action" size="small" aria-label="Edit" onClick={() => setEditing({ id: t.id, name: t.name, color: t.color })} sx={{ opacity: 0 }}>
-                        <EditOutlined fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton className="row-action" size="small" aria-label="Delete" onClick={() => setConfirm(t)} sx={{ opacity: 0 }}>
-                        <DeleteOutline fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                  <TableCell padding="none" align="right" sx={{ whiteSpace: 'nowrap', pr: 0.5 }}>
+                    <RowActions onEdit={() => setEditing({ id: t.id, name: t.name, color: t.color })} onDelete={() => setConfirm(t)} />
                   </TableCell>
                 </TableRow>
               ))}

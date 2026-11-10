@@ -860,20 +860,29 @@ try {
   await p.clickText('Delete', { selector: '[role=dialog] button' })
   await p.waitFor(`document.querySelector('[data-rate-source="fed"]') === null`, 10000, 'the Fed deleted')
   check('a bank not in use can be deleted', (await p.engine('rates.sources')).length === 2)
-  // A new line: a choice among the central banks not in the table yet (the US Federal Reserve), with its address.
+  // A new bank, from the Add bank button, in a dialog: a choice among the central banks not in the table yet (the US
+  // Federal Reserve), with its address; nothing typed into the table.
   await p.clickText('Add bank', { selector: 'main button' })
-  await p.waitFor(`document.querySelector('[data-new-rate-source] [data-field=url]') !== null`, 5000, 'new line')
-  await p.mouseClick('[data-new-rate-source] [role=combobox]')
+  await p.waitFor(`document.querySelector('[data-rate-source-dialog] [data-field=url]') !== null`, 5000, 'add bank dialog')
+  await p.mouseClick('[data-rate-source-dialog] [role=combobox]')
   const choices = await p.eval(`[...document.querySelectorAll('[role=option]')].map(o => o.innerText).join()`)
   await p.clickText('US Federal Reserve', { selector: '[role=option]' })
-  check('a new line: one of the central banks the app reads, the US Federal Reserve among them', choices === 'US Federal Reserve' && (await p.eval(`document.querySelector('[data-new-rate-source] [data-field=url]').value`)).startsWith('https://www.federalreserve.gov/'), choices)
+  check('a new bank: from the Add bank button, in a dialog: one of the central banks the app reads, the US Federal Reserve among them', choices === 'US Federal Reserve'
+    && (await p.eval(`document.querySelector('[data-rate-source-dialog] [data-field=url]').value`)).startsWith('https://www.federalreserve.gov/') && (await p.eval(`document.querySelector('[data-rate-sources] tbody input:not([data-field=url]):not([type=radio])') === null`)), choices)
   // Its address replaced by the web page of its release: refused cleanly, in the background.
-  await typeInto('[data-new-rate-source] [data-field="url"]', 'https://www.federalreserve.gov/releases/h10/current/')
-  await p.clickText('Add', { selector: '[data-new-rate-source] button' })
+  await typeInto('[data-rate-source-dialog] [data-field="url"]', 'https://www.federalreserve.gov/releases/h10/current/')
+  await p.clickText('Add', { selector: '[data-rate-source-dialog] button' })
   await p.waitFor(`[...document.querySelectorAll('[data-rate-source]')].some(r => r.querySelector('[data-rates-error]'))`, 60000, 'the wrong address checked')
   const wrong = await p.eval(`[...document.querySelectorAll('[data-rate-source]')].map(r => r.querySelector('[data-rates-error]')?.innerText).find(Boolean)`)
   check('a wrong address: checked in the background, the reason shown under it', /web page, not a file of rates/.test(wrong) && !(await p.eval(`!!document.querySelector('.MuiSnackbar-root .MuiAlert-standardError, .MuiSnackbar-root .MuiAlert-filledError')`)), wrong)
   check('every central bank of the list in the table: no more to add', await p.eval(`[...document.querySelectorAll('main button')].find(b => b.innerText === 'Add bank').disabled`))
+  // Its pencil opens the same dialog, on its address.
+  await p.mouseClick('[data-rate-sources] tbody tr:last-child [data-row-edit]')
+  await p.waitFor(`document.querySelector('[data-rate-source-dialog] [data-field=url]') !== null`, 5000, 'edit bank dialog')
+  check('a bank\'s pencil: the same dialog, on its address', (await p.eval(`document.querySelector('[data-rate-source-dialog] h2').innerText`)) === 'Edit the US Federal Reserve'
+    && (await p.eval(`document.querySelector('[data-rate-source-dialog] [data-field=url]').value`)) === 'https://www.federalreserve.gov/releases/h10/current/')
+  await p.clickText('Cancel', { selector: '[data-rate-source-dialog] button' })
+  await sleep(300)
   await shot(p, '24d-exchange-rate-sources.png')
   // The delete button: a plain icon, red under the mouse, nothing drawn around it.
   const del = await p.eval(`(() => { const b = document.querySelector('[data-rate-source="ecb"] button[aria-label^="Delete"]'); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
@@ -956,20 +965,39 @@ try {
     return +(Math.max(...all) - Math.min(...all)).toFixed(1)
   })`)
   check('each line aligned like the exchange rates: check box, place, address, number and delete icon', holidayMiddles.every((d) => d <= 1.5), holidayMiddles.join())
-  check('weekend days under the table, Saturday and Sunday by default', (await p.eval(`[...document.querySelectorAll('[data-weekend-days] input[type=checkbox]')].map(i => i.checked ? i.dataset.weekday : '').filter(Boolean).join()`)) === '6,7'
+  check('weekend days under the table, Saturday and Sunday by default', (await p.eval(`[...document.querySelectorAll('[data-weekend-days] input[type=checkbox]')].map(i => i.checked ? i.dataset.weekday : '').filter(Boolean).sort().join()`)) === '6,7'
     && (await p.eval(`document.querySelector('[data-weekend-days]').getBoundingClientRect().top > document.querySelector('[data-holiday-calendars]').getBoundingClientRect().bottom`)))
+  const totalShown = () => p.eval(`document.querySelector('[data-holidays-total] [data-total]').innerText`)
+  const year = new Date().getFullYear()
+  const placed = await p.eval(`(() => { const t = document.querySelector('[data-holiday-calendars]').getBoundingClientRect(), s = document.querySelector('[data-holidays-total]').getBoundingClientRect(), w = document.querySelector('[data-weekend-days]').getBoundingClientRect(); return s.top > t.bottom && s.bottom <= w.top + 1 })()`)
+  await p.waitFor(`document.querySelector('[data-holidays-total] [data-total]').innerText !== ''`, 10000, 'the total')
+  const bothTotal = await totalShown()
+  check('under the table, before the weekend days: the holidays of this year of the checked calendars, each day once (Canada 12 and Québec 8 together: 13)', placed && bothTotal === '13'
+    && (await p.eval(`document.querySelector('[data-holidays-total]').innerText`)).startsWith(`Holidays in ${year}`), bothTotal)
   await shot(p, '24g-holidays.png')
-  // Canada alone: Québec unchecked, Canada stays; Canada unchecked unchecks Québec; Québec checked checks Canada again.
+  // Each calendar checked on its own: Québec unchecked, Canada stays; Canada unchecked, Québec checked alone; Canada again.
   const activeOf = async () => (await holidayRows()).map((r) => r.active).join()
+  const waitTotal = (old) => p.waitFor(`document.querySelector('[data-holidays-total] [data-total]').innerText !== ${JSON.stringify(old)}`, 10000, 'the total again')
   await p.mouseClick('[data-holiday-calendar="qc"] input[type=checkbox]')
   await p.waitFor(`!document.querySelector('[data-holiday-calendar="qc"] input[type=checkbox]').checked`, 10000, 'Québec unchecked')
-  const canadaAlone = await activeOf()
+  await waitTotal('13')
+  const canadaAlone = [await activeOf(), await totalShown()]
   await p.mouseClick('[data-holiday-calendar="ca"] input[type=checkbox]')
   await p.waitFor(`!document.querySelector('[data-holiday-calendar="ca"] input[type=checkbox]').checked`, 10000, 'Canada unchecked')
-  const none = await activeOf()
   await p.mouseClick('[data-holiday-calendar="qc"] input[type=checkbox]')
-  await p.waitFor(`document.querySelector('[data-holiday-calendar="ca"] input[type=checkbox]').checked`, 10000, 'Canada checked with Québec')
-  check('Canada can be checked without Québec; Québec checked checks Canada; Canada unchecked unchecks Québec', canadaAlone === 'true,false,false,false' && none === 'false,false,false,false' && (await activeOf()) === 'true,true,false,false', `${canadaAlone} | ${none}`)
+  await p.waitFor(`document.querySelector('[data-holiday-calendar="qc"] input[type=checkbox]').checked`, 10000, 'Québec checked')
+  await sleep(500)
+  const quebecAlone = [await activeOf(), await totalShown()]
+  await p.mouseClick('[data-holiday-calendar="ca"] input[type=checkbox]')
+  await p.waitFor(`document.querySelector('[data-holiday-calendar="ca"] input[type=checkbox]').checked`, 10000, 'Canada checked again')
+  await p.mouseClick('[data-holiday-calendar="ca"] input[type=checkbox]')
+  await p.waitFor(`!document.querySelector('[data-holiday-calendar="ca"] input[type=checkbox]').checked`, 10000, 'Canada unchecked again')
+  const quebecStays = await activeOf()
+  await p.mouseClick('[data-holiday-calendar="ca"] input[type=checkbox]')
+  await p.waitFor(`document.querySelector('[data-holiday-calendar="ca"] input[type=checkbox]').checked`, 10000, 'Canada checked')
+  await sleep(500)
+  check('each calendar checked on its own: Canada without Québec (12), Québec without Canada (8), unchecking Canada leaves Québec', canadaAlone.join() === 'true,false,false,false,12'
+    && quebecAlone.join() === 'false,true,false,false,8' && quebecStays === 'false,true,false,false' && (await activeOf()) === 'true,true,false,false' && (await totalShown()) === '13', `${canadaAlone} | ${quebecAlone} | ${quebecStays}`)
   // November 2025: Remembrance Day (Tuesday 11, federal); the United States checked too take out Thanksgiving (27).
   const novDays = async () => (await p.engine('periods.report', { from: '2025-11-01', to: '2025-11-30', granularity: 'month' })).businessDays
   const novCanada = await novDays()
@@ -993,6 +1021,35 @@ try {
   const weekendCells = () => p.eval(`document.querySelectorAll('.weekend-day').length`)
   const weekendBefore = await weekendCells()
   await shot(p, '24h-calendar-holidays.png')
+  for (let i = 0; i < 12; i++) await p.click('[aria-label="Next month"]')
+  await p.waitFor(`document.querySelector('main h5')?.innerText === 'December 2026'`, 10000, 'December 2026')
+  await sleep(600)
+  const weekendHoliday = await p.eval(`({ sat: document.querySelector('[data-holiday="2026-12-26"]')?.innerText ?? '', satWeekend: document.querySelector('[data-holiday="2026-12-26"]')?.closest('[data-date]')?.classList.contains('weekend-day') ?? false, off: document.querySelector('[data-holiday="2026-12-28"]')?.innerText ?? '' })`)
+  check('a holiday on a weekend day is on the calendar too: Boxing Day on Saturday 26 December 2026, its day off on Monday the 28th', weekendHoliday.sat === 'Boxing Day' && weekendHoliday.satWeekend && weekendHoliday.off === 'Boxing Day (observed)', JSON.stringify(weekendHoliday))
+  await shot(p, '24h1-calendar-weekend-holiday.png')
+  // Settings > General > Calendar: the week starts on Sunday (North America) by default; Monday puts the weekend at the
+  // right, Saturday at the left.
+  const firstShown = () => p.eval(`(() => { const d = document.querySelector('main [data-date]').dataset.date; return new Date(d + 'T12:00').getDay() })()`)
+  const lastHead = () => p.eval(`[...document.querySelectorAll('main .weekend-head')].map(h => h.innerText.trim()).join()`)
+  const sundayFirst = [await firstShown(), await lastHead()]
+  const weekStarts = async (label) => {
+    await p.clickText('Settings', { selector: 'nav button' })
+    await p.clickText('General', { selector: 'button' })
+    await sleep(400)
+    await p.mouseClick('[data-calendar-first-day]')
+    await p.clickText(label, { selector: '[role=option]' })
+    await sleep(300)
+    await p.clickText('Calendar', { selector: 'nav button' })
+    await sleep(1000)
+    return [await firstShown(), await lastHead()]
+  }
+  const mondayFirst = await weekStarts('Monday (Europe)')
+  await shot(p, '24h1b-calendar-monday-first.png')
+  const saturdayFirst = await weekStarts('Saturday (Middle East)')
+  const back = await weekStarts('Sunday (North America)')
+  check('the week starts on Sunday by default (North America), or Monday (weekend at the right), or Saturday (weekend at the left)', (await p.engine('app.init')).settings.calendarFirstDay === '0'
+    && sundayFirst[0] === 0 && mondayFirst[0] === 1 && saturdayFirst[0] === 6 && back[0] === 0, JSON.stringify({ sundayFirst, mondayFirst, saturdayFirst, back }))
+  await toDecember()
   // Friday too as a weekend day: shaded on the calendar, out of the business days; then back to Saturday and Sunday.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('Definitions', { selector: 'button' })
@@ -1038,27 +1095,29 @@ try {
   await p.waitFor(`document.querySelector('[data-holiday-calendar="fr"]') === null`, 10000, 'France deleted')
   check('a calendar deleted with its delete icon', (await p.engine('holidays.calendars')).length === 3)
   await p.clickText('Add calendar', { selector: 'main button' })
-  await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-field=url]') !== null`, 5000, 'new calendar line')
-  await p.mouseClick('[data-new-holiday-calendar] [data-field=location]')
+  await p.waitFor(`document.querySelector('[data-calendar-dialog] [data-field=url]') !== null`, 5000, 'add calendar dialog')
+  await p.mouseClick('[data-calendar-dialog] [data-field=location]')
   await sleep(400)
   const holidayChoices = await p.eval(`[...document.querySelectorAll('[role=option]')].map(o => o.innerText).join()`)
-  const prefilled = await p.eval(`[document.querySelector('[data-new-holiday-calendar] [data-field=location]').value, document.querySelector('[data-new-holiday-calendar] [data-field=url]').value]`)
-  check('a new line offers the calendars to start with that are not in the table, with their address', holidayChoices === 'France' && prefilled[0] === 'France' && prefilled[1].startsWith('https://calendrier.api.gouv.fr/'), `${holidayChoices} ${prefilled.join(' ')}`)
+  const prefilled = await p.eval(`[document.querySelector('[data-calendar-dialog] [data-field=location]').value, document.querySelector('[data-calendar-dialog] [data-field=url]').value]`)
+  check('a new calendar: from the Add calendar button, in a dialog offering the calendars to start with that are not in the table, with their address', holidayChoices === 'France' && prefilled[0] === 'France'
+    && prefilled[1].startsWith('https://calendrier.api.gouv.fr/') && (await p.eval(`document.querySelector('[data-holiday-calendars] tbody .MuiOutlinedInput-root') === null`)), `${holidayChoices} ${prefilled.join(' ')}`)
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(200)
   await shot(p, '24h3-holidays-new-line.png')
-  await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
+  await p.clickText('Add', { selector: '[data-calendar-dialog] button' })
   await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 4`, 10000, 'France added again')
   await p.waitFor(holidaysIdle, 120000, 'France downloaded')
   await sleep(300)
   check('added again: downloaded at once, its holidays counted', (await holidayRows()).at(-1).perYear === 11)
   // A province of one's own under Canada, with the address of a web page: set under Canada, refused cleanly under it.
   await p.clickText('Add calendar', { selector: 'main button' })
-  await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-field=url]') !== null`, 5000, 'another new line')
-  await typeInto('[data-new-holiday-calendar] [data-field="location"]', 'Ontario')
-  await typeInto('[data-new-holiday-calendar] [data-field="url"]', 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/')
-  await p.mouseClick('[data-new-holiday-calendar] [data-field="parent"]')
+  await p.waitFor(`document.querySelector('[data-calendar-dialog] [data-field=url]') !== null`, 5000, 'another add calendar dialog')
+  await typeInto('[data-calendar-dialog] [data-field="location"]', 'Ontario')
+  await typeInto('[data-calendar-dialog] [data-field="url"]', 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/')
+  await p.mouseClick('[data-calendar-dialog] [data-field="parent"]')
   await p.clickText('Canada (Federal)', { selector: '[role=option]' })
-  await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
+  await p.clickText('Add', { selector: '[data-calendar-dialog] button' })
   await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 5`, 10000, 'own calendar added')
   await p.waitFor(holidaysIdle, 120000, 'own calendar checked')
   await sleep(300)
@@ -1067,15 +1126,28 @@ try {
   check('a province added under Canada, after Québec; a wrong address: the reason shown under it', ontario?.parent === 'ca' && hr.map((r) => r.location).slice(0, 3).join() === 'Canada (Federal),Québec,Ontario'
     && /web page, not a calendar file/.test(ontario?.error ?? ''), JSON.stringify(ontario))
   await shot(p, '24i-holidays-wrong-address.png')
-  // The same place twice: said under the new line.
+  // The same place twice: said in the dialog.
   await p.clickText('Add calendar', { selector: 'main button' })
-  await typeInto('[data-new-holiday-calendar] [data-field="location"]', 'france')
-  await typeInto('[data-new-holiday-calendar] [data-field="url"]', 'https://example.org/holidays.ics')
-  await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
-  await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-holidays-error]') !== null`, 10000, 'the same place refused')
-  check('the same place twice: refused', (await p.eval(`document.querySelector('[data-new-holiday-calendar] [data-holidays-error]').innerText`)) === 'France is already in the table.')
-  await p.clickText('Cancel', { selector: '[data-new-holiday-calendar] button' })
-  await p.engine('holidays.remove', { id: (await p.engine('holidays.calendars')).find((c) => c.location === 'Ontario').id })
+  await p.waitFor(`document.querySelector('[data-calendar-dialog] [data-field=url]') !== null`, 5000, 'add calendar dialog again')
+  await typeInto('[data-calendar-dialog] [data-field="location"]', 'france')
+  await typeInto('[data-calendar-dialog] [data-field="url"]', 'https://example.org/holidays.ics')
+  await p.clickText('Add', { selector: '[data-calendar-dialog] button' })
+  await p.waitFor(`document.querySelector('[data-calendar-dialog] [data-holidays-error]') !== null`, 10000, 'the same place refused')
+  check('the same place twice: refused in the dialog', (await p.eval(`document.querySelector('[data-calendar-dialog] [data-holidays-error]').innerText`)) === 'France is already in the table.')
+  await p.clickText('Cancel', { selector: '[data-calendar-dialog] button' })
+  await sleep(300)
+  // Ontario's pencil: the same dialog; taken out of Canada, it becomes a country of its own, after the others.
+  const ontarioId = (await p.engine('holidays.calendars')).find((c) => c.location === 'Ontario').id
+  await p.mouseClick(`[data-holiday-calendar="${ontarioId}"] [data-row-edit]`)
+  await p.waitFor(`document.querySelector('[data-calendar-dialog] [data-field=url]') !== null`, 5000, 'edit calendar dialog')
+  const editTitle = await p.eval(`document.querySelector('[data-calendar-dialog] h2').innerText`)
+  await p.mouseClick('[data-calendar-dialog] [data-field="parent"]')
+  await p.clickText('No country', { selector: '[role=option]' })
+  await p.clickText('Save', { selector: '[data-calendar-dialog] button' })
+  await p.waitFor(`document.querySelector('[data-calendar-dialog]') === null && !document.querySelector('[data-holiday-calendar="${ontarioId}"]').dataset.parent`, 10000, 'Ontario out of Canada')
+  hr = await holidayRows()
+  check('a calendar\'s pencil: the same dialog; out of Canada, Ontario is a country of its own', editTitle === 'Edit Ontario' && hr.at(-1).location === 'Ontario' && hr.at(-1).parent === null, hr.map((r) => r.location).join())
+  await p.engine('holidays.remove', { id: ontarioId })
   // Analytics: the net salary per hour and per year, worked out from the business days, in the display currency.
   const decReport = await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })
   const sal = decReport.salary
@@ -1286,6 +1358,62 @@ try {
   await sleep(1200)
   await shot(p, '22-dark-calendar.png')
   await p.engine('settings.set', { key: 'theme', value: 'light' })
+
+  // Every table: a pencil at the far right of each line, always shown; in a table that deletes, the delete button after
+  // it, last.
+  const pencils = () => p.eval(`[...document.querySelectorAll('main table tbody tr')].filter(r => r.querySelector('[data-row-actions]')).map(r => {
+    const buttons = [...r.querySelectorAll('button')].filter(b => b.getBoundingClientRect().width > 0)
+    const edit = r.querySelector('[data-row-edit]'), del = r.querySelector('[data-row-delete]')
+    const right = Math.max(...buttons.map(b => b.getBoundingClientRect().right))
+    const e = edit.getBoundingClientRect(), d = del?.getBoundingClientRect()
+    return { shown: getComputedStyle(edit).opacity === '1' && getComputedStyle(edit).visibility === 'visible', order: !d || d.left >= e.right, last: Math.abs((d ?? e).right - right) < 1 }
+  })`)
+  const tables = {}
+  const visit = async (name, go) => { await go(); await sleep(900); const rows = await pencils(); tables[name] = { rows: rows.length, ok: rows.length > 0 && rows.every((r) => r.shown && r.order && r.last) } }
+  const definition = (tab) => async () => { await p.clickText('Settings', { selector: 'nav button' }); await p.clickText('Definitions', { selector: 'button' }); await sleep(300); await p.clickText(tab, { selector: 'main [role=group] button' }) }
+  await visit('operations', async () => { await p.clickText('Periods', { selector: 'nav button' }); await sleep(800); await p.clickText('Statements', { selector: '[data-period-view] button' }) })
+  await visit('accounts', async () => { await p.clickText('Settings', { selector: 'nav button' }); await p.clickText('Bank Configuration', { selector: 'button' }) })
+  await visit('banks', definition('Bank'))
+  await visit('rates', definition('Exchange rates'))
+  await visit('brands', definition('Brands'))
+  await visit('categories', definition('Categories'))
+  // (the test tags are deleted by now: one made for the check, deleted after)
+  const pencilTag = (await p.engine('tags.create', { name: 'Pencil check', color: null })).tags.find((t) => t.name === 'Pencil check')
+  await p.eval('location.reload()')
+  await p.waitFor(`document.querySelector('nav') !== null`, 20000, 'reloaded with the tag')
+  await visit('tags', definition('Tags'))
+  await p.engine('tags.delete', { id: pencilTag.id })
+  await visit('holidays', definition('Holidays'))
+  await visit('statements', async () => { await p.clickText('Import', { selector: 'nav button' }) })
+  check('every table: the pencil at the far right of each line, always shown, before the delete button, which is last', Object.values(tables).every((t) => t.ok), JSON.stringify(tables))
+  // The pencils of the tables without one before: each opens its dialog on the line.
+  const opens = {}
+  const openEdit = async (name, go, dialog) => {
+    await go(); await sleep(800)
+    await p.mouseClick('main table tbody tr [data-row-edit]')
+    await p.waitFor(`document.querySelector('${dialog}') !== null`, 5000, name + ' dialog')
+    opens[name] = (await p.eval(`document.querySelector('${dialog} h2').innerText`)).startsWith('Edit')
+    await p.clickText('Cancel', { selector: `${dialog} button` })
+    await sleep(300)
+  }
+  await openEdit('bank', definition('Bank'), '[data-bank-dialog]')
+  await openEdit('brand', definition('Brands'), '[data-brand-dialog]')
+  await openEdit('account', async () => { await p.clickText('Settings', { selector: 'nav button' }); await p.clickText('Bank Configuration', { selector: 'button' }) }, '[data-account-dialog]')
+  await openEdit('statement', async () => { await p.clickText('Import', { selector: 'nav button' }) }, '[data-statement-dialog]')
+  check('the pencils of banks, brands, accounts and statements open their dialog on the line', Object.values(opens).every(Boolean) && Object.keys(opens).length === 4, JSON.stringify(opens))
+  // A brand renamed from its pencil: every operation of it takes the new name.
+  const brandBefore = (await p.engine('brands.list')).brands[0]
+  await definition('Brands')(); await sleep(800)
+  await p.eval(`[...document.querySelectorAll('main table tbody tr')].find(r => r.querySelector('[data-row-edit]')?.getAttribute('aria-label') === ${JSON.stringify('Edit ' + brandBefore.brand)}).querySelector('[data-row-edit]').click()`)
+  await p.waitFor(`document.querySelector('[data-brand-dialog] [data-field=name]') !== null`, 5000, 'brand dialog')
+  await typeInto('[data-brand-dialog] [data-field="name"]', brandBefore.brand + ' Renamed')
+  await p.clickText('Save', { selector: '[data-brand-dialog] button' })
+  await p.waitFor(`document.querySelector('[data-brand-dialog]') === null`, 10000, 'brand saved')
+  await sleep(500)
+  const renamed = (await p.engine('brands.list')).brands.find((b) => b.brand === brandBefore.brand + ' Renamed')
+  check('a brand renamed from its pencil: every operation of it renamed', renamed?.count === brandBefore.count && !(await p.engine('brands.list')).brands.some((b) => b.brand === brandBefore.brand), `${brandBefore.brand} (${brandBefore.count}) -> ${renamed?.brand} (${renamed?.count})`)
+  await p.engine('brands.rename', { from: brandBefore.brand + ' Renamed', to: brandBefore.brand })
+  await shot(p, '25-brands-pencils.png')
 
   check('no script errors in the interface', p.consoleErrors.length === 0, p.consoleErrors.slice(0, 3).join(' | '))
 } catch (e) {

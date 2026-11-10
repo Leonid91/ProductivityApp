@@ -1,13 +1,54 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Box, Chip, IconButton, InputBase, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography } from '@mui/material'
+import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, InputBase, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import Search from '@mui/icons-material/SearchRounded'
-import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import Storefront from '@mui/icons-material/StorefrontRounded'
 import { api, type BrandInfo, type BrandRule } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, plural } from '../format'
 import { CategoryPill, EmptyState, Money, SectionCard } from '../components/common'
 import { useRowOrder } from '../components/order'
+import { ROW_ACTIONS_WIDTH, ROW_EDIT_WIDTH, RowActions } from '../components/RowActions'
+
+/**
+ * A brand changed from its pencil: its name (renamed on every operation, with what was learned for it) and its
+ * category (for every operation of the brand, and learned for the next imports).
+ */
+function BrandDialog({ brand, categoryId, onClose }: { brand: string | null; categoryId: string | null; onClose: () => void }) {
+  const { dataChanged, notify, fail, category } = useApp()
+  const [name, setName] = useState('')
+  const [chosen, setChosen] = useState<string | null>(null)
+  useEffect(() => { if (brand !== null) { setName(brand); setChosen(categoryId) } }, [brand, categoryId])
+  const save = async () => {
+    if (brand === null) return
+    try {
+      const to = name.trim()
+      let changed = 0
+      if (to !== brand) changed += (await api.brands.rename(brand, to)).changed
+      if (chosen && chosen !== categoryId) changed += (await api.brands.setCategory(to, chosen)).changed
+      notify(`${to} saved` + (changed ? ` · ${plural(changed, 'operation')} updated` : ''))
+      dataChanged()
+      onClose()
+    } catch (e) {
+      fail(e)
+    }
+  }
+  return (
+    <Dialog open={brand !== null} onClose={onClose} maxWidth="xs" fullWidth data-brand-dialog>
+      <DialogTitle>Edit {brand}</DialogTitle>
+      <DialogContent sx={{ display: 'grid', gap: 2.25, pt: '8px !important' }}>
+        <TextField autoFocus label="Brand name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { 'data-field': 'name' } }} />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ minWidth: 70 }}>Category</Typography>
+          {chosen ? <CategoryPill id={chosen} onChange={setChosen} /> : <Typography variant="body2">{category('other').name}</Typography>}
+        </Box>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={name.trim() === ''} onClick={() => void save()}>Save</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
 
 /** What was learned for one brand: the statement wordings recognised as it, and its category. */
 interface Learned { brand: string; wordings: string[]; categoryId: string | null }
@@ -18,6 +59,7 @@ export function BrandsPanel() {
   const [brands, setBrands] = useState<BrandInfo[]>([])
   const [rules, setRules] = useState<BrandRule[]>([])
   const [query, setQuery] = useState('')
+  const [editing, setEditing] = useState<{ brand: string; categoryId: string | null } | null>(null)
 
   useEffect(() => {
     api.brands.list().then((r) => { setBrands(r.brands); setRules(r.rules) }, fail)
@@ -95,6 +137,7 @@ export function BrandsPanel() {
                 <TableCell align="right">Operations</TableCell>
                 <TableCell align="right">Spent</TableCell>
                 <TableCell align="right">Last seen</TableCell>
+                <TableCell sx={{ width: ROW_EDIT_WIDTH, px: 0 }} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -111,6 +154,9 @@ export function BrandsPanel() {
                   <TableCell align="right" className="tnum">{b.count}</TableCell>
                   <TableCell align="right"><Money value={b.spent} currency={b.currency} /></TableCell>
                   <TableCell align="right" className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(b.lastDate, settings.dateFormat)}</TableCell>
+                  <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
+                    <RowActions editLabel={`Edit ${b.brand}`} onEdit={() => setEditing({ brand: b.brand, categoryId: b.categoryId })} />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -127,7 +173,7 @@ export function BrandsPanel() {
                 <TableCell>Statement wording</TableCell>
                 <TableCell>Brand Name</TableCell>
                 <TableCell>Category</TableCell>
-                <TableCell padding="checkbox" />
+                <TableCell sx={{ width: ROW_ACTIONS_WIDTH, px: 0 }} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -142,8 +188,10 @@ export function BrandsPanel() {
                   <TableCell>
                     {l.categoryId ? <CategoryPill id={l.categoryId} onChange={(id) => void setCategory(l.brand, id)} /> : <Typography variant="body2" color="text.secondary">—</Typography>}
                   </TableCell>
-                  <TableCell padding="checkbox">
-                    <Tooltip title="Forget"><IconButton size="small" aria-label="Forget" onClick={() => void forget(l)}><DeleteOutline fontSize="small" /></IconButton></Tooltip>
+                  <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
+                    {/* Forgetting is this table's delete: what was learned goes, the brand's operations stay. */}
+                    <RowActions editLabel={`Edit ${l.brand}`} onEdit={() => setEditing({ brand: l.brand, categoryId: l.categoryId })}
+                      deleteLabel="Forget" onDelete={() => void forget(l)} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -151,6 +199,7 @@ export function BrandsPanel() {
           </Table>
         </SectionCard>
       )}
+      <BrandDialog brand={editing?.brand ?? null} categoryId={editing?.categoryId ?? null} onClose={() => setEditing(null)} />
     </Box>
   )
 }
