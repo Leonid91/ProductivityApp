@@ -56,7 +56,7 @@ internal static class Api
         b.Register("holidays.presets", _ => HolidayCalendar.Defaults);
         b.Register("holidays.save", p =>
         {
-            var saved = s.Holidays.SaveCalendar(p.Opt<string>("id"), p.Get<string>("location"), p.Get<string>("url"));
+            var saved = s.Holidays.SaveCalendar(p.Opt<string>("id"), p.Get<string>("location"), p.Get<string>("url"), p.Opt<string>("parent"));
             return new { id = saved.Id, calendars = s.Holidays.Views() };
         });
         b.Register("holidays.setActive", p => { s.Holidays.SetActive(p.Get<string>("id"), p.Get<bool>("active")); return s.Holidays.Views(); });
@@ -69,7 +69,7 @@ internal static class Api
             var updated = await s.Holidays.UpdateAllAsync(force: true);
             return new { updated, calendars = s.Holidays.Views() };
         });
-        // Every calendar is downloaded again once a day (checked at start and every hour). Says whether a checked one changed.
+        // Every calendar is downloaded again about once a month (checked at start and every hour). Says whether a checked one changed.
         b.RegisterBackground("holidays.ensure", async _ => new { updated = await s.Holidays.UpdateAllAsync(force: false) });
         // The holidays of the checked calendars over a period (the calendar page).
         b.Register("holidays.list", p => s.Holidays.List(ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to"))));

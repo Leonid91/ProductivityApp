@@ -107,6 +107,15 @@ public sealed record ConversionLine(
 /// <param name="Base">The currency the bank quotes every rate against (two other currencies are converted through it).</param>
 public sealed record Conversion(string To, string Source, string Base, string Url, string? UpdatedAt, string? Latest, List<ConversionLine> Lines);
 
+/// <summary>
+/// The net salary of a period worked out per hour and per year, in the display currency: the salary received
+/// (<see cref="Net"/>, every bank together) over the period's business days (weekend days and the checked calendars'
+/// holidays are not worked) of <see cref="HoursPerDay"/> hours (a 40-hour week shared by the working days of the
+/// week); per year: the same daily pay over <see cref="YearBusinessDays"/>, the business days of a year of the period
+/// (on average when it runs over several years).
+/// </summary>
+public sealed record SalaryRate(decimal Net, int BusinessDays, decimal HoursPerDay, decimal PerHour, decimal YearBusinessDays, decimal PerYear);
+
 /// <summary>A period bank by bank, then every bank together, all in the global display currency.</summary>
 public sealed class PeriodReport
 {
@@ -125,8 +134,10 @@ public sealed class PeriodReport
     /// charts, not the operations again.
     /// </summary>
     public required List<long> Unconverted { get; init; }
-    /// <summary>Monday to Friday, less the holidays of the checked calendars (null when no calendars were given).</summary>
+    /// <summary>The days that are not weekend days, less the holidays of the checked calendars (null when no calendars were given).</summary>
     public int? BusinessDays { get; init; }
+    /// <summary>The net salary per hour and per year (null without salary in the period, or without business days).</summary>
+    public SalaryRate? Salary { get; init; }
 }
 
 public sealed class SummaryService(Database db)
@@ -235,7 +246,33 @@ public sealed class SummaryService(Database db)
             Conversion = new Conversion(global, status.Source, status.Base, status.Url, status.UpdatedAt, status.Latest, lines),
             Unconverted = [.. all.Where(t => t.Currency != global && !everyConversion.ContainsKey(t.Id)).Select(t => t.Id)],
             BusinessDays = holidays?.BusinessDays(from, to),
+            Salary = holidays is null ? null : SalaryOf(everything, from, to, holidays),
         };
+    }
+
+    /// <summary>The category of salaries, or one nested in it.</summary>
+    private static bool IsSalary(string categoryId)
+    {
+        for (var c = Categories.Get(categoryId); ; c = Categories.Get(c.Parent!))
+        {
+            if (c.Id == "salary") return true;
+            if (c.Parent is null || !Categories.Exists(c.Parent)) return false;
+        }
+    }
+
+    /// <summary>See <see cref="SalaryRate"/>; <paramref name="txs"/> are in the display currency.</summary>
+    public static SalaryRate? SalaryOf(IEnumerable<Transaction> txs, DateOnly from, DateOnly to, Holidays holidays)
+    {
+        var net = txs.Where(t => IsSalary(t.CategoryId)).Sum(t => t.Amount);
+        var days = holidays.BusinessDays(from, to);
+        var perWeek = holidays.WorkingDaysPerWeek();
+        if (net <= 0 || days <= 0 || perWeek <= 0) return null;
+        var hoursPerDay = Holidays.HoursPerWeek / perWeek;
+        var years = Enumerable.Range(from.Year, to.Year - from.Year + 1).ToList();
+        var yearDays = (decimal)years.Sum(y => holidays.BusinessDays(new DateOnly(y, 1, 1), new DateOnly(y, 12, 31))) / years.Count;
+        return new SalaryRate(net, days, Math.Round(hoursPerDay, 2),
+            Math.Round(net / (days * hoursPerDay), 2, MidpointRounding.AwayFromZero), Math.Round(yearDays, 1),
+            Math.Round(net / days * yearDays, 2, MidpointRounding.AwayFromZero));
     }
 
     /// <summary>

@@ -33,6 +33,8 @@ internal sealed class AppServices : IDisposable
         ["currency"] = "CAD",
         // Source of the daily exchange rates converting the other currencies (one of Definitions > Exchange rates).
         ["ratesSource"] = "boc",
+        // Weekend days, not business days: ISO numbers, Monday 1 to Sunday 7 (Definitions > Holidays).
+        ["weekendDays"] = "6,7",
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
         ["reportsFolder"] = "",
@@ -73,7 +75,7 @@ internal sealed class AppServices : IDisposable
         Categories = new CategoryService(Db);
         Tags = new TagService(Db);
         Rates = new ExchangeRates(Db, () => Setting("ratesSource"));
-        Holidays = new Holidays(Db);
+        Holidays = new Holidays(Db, () => Setting("weekendDays"));
         if (Db.GetSetting("rulesVersion") != RulesVersion)
         {
             Transactions.ReapplyRules();
@@ -134,12 +136,15 @@ internal sealed class AppServices : IDisposable
                 throw new ArgumentException("Unknown choice.");
             case "section.expense" or "section.income" or "section.transfer" when value.Trim().Length is 0 or > 40:
                 throw new ArgumentException("A name has 1 to 40 characters.");
+            // Weekend days: ISO numbers of the week's days (Monday 1 to Sunday 7), comma separated; empty for none.
+            case "weekendDays" when !System.Text.RegularExpressions.Regex.IsMatch(value, "^([1-7](,[1-7]){0,6})?$"):
+                throw new ArgumentException("Weekend days are numbers from 1 (Monday) to 7 (Sunday).");
             // The order the person gave the rows of a table: a list of row keys.
             case not null when key.StartsWith("order.", StringComparison.Ordinal) && (key.Length > 60 || value.Length > 200_000 || !IsStringList(value)):
                 throw new ArgumentException("Invalid row order.");
             case "currency" or "ratesSource" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers"
                 or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" or "chartsTopLevel"
-                or "section.expense" or "section.income" or "section.transfer":
+                or "section.expense" or "section.income" or "section.transfer" or "weekendDays":
             case not null when key.StartsWith("order.", StringComparison.Ordinal):
                 Db.SetSetting(key, value);
                 break;

@@ -69,17 +69,22 @@ export function CalendarPage() {
     api.holidays.list(addDays(from, -7), addDays(to, 7)).then(setHolidays, fail)
   }, [month, currency, dataVersion, fail])
 
-  // The same holiday in several checked calendars (Christmas Day in Quebec and in the United States): written once.
+  // The same holiday in several checked calendars (Christmas Day in Canada and in Québec): written once, with its
+  // places. The day off given for a holiday on a weekend is written "(observed)".
   const merged = useMemo(() => {
     const byKey = new Map<string, { day: string; name: string; locations: string[] }>()
     for (const h of holidays) {
-      const key = `${h.day}|${h.name.toLowerCase()}`
+      const name = h.observed ? `${h.name} (observed)` : h.name
+      const key = `${h.day}|${name.toLowerCase()}`
       const known = byKey.get(key)
       if (known) known.locations.push(h.location)
-      else byKey.set(key, { day: h.day, name: h.name, locations: [h.location] })
+      else byKey.set(key, { day: h.day, name, locations: [h.location] })
     }
     return [...byKey.values()]
   }, [holidays])
+  // The weekend days chosen in Definitions > Holidays (ISO numbers, Monday 1 to Sunday 7), shaded.
+  const weekend = useMemo(() => new Set((settings.weekendDays ?? '6,7').split(',').filter(Boolean).map(Number)), [settings.weekendDays])
+  const isWeekend = (dow: number) => weekend.has(dow === 0 ? 7 : dow)
   const events = useMemo(() => {
     // Holidays first in their day, then what came in, went out and moved.
     const off = merged.map((h, i) => ({ id: `h${i}`, start: h.day, allDay: true, title: h.name, order: 0, extendedProps: { kind: 'holiday', location: h.locations.join(', ') } }))
@@ -168,8 +173,9 @@ export function CalendarPage() {
             eventClick={(info) => { const s = info.event.startStr; if (s) setDay(s.slice(0, 10)) }}
             dayCellClass={(arg) => {
               const d = arg.date && iso(arg.date.getFullYear(), arg.date.getMonth() + 1, arg.date.getDate())
-              return [d === day ? 'selected-day' : '', d && holidayDays.has(d) ? 'holiday-day' : ''].filter(Boolean).join(' ')
+              return [d === day ? 'selected-day' : '', d && holidayDays.has(d) ? 'holiday-day' : '', isWeekend(arg.dow) ? 'weekend-day' : ''].filter(Boolean).join(' ')
             }}
+            dayHeaderClass={(arg) => (isWeekend(arg.dow) ? 'weekend-head' : '')}
             eventContent={(arg) => arg.event.extendedProps.kind === 'holiday' ? (
               <Box
                 data-holiday={arg.event.startStr.slice(0, 10)}
@@ -247,7 +253,10 @@ export function CalendarPage() {
       </Box>
 
       <TransactionDialog open={editing !== null || adding} tx={editing} brands={brands} defaultDate={day} onClose={() => { setEditing(null); setAdding(false) }} />
-      <style>{`.selected-day { box-shadow: inset 0 0 0 2px ${theme.palette.primary.main}; } .holiday-day { background: ${dark ? 'rgba(106,165,236,.05)' : 'rgba(36,104,192,.03)'}; }`}</style>
+      <style>{`.selected-day { box-shadow: inset 0 0 0 2px ${theme.palette.primary.main}; }
+        .weekend-day { background: ${dark ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.028)'}; }
+        .weekend-head { color: ${theme.palette.text.secondary}; }
+        .holiday-day { background: ${dark ? 'rgba(106,165,236,.07)' : 'rgba(36,104,192,.045)'}; }`}</style>
     </Box>
   )
 }

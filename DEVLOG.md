@@ -556,3 +556,30 @@ real app with `tools/e2e/perf.mjs`.
 ### Changed
 - The Bank of Canada is the source of exchange rates by default.
 - The tables of exchange rates and of holidays share their line layout, delete button and error line.
+
+## November 10th, 2026 - Holidays by country and province, weekend days, net salary per hour and per year - Commit 25
+
+### Added
+- Definitions > Holidays is a tree: a province's or a state's calendar sits under its country's federal one, set in
+  and joined to it by a line. To start with: Canada (Federal) and, under it, Québec, both checked; United States
+  (Federal); France. Checking a province checks its country (the federal holidays apply in it); Canada can be checked
+  alone; unchecking a country unchecks what is under it; deleting a country deletes what is under it (said first). A
+  new line can be put under a country ("Part of").
+- Canada's federal holidays and Québec's come from canada-holidays.ca's yearly files, with the day off given for a
+  holiday falling on a weekend ("Boxing Day (observed)" on Monday 28 December 2026), which is not a business day.
+- Weekend days, under the table: any days of the week (Saturday and Sunday by default). Business days are the days
+  that are not weekend days, less the checked calendars' holidays, on every period (month, year, all time, custom);
+  the calendar shades the weekend days.
+- Analytics: the net salary per hour and per year of the period, every bank together in the display currency: the
+  salary received over the business days of the period, 40 hours a week shared by its working days; per year, the
+  same daily pay over the business days of a year.
+
+### Changed
+- Calendars are downloaded again about once a month (30 days after their last download), not every day; the two
+  copies are the previous download and the latest.
+- A database made before gets Canada (Federal) with Québec under it (Québec downloaded again from its new address);
+  calendars the person changed keep their place and address.
+
+### Space
+- Exchange rates: about 8.6 MB per copy (European Central Bank 4.0, Bank of Canada 2.5, US Federal Reserve 2.2), about
+  17 MB with the previous copy. Holidays: about 22 KB per copy for the four calendars, about 0.05 MB with both copies.

@@ -8,27 +8,37 @@ using ProductivityApp.Finance.Storage;
 namespace ProductivityApp.Finance.Services;
 
 /// <summary>
-/// A calendar as the table of holidays shows it: its place, its address, whether it is checked, and what its copy in
-/// use holds: the number of holidays of <see cref="Year"/> (this year), read from the downloaded data (null without
-/// it); with the day of its last download and why it failed.
+/// A calendar as the table of holidays shows it: its place, its address, whether it is checked, the country it is part
+/// of, and what its copy in use holds: the number of holidays of <see cref="Year"/> (this year), read from the
+/// downloaded data (null without it); with the day of its last download and why it failed.
 /// </summary>
-public sealed record HolidayCalendarView(string Id, string Location, string Url, bool Active, int? PerYear, int Year,
+public sealed record HolidayCalendarView(string Id, string Location, string Url, bool Active, string? Parent, int? PerYear, int Year,
     string? UpdatedAt, string? Error);
 
-/// <summary>A holiday of a checked calendar, with the place of its calendar.</summary>
-public sealed record HolidayView(string Day, string Name, string Location);
+/// <summary>A holiday of a checked calendar, with the place of its calendar (observed: the day off for a holiday on a weekend).</summary>
+public sealed record HolidayView(string Day, string Name, string Location, bool Observed);
 
 /// <summary>A file or an address that does not give holidays; the message says why, in the person's words.</summary>
 public sealed class HolidaysFileException(string message) : Exception(message);
 
 /// <summary>
-/// The calendars of public holidays of Definitions > Holidays. Each one is downloaded once a day (an ICS calendar or a
-/// JSON file; an address with "{year}" is downloaded for this year, the ten before it and the next one) and kept with
-/// the copy downloaded the day before, used when the latest one cannot be read; nothing older is kept. The holidays
-/// of the checked calendars, together, are shown on the calendar and are not business days.
+/// The calendars of public holidays of Definitions > Holidays. Each one is downloaded about once a month (an ICS
+/// calendar or a JSON file; an address with "{year}" is downloaded for this year, the ten before it and the next one)
+/// and kept with the copy downloaded before it, used when the latest one cannot be read; nothing older is kept. The
+/// holidays of the checked calendars, together, are shown on the calendar and are not business days; nor are the
+/// weekend days chosen (Saturday and Sunday by default).
 /// </summary>
-public sealed class Holidays(Database db)
+public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
 {
+    /// <summary>A calendar is downloaded again when its last download is this many days old (holidays change rarely).</summary>
+    public const int RefreshDays = 30;
+
+    /// <summary>The weekend days when none were chosen: Saturday and Sunday.</summary>
+    public static readonly IReadOnlySet<DayOfWeek> DefaultWeekend = new HashSet<DayOfWeek> { DayOfWeek.Saturday, DayOfWeek.Sunday };
+
+    /// <summary>The hours of a working week, shared by its working days (8 a day from Monday to Friday).</summary>
+    public const decimal HoursPerWeek = 40m;
+
     /// <summary>A calendar file larger than this is refused (a calendar of thirty years is under 100 KB).</summary>
     public const int MaxDownloadBytes = 8 * 1024 * 1024;
 
@@ -41,9 +51,31 @@ public sealed class Holidays(Database db)
     private readonly Dictionary<string, Holiday[]> _loaded = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
 
+    /// <summary>The calendars in the order of the table: each country followed by the provinces or states under it.</summary>
     public IReadOnlyList<HolidayCalendar> Calendars()
     {
-        lock (_gate) return _calendars ??= db.HolidayCalendars();
+        lock (_gate) return _calendars ??= Ordered(db.HolidayCalendars());
+    }
+
+    private static List<HolidayCalendar> Ordered(List<HolidayCalendar> all)
+    {
+        var tops = all.Where(c => c.Parent is null || all.All(p => p.Id != c.Parent)).ToList();
+        return [.. tops.SelectMany(t => all.Where(c => c.Parent == t.Id).Prepend(t))];
+    }
+
+    /// <summary>
+    /// The weekend days chosen ("6,7": ISO numbers, Monday 1 to Sunday 7; empty: none); Saturday and Sunday when
+    /// nothing was chosen.
+    /// </summary>
+    public IReadOnlySet<DayOfWeek> Weekend() => ParseWeekend(weekendSetting?.Invoke());
+
+    public static IReadOnlySet<DayOfWeek> ParseWeekend(string? setting)
+    {
+        if (setting is null) return DefaultWeekend;
+        var days = new HashSet<DayOfWeek>();
+        foreach (var part in setting.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (int.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n is >= 1 and <= 7) days.Add((DayOfWeek)(n % 7));
+        return days;
     }
 
     public HolidayCalendar? Find(string? id) => Calendars().FirstOrDefault(c => c.Id == id);
@@ -73,7 +105,7 @@ public sealed class Holidays(Database db)
         {
             var rows = JsonSerializer.Deserialize<string[][]>(data);
             if (rows is not { Length: > 0 }) return null;
-            return [.. rows.Select(r => new Holiday(DateOnly.ParseExact(r[0], "yyyy-MM-dd", CultureInfo.InvariantCulture), r[1]))];
+            return [.. rows.Select(r => new Holiday(DateOnly.ParseExact(r[0], "yyyy-MM-dd", CultureInfo.InvariantCulture), r[1], r.Length > 2 && r[2] == "observed"))];
         }
         catch (Exception e) when (e is JsonException or FormatException or IndexOutOfRangeException or ArgumentNullException)
         {
@@ -82,29 +114,35 @@ public sealed class Holidays(Database db)
     }
 
     private static string Write(IEnumerable<Holiday> days) =>
-        JsonSerializer.Serialize(days.Select(h => new[] { h.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), h.Name }));
+        JsonSerializer.Serialize(days.Select(h => h.Observed
+            ? new[] { h.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), h.Name, "observed" }
+            : [h.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), h.Name]));
 
     /// <summary>True when the copy in use of a calendar comes from the day before (today's cannot be read).</summary>
     public bool FromPrevious(string id) => Read(db.LoadHolidaySet(id, 0)) is null && Read(db.LoadHolidaySet(id, 1)) is not null;
 
-    /// <summary>Every calendar defined, with the number of holidays of this year in its copy in use and its last error.</summary>
+    /// <summary>
+    /// Every calendar defined, in the order of the table, with the number of holidays of this year in its copy in use
+    /// (a day off given for one on a weekend is not another holiday) and its last error.
+    /// </summary>
     public List<HolidayCalendarView> Views()
     {
         var year = DateTime.Today.Year;
         return [.. Calendars().Select(c =>
         {
             var days = Of(c.Id);
-            var thisYear = days.Where(h => h.Day.Year == year).Select(h => h.Day).Distinct().Count();
-            return new HolidayCalendarView(c.Id, c.Location, c.Url, c.Active, thisYear > 0 ? thisYear : null, year,
+            var thisYear = days.Where(h => h.Day.Year == year && !h.Observed).Select(h => h.Day).Distinct().Count();
+            return new HolidayCalendarView(c.Id, c.Location, c.Url, c.Active, c.Parent, thisYear > 0 ? thisYear : null, year,
                 db.GetSetting($"holidays.{c.Id}.updatedAt"), db.GetSetting($"holidays.{c.Id}.error") is { Length: > 0 } e ? e : null);
         })];
     }
 
     /// <summary>
-    /// Adds a calendar (no id) or changes the place or the address of one. A new address drops the holidays downloaded
-    /// from the old one: they are downloaded again from it, which checks it. A new calendar is not checked yet.
+    /// Adds a calendar (no id), under a country's calendar or not (<paramref name="parent"/>), or changes the place or
+    /// the address of one. A new address drops the holidays downloaded from the old one: they are downloaded again from
+    /// it, which checks it. A new calendar is not checked yet.
     /// </summary>
-    public HolidayCalendar SaveCalendar(string? id, string location, string url)
+    public HolidayCalendar SaveCalendar(string? id, string location, string url, string? parent = null)
     {
         location = location.Trim();
         url = url.Trim();
@@ -115,7 +153,9 @@ public sealed class Holidays(Database db)
         if (id is not null && old is null) throw new ArgumentException("This calendar no longer exists.");
         if (Calendars().FirstOrDefault(c => c.Id != id && string.Equals(c.Location, location, StringComparison.OrdinalIgnoreCase)) is { } same)
             throw new ArgumentException($"{same.Location} is already in the table.");
-        var saved = old is null ? new HolidayCalendar("h" + Guid.NewGuid().ToString("N")[..10], location, url, false) : old with { Location = location, Url = url };
+        if (old is null && parent is not null && Find(parent) is not { Parent: null })
+            throw new ArgumentException("A calendar can only be placed under a country's calendar.");
+        var saved = old is null ? new HolidayCalendar("h" + Guid.NewGuid().ToString("N")[..10], location, url, false, parent) : old with { Location = location, Url = url };
         db.InTransaction(() =>
         {
             db.SaveHolidayCalendar(saved);
@@ -125,18 +165,33 @@ public sealed class Holidays(Database db)
         return saved;
     }
 
-    /// <summary>Checks or unchecks a calendar: its holidays are shown and are not business days, or not.</summary>
+    /// <summary>
+    /// Checks or unchecks a calendar: its holidays are shown and are not business days, or not. A province or a state
+    /// checked checks its country (the country's holidays apply in it); a country unchecked unchecks the ones under it.
+    /// </summary>
     public void SetActive(string id, bool active)
     {
         var c = Find(id) ?? throw new ArgumentException("This calendar no longer exists.");
-        db.SaveHolidayCalendar(c with { Active = active });
+        db.InTransaction(() =>
+        {
+            db.SaveHolidayCalendar(c with { Active = active });
+            if (active && c.Parent is not null && Find(c.Parent) is { Active: false } country) db.SaveHolidayCalendar(country with { Active = true });
+            if (!active)
+                foreach (var under in Calendars().Where(x => x.Parent == c.Id && x.Active)) db.SaveHolidayCalendar(under with { Active = false });
+        });
         Reload();
     }
 
+    /// <summary>Deletes a calendar with its holidays; a country's, with the calendars under it.</summary>
     public void RemoveCalendar(string id)
     {
         if (Find(id) is null) return;
-        db.RemoveHolidayCalendar(id);
+        var under = Calendars().Where(c => c.Parent == id).Select(c => c.Id).ToList();
+        db.InTransaction(() =>
+        {
+            foreach (var u in under) db.RemoveHolidayCalendar(u);
+            db.RemoveHolidayCalendar(id);
+        });
         Reload();
     }
 
@@ -159,45 +214,54 @@ public sealed class Holidays(Database db)
         [.. Calendars().Where(c => c.Active)
             .SelectMany((c, order) => Of(c.Id).Where(h => h.Day >= from && h.Day <= to).Select(h => (h, c, order)))
             .OrderBy(x => x.h.Day).ThenBy(x => x.order)
-            .Select(x => new HolidayView(x.h.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), x.h.Name, x.c.Location))];
+            .Select(x => new HolidayView(x.h.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), x.h.Name, x.c.Location, x.h.Observed))];
 
     /// <summary>
-    /// The business days from <paramref name="from"/> to <paramref name="to"/>: Monday to Friday, less the holidays of
-    /// every checked calendar (a day that is a holiday in two of them counts once).
+    /// The business days from <paramref name="from"/> to <paramref name="to"/>: the days that are not weekend days (as
+    /// chosen), less the holidays of every checked calendar falling on them (a day that is a holiday in two of them,
+    /// or a holiday and the day off given for another, counts once).
     /// </summary>
     public int BusinessDays(DateOnly from, DateOnly to)
     {
         if (to < from) return 0;
+        var weekend = Weekend();
         var off = new HashSet<DateOnly>();
         foreach (var c in Calendars().Where(c => c.Active))
             foreach (var h in Of(c.Id))
-                if (h.Day >= from && h.Day <= to && h.Day.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)) off.Add(h.Day);
-        return Weekdays(from, to) - off.Count;
+                if (h.Day >= from && h.Day <= to && !weekend.Contains(h.Day.DayOfWeek)) off.Add(h.Day);
+        return WorkingDays(from, to, weekend) - off.Count;
     }
 
-    /// <summary>Monday to Friday from <paramref name="from"/> to <paramref name="to"/>, both counted.</summary>
-    public static int Weekdays(DateOnly from, DateOnly to)
+    /// <summary>The days from <paramref name="from"/> to <paramref name="to"/>, both counted, that are not weekend days.</summary>
+    public static int WorkingDays(DateOnly from, DateOnly to, IReadOnlySet<DayOfWeek> weekend)
     {
         if (to < from) return 0;
         var days = to.DayNumber - from.DayNumber + 1;
         var weeks = days / 7;
-        var count = weeks * 5;
+        var count = weeks * (7 - weekend.Count);
         for (var d = from.AddDays(weeks * 7); d <= to; d = d.AddDays(1))
-            if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)) count++;
+            if (!weekend.Contains(d.DayOfWeek)) count++;
         return count;
     }
 
-    public bool DueToday(HolidayCalendar c) =>
+    /// <summary>Monday to Friday from <paramref name="from"/> to <paramref name="to"/> (Saturday and Sunday as the weekend).</summary>
+    public static int Weekdays(DateOnly from, DateOnly to) => WorkingDays(from, to, DefaultWeekend);
+
+    /// <summary>The working days of a week: the days that are not weekend days.</summary>
+    public int WorkingDaysPerWeek() => 7 - Weekend().Count;
+
+    /// <summary>True when a calendar was never downloaded, or last downloaded <see cref="RefreshDays"/> days ago or more.</summary>
+    public bool Due(HolidayCalendar c) =>
         db.GetSetting($"holidays.{c.Id}.updatedAt") is not { Length: > 0 } at
-        || DateTime.Parse(at, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToLocalTime().Date < DateTime.Today;
+        || DateTime.Parse(at, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToLocalTime().Date <= DateTime.Today.AddDays(-RefreshDays);
 
     /// <summary>
-    /// Downloads every calendar of the table, all of them (<paramref name="force"/>) or only the ones without today's
-    /// copy, side by side; says whether a checked calendar got new holidays.
+    /// Downloads every calendar of the table, all of them (<paramref name="force"/>) or only the ones due (about once
+    /// a month), side by side; says whether a checked calendar got new holidays.
     /// </summary>
     public async Task<bool> UpdateAllAsync(bool force, HttpClient? client = null, CancellationToken ct = default)
     {
-        var due = Calendars().Where(c => force || DueToday(c)).ToList();
+        var due = Calendars().Where(c => force || Due(c)).ToList();
         var before = due.Where(c => c.Active).ToDictionary(c => c.Id, c => Write(Of(c.Id)));
         await Task.WhenAll(due.Select(c => UpdateAsync(c.Id, client, ct))).ConfigureAwait(false);
         return before.Any(b => Write(Of(b.Key)) != b.Value);
@@ -247,13 +311,13 @@ public sealed class Holidays(Database db)
         return Views().FirstOrDefault(v => v.Id == id) ?? throw new ArgumentException("This calendar no longer exists.");
     }
 
-    /// <summary>One file; null for a year the address has nothing for (404), when it is one of several years.</summary>
+    /// <summary>One file; null for a year the address has nothing for (404, or a year it refuses), when it is one of several years.</summary>
     private static async Task<byte[]?> Download(HttpClient client, string url, bool oneOfYears, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.ParseAdd("ProductivityApp/1.0");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.NotFound && oneOfYears) return null;
+        if (oneOfYears && (int)response.StatusCode is >= 400 and < 500) return null;
         if (!response.IsSuccessStatusCode)
             throw new HolidaysFileException(response.StatusCode == HttpStatusCode.NotFound
                 ? "Nothing at this address (404): check it."
@@ -281,8 +345,8 @@ public sealed class Holidays(Database db)
 
     /// <summary>
     /// Reads a downloaded calendar of holidays: an ICS calendar (one event per holiday; an event over several days
-    /// gives each of them), or JSON: an object of "yyyy-MM-dd": name, or lists of objects with a "date" (an
-    /// "observedDate" is preferred: the day off) and a name.
+    /// gives each of them), or JSON: an object of "yyyy-MM-dd": name, or lists of objects with a "date" and a name
+    /// (and an "observedDate": the day off given for a holiday on a weekend, kept as well).
     /// </summary>
     public static List<Holiday> Parse(byte[] bytes)
     {
@@ -376,10 +440,12 @@ public sealed class Holidays(Database db)
                         foreach (var p in props) { IsDay(p.Name, out var d); days.Add(new Holiday(d, NameOf(p.Value.GetString()))); }
                         return;
                     }
-                    if (DayOf(e) is { } day)
+                    if (Day(e, "date") is { } day)
                     {
-                        var name = NameFields.Select(f => e.TryGetProperty(f, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
-                        days.Add(new Holiday(day, NameOf(name)));
+                        var name = NameOf(NameFields.Select(f => e.TryGetProperty(f, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)));
+                        days.Add(new Holiday(day, name));
+                        // A holiday on a weekend with another day off given for it: that day too.
+                        if (Day(e, "observedDate") is { } off && off != day) days.Add(new Holiday(off, name, Observed: true));
                         return;
                     }
                     foreach (var p in props) Visit(p.Value);
@@ -393,13 +459,9 @@ public sealed class Holidays(Database db)
         return [.. days.Distinct()];
     }
 
-    /// <summary>The day of a holiday object: its "observedDate" (the day off) or its "date".</summary>
-    private static DateOnly? DayOf(JsonElement e)
-    {
-        foreach (var f in (ReadOnlySpan<string>)["observedDate", "date"])
-            if (e.TryGetProperty(f, out var v) && v.ValueKind == JsonValueKind.String && IsDay(v.GetString(), out var d)) return d;
-        return null;
-    }
+    /// <summary>A day field of a holiday object ("date", or "observedDate": the day off for one falling on a weekend).</summary>
+    private static DateOnly? Day(JsonElement e, string field) =>
+        e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String && IsDay(v.GetString(), out var d) ? d : null;
 
     private static bool IsDay(string? s, out DateOnly day)
     {

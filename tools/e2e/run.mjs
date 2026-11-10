@@ -920,21 +920,34 @@ try {
   check('calendar: all banks, a converted amount with the amount the bank wrote', await p.eval(`[...document.querySelectorAll('[data-original]')].some(e => e.innerText.includes('€'))`), converted.date)
   await shot(p, '24f-calendar-all-banks.png')
 
-  // ---- Definitions > Holidays: Quebec checked, the United States and France ready; Refresh all; several checked at
-  // once; their holidays on the calendar and out of the business days; deleted, added again; a wrong address said.
+  // ---- Definitions > Holidays: Canada (Federal) with Québec under it, both checked; the United States (Federal) and
+  // France ready; Refresh all; several checked at once; their holidays on the calendar and out of the business days;
+  // the weekend days chosen under the table; deleted, added again; a wrong address said.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('Definitions', { selector: 'button' })
   await p.clickText('Holidays', { selector: 'main [role=group] button' })
   await p.waitFor(`document.querySelector('[data-holiday-calendars]') !== null`, 10000, 'holidays table')
+  const moneyCad = (v) => '$' + v.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const toDecember = async () => {
+    for (let i = 0; i < 24 && (await p.eval(`document.querySelector('main h5')?.innerText`)) !== 'December 2025'; i++)
+      await p.click(`[aria-label="${/^(January|February|March|April|May|June|July|August|September|October|November) 2025$|202[0-4]/.test(await p.eval(`document.querySelector('main h5').innerText`)) ? 'Next' : 'Previous'} month"]`)
+    await sleep(600)
+  }
   const holidaysIdle = `![...document.querySelectorAll('[data-holiday-calendar]')].some(r => r.innerText.includes('Downloading')) && !document.querySelector('[data-holidays-refresh]').disabled`
   await p.click('[data-holidays-refresh]')
   await p.waitFor(holidaysIdle, 180000, 'every calendar downloaded')
   await sleep(400)
-  const holidayRows = () => p.eval(`[...document.querySelectorAll('[data-holiday-calendar]')].map(r => ({ id: r.dataset.holidayCalendar, location: r.querySelector('[data-field=location]').value, url: r.querySelector('[data-field=url]').value, perYear: Number(r.querySelector('[data-per-year]').innerText || 0), active: r.querySelector('input[type=checkbox]').checked, tint: getComputedStyle(r).backgroundColor, error: r.querySelector('[data-holidays-error]')?.innerText ?? null }))`)
+  const holidayRows = () => p.eval(`[...document.querySelectorAll('[data-holiday-calendar]')].map(r => ({ id: r.dataset.holidayCalendar, parent: r.dataset.parent ?? null, location: r.querySelector('[data-field=location]').value, url: r.querySelector('[data-field=url]').value, perYear: Number(r.querySelector('[data-per-year]').innerText || 0), active: r.querySelector('input[type=checkbox]').checked, tint: getComputedStyle(r).backgroundColor, error: r.querySelector('[data-holidays-error]')?.innerText ?? null, textLeft: Math.round(r.querySelector('[data-field=location]').getBoundingClientRect().left), checkLeft: Math.round(r.querySelector('input[type=checkbox]').closest('span').getBoundingClientRect().left) }))`)
   let hr = await holidayRows()
   check('Holidays: Location, URL, Number of Holidays per Year', (await p.eval(`[...document.querySelectorAll('[data-holiday-calendars] thead th')].map(t => t.innerText).join('|')`)) === 'Shown|Location|URL|Number of Holidays per Year|')
-  check('the three calendars to start with: Quebec checked, the United States and France; each with its holidays of this year', hr.map((r) => r.location).join() === 'Canada - Quebec,United States,France'
-    && hr.map((r) => r.active).join() === 'true,false,false' && hr.every((r) => r.perYear >= 7 && r.perYear <= 14 && r.error === null) && hr[0].tint !== hr[1].tint, JSON.stringify(hr))
+  check('to start with: Canada (Federal) and Québec checked, the United States (Federal) and France; each with its holidays of this year', hr.map((r) => r.location).join() === 'Canada (Federal),Québec,United States (Federal),France'
+    && hr.map((r) => r.active).join() === 'true,true,false,false' && hr.every((r) => r.perYear >= 7 && r.perYear <= 14 && r.error === null) && hr[0].tint !== hr[2].tint, JSON.stringify(hr.map((r) => [r.location, r.active, r.perYear, r.error])))
+  // Québec under Canada: set in, joined to it by a line, no rule between them; the check boxes in one column.
+  const tree = await p.eval(`(() => { const ca = document.querySelector('[data-holiday-calendar="ca"]'), qc = document.querySelector('[data-holiday-calendar="qc"]'), line = qc.querySelector('[data-tree-line]').getBoundingClientRect(), caText = ca.querySelector('[data-field=location]').getBoundingClientRect(), qcText = qc.querySelector('[data-field=location]').getBoundingClientRect()
+    return { parent: qc.dataset.parent, lineLeft: Math.round(line.left), caTextLeft: Math.round(caText.left), lineTop: Math.round(line.top), caBottom: Math.round(caText.bottom), lineRight: Math.round(line.right), qcTextLeft: Math.round(qcText.left), rule: getComputedStyle(ca.cells[1]).borderBottomColor } })()`)
+  check('Québec under Canada: set in, joined by a line from Canada, no rule between them, the check boxes aligned', tree.parent === 'ca' && Math.abs(tree.lineLeft - tree.caTextLeft) <= 2
+    && tree.lineTop >= tree.caBottom - 2 && tree.lineTop <= tree.caBottom + 10 && tree.qcTextLeft - tree.lineRight >= 2 && tree.qcTextLeft - tree.lineRight <= 10
+    && /rgba\(0, 0, 0, 0\)|transparent/.test(tree.rule) && new Set(hr.map((r) => r.checkLeft)).size === 1, JSON.stringify(tree))
   const holidayMiddles = await p.eval(`[...document.querySelectorAll('[data-holiday-calendar]')].map((row) => {
     const mid = (r) => r.top + r.height / 2
     const td = row.cells
@@ -943,42 +956,87 @@ try {
     return +(Math.max(...all) - Math.min(...all)).toFixed(1)
   })`)
   check('each line aligned like the exchange rates: check box, place, address, number and delete icon', holidayMiddles.every((d) => d <= 1.5), holidayMiddles.join())
+  check('weekend days under the table, Saturday and Sunday by default', (await p.eval(`[...document.querySelectorAll('[data-weekend-days] input[type=checkbox]')].map(i => i.checked ? i.dataset.weekday : '').filter(Boolean).join()`)) === '6,7'
+    && (await p.eval(`document.querySelector('[data-weekend-days]').getBoundingClientRect().top > document.querySelector('[data-holiday-calendars]').getBoundingClientRect().bottom`)))
   await shot(p, '24g-holidays.png')
-  // November 2025: Quebec has no holiday in it; the United States checked too take out Veterans Day and Thanksgiving.
+  // Canada alone: Québec unchecked, Canada stays; Canada unchecked unchecks Québec; Québec checked checks Canada again.
+  const activeOf = async () => (await holidayRows()).map((r) => r.active).join()
+  await p.mouseClick('[data-holiday-calendar="qc"] input[type=checkbox]')
+  await p.waitFor(`!document.querySelector('[data-holiday-calendar="qc"] input[type=checkbox]').checked`, 10000, 'Québec unchecked')
+  const canadaAlone = await activeOf()
+  await p.mouseClick('[data-holiday-calendar="ca"] input[type=checkbox]')
+  await p.waitFor(`!document.querySelector('[data-holiday-calendar="ca"] input[type=checkbox]').checked`, 10000, 'Canada unchecked')
+  const none = await activeOf()
+  await p.mouseClick('[data-holiday-calendar="qc"] input[type=checkbox]')
+  await p.waitFor(`document.querySelector('[data-holiday-calendar="ca"] input[type=checkbox]').checked`, 10000, 'Canada checked with Québec')
+  check('Canada can be checked without Québec; Québec checked checks Canada; Canada unchecked unchecks Québec', canadaAlone === 'true,false,false,false' && none === 'false,false,false,false' && (await activeOf()) === 'true,true,false,false', `${canadaAlone} | ${none}`)
+  // November 2025: Remembrance Day (Tuesday 11, federal); the United States checked too take out Thanksgiving (27).
   const novDays = async () => (await p.engine('periods.report', { from: '2025-11-01', to: '2025-11-30', granularity: 'month' })).businessDays
-  const novQuebec = await novDays()
+  const novCanada = await novDays()
   await p.mouseClick('[data-holiday-calendar="us"] input[type=checkbox]')
   await p.waitFor(`document.querySelector('[data-holiday-calendar="us"] input[type=checkbox]').checked`, 10000, 'the United States checked')
   await sleep(300)
   hr = await holidayRows()
-  check('several calendars checked at once, each line tinted; their holidays out of the business days', novQuebec === 20 && (await novDays()) === 18 && hr[0].active && hr[1].active && hr[1].tint === hr[0].tint && hr[2].tint !== hr[0].tint, `${novQuebec} then ${await novDays()}`)
-  // The calendar: Christmas Day of both checked calendars written once, with both places.
+  check('several calendars checked at once, each line tinted; their holidays out of the business days', novCanada === 19 && (await novDays()) === 18 && hr[2].active && hr[2].tint === hr[0].tint && hr[3].tint !== hr[0].tint, `${novCanada} then ${await novDays()}`)
+  // The calendar: Christmas Day of the checked calendars written once, with their places; Boxing Day (federal) the next day.
   await p.clickText('Calendar', { selector: 'nav button' })
   await sleep(1000)
-  for (let i = 0; i < 24 && (await p.eval(`document.querySelector('main h5')?.innerText`)) !== 'December 2025'; i++)
-    await p.click(`[aria-label="${/^(January|February|March|April|May|June|July|August|September|October|November) 2025$|202[0-4]/.test(await p.eval(`document.querySelector('main h5').innerText`)) ? 'Next' : 'Previous'} month"]`)
+  await toDecember()
   await p.waitFor(`document.querySelector('[data-holiday="2025-12-25"]') !== null`, 10000, 'Christmas on the calendar')
   await sleep(400)
   const christmas = await p.eval(`[...document.querySelectorAll('[data-holiday="2025-12-25"]')].map(h => h.innerText + ' / ' + h.title)`)
   await p.mouseClick('[data-holiday="2025-12-25"]')
   await sleep(500)
   const panelHoliday = await p.eval(`[...document.querySelectorAll('[data-day-holiday]')].map(h => h.innerText).join(' | ')`)
-  check('the calendar: the checked calendars\' holidays on their day, the same one written once with its places', christmas.length === 1 && /Christmas Day \/ Christmas Day · Canada - Quebec, United States/.test(christmas[0])
-    && /Christmas Day · Canada - Quebec, United States/.test(panelHoliday) && (await p.eval(`document.querySelectorAll('[data-holiday="2025-12-26"]').length`)) === 0, `${christmas.join()} | ${panelHoliday}`)
+  check('the calendar: the checked calendars\' holidays on their day, the same one written once with its places', christmas.length === 1 && /Christmas Day \/ Christmas Day · Canada \(Federal\), Québec, United States \(Federal\)/.test(christmas[0])
+    && /Christmas Day · Canada \(Federal\), Québec, United States \(Federal\)/.test(panelHoliday) && /Boxing Day/.test(await p.eval(`document.querySelector('[data-holiday="2025-12-26"]')?.innerText ?? ''`)), `${christmas.join()} | ${panelHoliday}`)
+  const weekendCells = () => p.eval(`document.querySelectorAll('.weekend-day').length`)
+  const weekendBefore = await weekendCells()
   await shot(p, '24h-calendar-holidays.png')
-  // Unchecked: not on the calendar any more, business days again.
+  // Friday too as a weekend day: shaded on the calendar, out of the business days; then back to Saturday and Sunday.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('Definitions', { selector: 'button' })
   await p.clickText('Holidays', { selector: 'main [role=group] button' })
-  await p.waitFor(`document.querySelector('[data-holiday-calendar="us"] input[type=checkbox]') !== null`, 10000, 'holidays table again')
+  await p.waitFor(`document.querySelector('[data-weekend-days]') !== null`, 10000, 'weekend days')
+  await p.mouseClick('[data-weekend-days] input[data-weekday="5"]')
+  await p.waitFor(`document.querySelector('[data-weekend-days] input[data-weekday="5"]').checked`, 10000, 'Friday checked')
+  await sleep(300)
+  const novFriday = await novDays()
+  await p.clickText('Calendar', { selector: 'nav button' })
+  await sleep(1000)
+  await toDecember()
+  const weekendFriday = await weekendCells()
+  await shot(p, '24h2-calendar-friday-weekend.png')
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('Definitions', { selector: 'button' })
+  await p.clickText('Holidays', { selector: 'main [role=group] button' })
+  await p.waitFor(`document.querySelector('[data-weekend-days]') !== null`, 10000, 'weekend days again')
+  await p.mouseClick('[data-weekend-days] input[data-weekday="5"]')
+  await p.mouseClick('[data-weekend-days] input[data-weekday="6"]')
+  await p.waitFor(`!document.querySelector('[data-weekend-days] input[data-weekday="6"]').checked`, 10000, 'Saturday unchecked')
+  await sleep(300)
+  const novSundayOnly = await novDays()
+  await p.mouseClick('[data-weekend-days] input[data-weekday="6"]')
+  await p.waitFor(`document.querySelector('[data-weekend-days] input[data-weekday="6"]').checked`, 10000, 'Saturday checked again')
+  await sleep(300)
+  // November 2025: 20 days Monday to Friday; Friday off: 16 left (4 Fridays), less the 11th and the 27th; Sunday alone: 25, less the 11th and the 27th.
+  check('more or fewer weekend days: the calendar shades them and the business days follow', weekendBefore === 10 && weekendFriday === 15 && novFriday === 14 && novSundayOnly === 23 && (await novDays()) === 18,
+    `${weekendBefore} then ${weekendFriday} shaded days; ${novFriday} and ${novSundayOnly} business days`)
+  // Unchecked: not on the calendar any more, business days again.
   await p.mouseClick('[data-holiday-calendar="us"] input[type=checkbox]')
   await p.waitFor(`!document.querySelector('[data-holiday-calendar="us"] input[type=checkbox]').checked`, 10000, 'the United States unchecked')
-  check('unchecked: its holidays are business days again', (await novDays()) === 20 && (await p.engine('holidays.list', { from: '2025-11-01', to: '2025-11-30' })).length === 0)
+  check('unchecked: its holidays are business days again', (await novDays()) === 19 && !(await p.engine('holidays.list', { from: '2025-11-01', to: '2025-11-30' })).some((x) => x.location.startsWith('United States')))
+  // Deleting Canada says that Québec goes with it (not done).
+  await p.mouseClick('[data-holiday-calendar="ca"] button[aria-label^="Delete"]')
+  await p.waitFor(`document.querySelector('[role=dialog]') !== null`, 5000, 'delete Canada asked')
+  check('deleting a country says the calendars under it go too', /Québec, under it, is deleted too/.test(await p.eval(`document.querySelector('[role=dialog]').innerText`)))
+  await p.clickText('Cancel', { selector: '[role=dialog] button' })
+  await sleep(300)
   // France deleted with its button, then added again from the choices of a new line, with its address.
   await p.mouseClick('[data-holiday-calendar="fr"] button[aria-label^="Delete"]')
   await p.clickText('Delete', { selector: '[role=dialog] button' })
   await p.waitFor(`document.querySelector('[data-holiday-calendar="fr"]') === null`, 10000, 'France deleted')
-  check('a calendar deleted with its delete icon', (await p.engine('holidays.calendars')).length === 2)
+  check('a calendar deleted with its delete icon', (await p.engine('holidays.calendars')).length === 3)
   await p.clickText('Add calendar', { selector: 'main button' })
   await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-field=url]') !== null`, 5000, 'new calendar line')
   await p.mouseClick('[data-new-holiday-calendar] [data-field=location]')
@@ -987,22 +1045,27 @@ try {
   const prefilled = await p.eval(`[document.querySelector('[data-new-holiday-calendar] [data-field=location]').value, document.querySelector('[data-new-holiday-calendar] [data-field=url]').value]`)
   check('a new line offers the calendars to start with that are not in the table, with their address', holidayChoices === 'France' && prefilled[0] === 'France' && prefilled[1].startsWith('https://calendrier.api.gouv.fr/'), `${holidayChoices} ${prefilled.join(' ')}`)
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await shot(p, '24h3-holidays-new-line.png')
   await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
-  await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 3`, 10000, 'France added again')
+  await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 4`, 10000, 'France added again')
   await p.waitFor(holidaysIdle, 120000, 'France downloaded')
   await sleep(300)
   check('added again: downloaded at once, its holidays counted', (await holidayRows()).at(-1).perYear === 11)
-  // A calendar of one's own with the address of a web page: refused cleanly under it.
+  // A province of one's own under Canada, with the address of a web page: set under Canada, refused cleanly under it.
   await p.clickText('Add calendar', { selector: 'main button' })
   await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-field=url]') !== null`, 5000, 'another new line')
-  await typeInto('[data-new-holiday-calendar] [data-field="location"]', 'United States - federal page')
+  await typeInto('[data-new-holiday-calendar] [data-field="location"]', 'Ontario')
   await typeInto('[data-new-holiday-calendar] [data-field="url"]', 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/')
+  await p.mouseClick('[data-new-holiday-calendar] [data-field="parent"]')
+  await p.clickText('Canada (Federal)', { selector: '[role=option]' })
   await p.clickText('Add', { selector: '[data-new-holiday-calendar] button' })
-  await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 4`, 10000, 'own calendar added')
+  await p.waitFor(`document.querySelectorAll('[data-holiday-calendar]').length === 5`, 10000, 'own calendar added')
   await p.waitFor(holidaysIdle, 120000, 'own calendar checked')
   await sleep(300)
-  const ownError = (await holidayRows()).at(-1).error
-  check('a wrong address: checked in the background, the reason shown under it', /web page, not a calendar file/.test(ownError ?? ''), ownError)
+  hr = await holidayRows()
+  const ontario = hr.find((r) => r.location === 'Ontario')
+  check('a province added under Canada, after Québec; a wrong address: the reason shown under it', ontario?.parent === 'ca' && hr.map((r) => r.location).slice(0, 3).join() === 'Canada (Federal),Québec,Ontario'
+    && /web page, not a calendar file/.test(ontario?.error ?? ''), JSON.stringify(ontario))
   await shot(p, '24i-holidays-wrong-address.png')
   // The same place twice: said under the new line.
   await p.clickText('Add calendar', { selector: 'main button' })
@@ -1012,8 +1075,24 @@ try {
   await p.waitFor(`document.querySelector('[data-new-holiday-calendar] [data-holidays-error]') !== null`, 10000, 'the same place refused')
   check('the same place twice: refused', (await p.eval(`document.querySelector('[data-new-holiday-calendar] [data-holidays-error]').innerText`)) === 'France is already in the table.')
   await p.clickText('Cancel', { selector: '[data-new-holiday-calendar] button' })
-  const own = (await p.engine('holidays.calendars')).at(-1)
-  await p.engine('holidays.remove', { id: own.id })
+  await p.engine('holidays.remove', { id: (await p.engine('holidays.calendars')).find((c) => c.location === 'Ontario').id })
+  // Analytics: the net salary per hour and per year, worked out from the business days, in the display currency.
+  const decReport = await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })
+  const sal = decReport.salary
+  const salaryOk = sal && sal.businessDays === decReport.businessDays && sal.hoursPerDay === 8 && Math.abs(sal.perHour - sal.net / (sal.businessDays * 8)) < 0.006 && Math.abs(sal.perYear - sal.net / sal.businessDays * sal.yearBusinessDays) < 0.006
+  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.waitFor(`document.querySelector('section[data-period="2025-12-01"] [data-salary]') !== null`, 20000, 'the salary in December')
+  await p.eval(`document.querySelector('section[data-period="2025-12-01"]').scrollIntoView({ block: 'start' })`)
+  await sleep(600)
+  const salaryText = await p.eval(`document.querySelector('section[data-period="2025-12-01"] [data-salary]').innerText`)
+  check('Analytics: the net salary per hour and per year, from the business days', salaryOk && salaryText === `Your net salary per hour is ${moneyCad(sal.perHour)} and per year is ${moneyCad(sal.perYear)}.`, `${salaryText} ${JSON.stringify(sal)}`)
+  await shot(p, '24j-analytics-salary.png')
+  await p.engine('settings.set', { key: 'currency', value: 'EUR' })
+  const salEur = (await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })).salary
+  check('the salary in the display currency (euros)', salEur && salEur.net < sal.net * 0.75 && salEur.net > sal.net * 0.55 && salEur.businessDays === sal.businessDays, `${salEur?.net} EUR, ${sal.net} CAD`)
+  await p.engine('settings.set', { key: 'currency', value: 'CAD' })
+  await p.clickText('Statements', { selector: '[data-period-view] button' })
   await p.clickText('Periods', { selector: 'nav button' })
   await sleep(600)
 

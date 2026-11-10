@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 16;
+    private const int SchemaVersion = 17;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -211,12 +211,40 @@ public sealed class Database : IDisposable
                 CREATE TABLE IF NOT EXISTS holiday_calendars (id TEXT PRIMARY KEY, location TEXT NOT NULL, url TEXT NOT NULL, active INTEGER NOT NULL, position INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS holiday_sets (calendar TEXT NOT NULL, slot INTEGER NOT NULL, fetched TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (calendar, slot));
                 """);
-            var position = 0;
+            // (the calendars of version 16; version 17 puts Québec under Canada's federal calendar)
             if (Scalar("SELECT COUNT(*) FROM holiday_calendars") is 0L)
-                foreach (var c in HolidayCalendar.Defaults)
-                    Exec("INSERT INTO holiday_calendars(id, location, url, active, position) VALUES($i, $l, $u, $a, $p)",
-                        ("$i", c.Id), ("$l", c.Location), ("$u", c.Url), ("$a", c.Active ? 1 : 0), ("$p", position++));
+                Exec("""
+                    INSERT INTO holiday_calendars(id, location, url, active, position) VALUES
+                        ('qc', 'Canada - Quebec', 'https://canada-holidays.ca/ics/QC/{year}', 1, 0),
+                        ('us', 'United States', 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/holidays.ics', 0, 1),
+                        ('fr', 'France', 'https://calendrier.api.gouv.fr/jours-feries/metropole.json', 0, 2);
+                    """);
             Exec("PRAGMA user_version = 16;");
+        }
+        if (version < 17)
+        {
+            // A province's or a state's calendar sits under its country's federal one: Canada (Federal) first, checked
+            // like Québec, with Québec under it (its holidays with the days off given for weekend ones); the US
+            // calendar named as federal. Calendars the person changed keep their place and address.
+            if (!Query("PRAGMA table_info(holiday_calendars)", r => r.GetString(1)).Contains("parent"))
+                Exec("ALTER TABLE holiday_calendars ADD COLUMN parent TEXT;");
+            var ca = HolidayCalendar.Canada;
+            var qc = HolidayCalendar.Quebec;
+            if (Scalar("SELECT COUNT(*) FROM holiday_calendars WHERE id = $i", ("$i", ca.Id)) is 0L)
+            {
+                Exec("UPDATE holiday_calendars SET position = position + 1;");
+                Exec("INSERT INTO holiday_calendars(id, location, url, active, position) VALUES($i, $l, $u, COALESCE((SELECT active FROM holiday_calendars WHERE id = 'qc'), 1), 0)",
+                    ("$i", ca.Id), ("$l", ca.Location), ("$u", ca.Url));
+            }
+            if (Scalar("SELECT url FROM holiday_calendars WHERE id = 'qc'") as string == "https://canada-holidays.ca/ics/QC/{year}")
+            {
+                Exec("UPDATE holiday_calendars SET url = $u, parent = $p, location = CASE WHEN location = 'Canada - Quebec' THEN $l ELSE location END WHERE id = 'qc'",
+                    ("$u", qc.Url), ("$p", ca.Id), ("$l", qc.Location));
+                Exec("DELETE FROM holiday_sets WHERE calendar = 'qc'; DELETE FROM settings WHERE key IN ('holidays.qc.updatedAt', 'holidays.qc.error');");
+                _settings = null;
+            }
+            Exec("UPDATE holiday_calendars SET location = $l WHERE id = 'us' AND location = 'United States'", ("$l", HolidayCalendar.UnitedStates.Location));
+            Exec("PRAGMA user_version = 17;");
         }
     }
 
@@ -436,14 +464,14 @@ public sealed class Database : IDisposable
     // ---------------------------------------------------------------- holidays
 
     public List<HolidayCalendar> HolidayCalendars() =>
-        Query("SELECT id, location, url, active FROM holiday_calendars ORDER BY position, rowid",
-            r => new HolidayCalendar(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt64(3) != 0));
+        Query("SELECT id, location, url, active, parent FROM holiday_calendars ORDER BY position, rowid",
+            r => new HolidayCalendar(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt64(3) != 0, r.IsDBNull(4) ? null : r.GetString(4)));
 
-    /// <summary>Adds the calendar (at the end) or saves its place, address and whether it is checked.</summary>
+    /// <summary>Adds the calendar (at the end) or saves its place, address, whether it is checked and the country it is under.</summary>
     public void SaveHolidayCalendar(HolidayCalendar c) => Exec("""
-        INSERT INTO holiday_calendars(id, location, url, active, position) VALUES($i, $l, $u, $a, (SELECT COALESCE(MAX(position), -1) + 1 FROM holiday_calendars))
-        ON CONFLICT(id) DO UPDATE SET location = excluded.location, url = excluded.url, active = excluded.active
-        """, ("$i", c.Id), ("$l", c.Location), ("$u", c.Url), ("$a", c.Active ? 1 : 0));
+        INSERT INTO holiday_calendars(id, location, url, active, parent, position) VALUES($i, $l, $u, $a, $p, (SELECT COALESCE(MAX(position), -1) + 1 FROM holiday_calendars))
+        ON CONFLICT(id) DO UPDATE SET location = excluded.location, url = excluded.url, active = excluded.active, parent = excluded.parent
+        """, ("$i", c.Id), ("$l", c.Location), ("$u", c.Url), ("$a", c.Active ? 1 : 0), ("$p", c.Parent));
 
     /// <summary>A copy of a calendar's holidays: slot 0 the latest download, slot 1 the one of the day before.</summary>
     public string? LoadHolidaySet(string calendar, int slot) =>

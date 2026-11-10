@@ -162,8 +162,9 @@ export interface PeriodReport {
   from: string; to: string; title: string; granularity: Granularity; currency: string; banks: BankPart[]; global: PeriodSummary; conversion: Conversion
   /** Operations left out of every total (no rate known for their day): the banks' parts list them in their own currency. */
   unconverted: number[]
-  /** Monday to Friday, less the holidays of the checked calendars. */
+  /** The days that are not weekend days, less the holidays of the checked calendars. */
   businessDays: number | null
+  salary: SalaryRate | null
 }
 
 /** Every operation of every bank in the global currency (converted ones keep the amount the bank wrote, and the rate). */
@@ -191,16 +192,22 @@ export interface RateSource {
 export interface CentralBank { format: string; name: string; currency: string; defaultUrl: string }
 /**
  * A calendar of public holidays (Definitions > Holidays): its place (free text), the address of its file ("{year}"
- * stands for each year), whether it is checked, and the number of holidays of this year (year) in its copy in use
- * (none without a copy); with why its last download failed.
+ * stands for each year), whether it is checked, the country's calendar it sits under (parent: a province or a state),
+ * and the number of holidays of this year (year) in its copy in use (none without a copy); with why its last download
+ * failed.
  */
 export interface HolidayCalendar {
-  id: string; location: string; url: string; active: boolean; perYear: number | null; year: number; updatedAt: string | null; error: string | null
+  id: string; location: string; url: string; active: boolean; parent: string | null; perYear: number | null; year: number; updatedAt: string | null; error: string | null
 }
 /** A calendar every database starts with (offered again for a new line). */
-export interface HolidayPreset { id: string; location: string; url: string; active: boolean }
-/** A holiday of a checked calendar, with the place of its calendar. */
-export interface Holiday { day: string; name: string; location: string }
+export interface HolidayPreset { id: string; location: string; url: string; active: boolean; parent: string | null }
+/** A holiday of a checked calendar, with the place of its calendar; observed: the day off for one on a weekend. */
+export interface Holiday { day: string; name: string; location: string; observed: boolean }
+/**
+ * The net salary of a period per hour worked and per year, in the display currency: the salary received over the
+ * business days of hoursPerDay hours; per year, the same daily pay over the business days of a year (yearBusinessDays).
+ */
+export interface SalaryRate { net: number; businessDays: number; hoursPerDay: number; perHour: number; yearBusinessDays: number; perYear: number }
 
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
@@ -331,8 +338,8 @@ export const api = {
   holidays: {
     calendars: () => invoke<HolidayCalendar[]>('holidays.calendars'),
     presets: () => invoke<HolidayPreset[]>('holidays.presets'),
-    /** A new calendar (no id), or a new place or address for one. */
-    save: (c: { id?: string; location: string; url: string }) => invoke<{ id: string; calendars: HolidayCalendar[] }>('holidays.save', c),
+    /** A new calendar (no id; under a country's calendar: parent), or a new place or address for one. */
+    save: (c: { id?: string; location: string; url: string; parent?: string | null }) => invoke<{ id: string; calendars: HolidayCalendar[] }>('holidays.save', c),
     setActive: (id: string, active: boolean) => invoke<HolidayCalendar[]>('holidays.setActive', { id, active }),
     remove: (id: string) => invoke<HolidayCalendar[]>('holidays.remove', { id }),
     /** Downloads a calendar again, which checks its address too. */

@@ -480,6 +480,14 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
               {report.businessDays != null && <> · <span data-business-days>{plural(report.businessDays, 'business day')}</span></>}
             </Typography>
           </Box>
+          {shown === 'analytics' && report.salary && (
+            // The net salary of the period per hour worked and per year, every bank together, in the display currency.
+            <Typography data-salary className="tnum" sx={{ mt: 1, mb: 2.5, fontSize: 15.5 }}
+              title={`${money(report.salary.net, currency)} of salary over ${plural(report.salary.businessDays, 'business day')} of ${report.salary.hoursPerDay} hours; a year: ${report.salary.yearBusinessDays} business days`}>
+              Your net salary per hour is <Box component="b" data-salary-hour sx={{ fontWeight: 680 }}>{money(report.salary.perHour, currency)}</Box> and
+              per year is <Box component="b" data-salary-year sx={{ fontWeight: 680 }}>{money(report.salary.perYear, currency)}</Box>.
+            </Typography>
+          )}
           {shown === 'summary' ? (
             // The summary stays global: every bank together, in the global display currency.
             <Box data-summary sx={{ display: 'grid', gap: 1.5 }}>
