@@ -9,7 +9,7 @@ import EditOutlined from '@mui/icons-material/EditOutlined'
 import FilterAlt from '@mui/icons-material/FilterAltRounded'
 import { api, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { formatDate, formatExample, plural } from '../format'
+import { formatDate, formatExample, moneyBeside, plural } from '../format'
 import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill, MenuDivider, Money } from './common'
 import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './filters'
@@ -198,7 +198,20 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
                 <TableCell><BrandCell tx={t} brands={brands} onSaved={(n, b) => learned(n, b)} /></TableCell>
                 <TableCell><TagCell operationId={t.id} own={t.ownTags} all={t.tags} categoryName={category(t.categoryId).name} /></TableCell>
                 {frequency && <TableCell sx={{ color: 'text.secondary' }}>{t.recurring}</TableCell>}
-                <TableCell align="right"><Money value={t.amount} currency={currency} sign muted={transfer} /></TableCell>
+                <TableCell align="right" data-amount>
+                  {t.currency !== currency ? (
+                    // No rate for its day: in its own currency, outside the totals.
+                    <Box component="span" title={`No ${t.currency} rate for this day: left out of the totals`} sx={{ color: 'text.secondary' }}>
+                      {moneyBeside(t.amount, t.currency, currency, { sign: true })}
+                    </Box>
+                  ) : <Money value={t.amount} currency={currency} sign muted={transfer} />}
+                  {t.originalCurrency && t.original != null && (
+                    <Typography component="div" data-original className="tnum" title={t.rate ? `1 ${t.originalCurrency} = ${t.rate} ${currency}` : undefined}
+                      sx={{ fontSize: 12, color: 'text.secondary', lineHeight: 1.3 }}>
+                      {moneyBeside(t.original, t.originalCurrency, currency, { sign: true })}
+                    </Typography>
+                  )}
+                </TableCell>
                 <TableCell padding="none" align="right">
                   <IconButton className="row-action" size="small" aria-label="Edit" onClick={() => onEdit(t)} sx={{ opacity: 0, transition: 'opacity 120ms', '&:focus-visible': { opacity: 1 } }}>
                     <EditOutlined sx={{ fontSize: 17 }} />

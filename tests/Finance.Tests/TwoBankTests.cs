@@ -102,38 +102,82 @@ public class TwoBankTests
         Assert.Equal(("European Central Bank", "EUR"), (rates.Status().Source, rates.Status().Base));
     }
 
-    /// <summary>Answers every request with one status and body, and counts the requests.</summary>
-    private sealed class Answer(HttpStatusCode code, byte[] body) : HttpMessageHandler
+    /// <summary>Answers every request with one status and body (or the body given for the address's host), and counts the requests.</summary>
+    private sealed class Answer(HttpStatusCode code, byte[] body, Dictionary<string, byte[]>? byHost = null, Exception? fault = null) : HttpMessageHandler
     {
         public int Calls;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            Calls++;
-            return Task.FromResult(new HttpResponseMessage(code) { Content = new ByteArrayContent(body) });
+            Interlocked.Increment(ref Calls);
+            if (fault is not null) throw fault;
+            var content = byHost is not null && byHost.TryGetValue(request.RequestUri!.Host, out var b) ? b : body;
+            return Task.FromResult(new HttpResponseMessage(code) { Content = new ByteArrayContent(content) });
         }
     }
 
+    private static byte[] Utf8(string text) => System.Text.Encoding.UTF8.GetBytes(text);
+
+    /// <summary>Three days of the US Federal Reserve's H.10 table (invented rates, the bank's layout): "ND" where a rate is missing.</summary>
+    private const string FederalReserve = """
+        "Series Description","Euro-Area Euro","Canadian Dollar","Japanese Yen"
+        "Unit:","Currency","Currency","Currency"
+        "Multiplier:","1","1","1"
+        "Currency:","EUR","CAD","JPY"
+        "Unique Identifier: ","H10/H10/RXI$US_N.B.EU","H10/H10/RXI_N.B.CA","H10/H10/RXI_N.B.JA"
+        "Time Period","RXI$US_N.B.EU","RXI_N.B.CA","RXI_N.B.JA"
+        2025-10-08,1.2500,1.4000,150.00
+        2025-10-09,ND,1.4100,151.00
+        2025-10-10,1.2000,1.3900,ND
+        """;
+
     [Fact]
-    public void The_sources_are_a_table_of_names_and_addresses_starting_with_the_two_central_banks()
+    public void The_Federal_Reserve_table_gives_every_rate_against_the_US_dollar()
+    {
+        using var s = new TempStore();
+        var (series, currency) = ExchangeRates.Parse(Utf8(FederalReserve), CentralBank.FederalReserve);
+        Assert.Equal("USD", currency);
+        Assert.Equal(["CAD", "EUR", "JPY"], series.Keys.Order());
+        // The euro is quoted in US dollars per euro: kept as euros per dollar (1 / 1.20).
+        Assert.Equal("2025-10-10=0.8333333333;2025-10-08=0.8;", series["EUR"]);
+        Assert.Equal("2025-10-10=1.3900;2025-10-09=1.4100;2025-10-08=1.4000;", series["CAD"]);
+        var rates = new ExchangeRates(s.Db, () => "fed");
+        var fed = rates.SaveSource(null, "fed", CentralBank.FederalReserve.DefaultUrl);
+        rates = new ExchangeRates(s.Db, () => fed.Id);
+        rates.Save(fed, series);
+        // 100 EUR on 10 October: 120 USD, then 166.80 CAD through the dollar (100 x 1.39 / 0.8333...).
+        Assert.Equal(120.00m, rates.Convert(100m, "EUR", "USD", new DateOnly(2025, 10, 10))!.Amount);
+        Assert.Equal(166.80m, rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
+        // No euro rate on the 9th ("ND"): the 8th's.
+        Assert.Equal(new DateOnly(2025, 10, 8), rates.Convert(1m, "EUR", "USD", new DateOnly(2025, 10, 9))!.RateDay);
+    }
+
+    [Fact]
+    public void The_sources_are_a_table_of_the_central_banks_the_app_reads_starting_with_two()
     {
         using var s = new TempStore();
         var rates = new ExchangeRates(s.Db);
         Assert.Equal(["European Central Bank", "Bank of Canada"], rates.Sources().Select(x => x.Name));
-        var added = rates.SaveSource(null, " Another bank ", "https://example.test/rates.csv");
-        Assert.Equal(("Another bank", null), (added.Name, added.Base));
+        Assert.Equal(["ecb", "boc"], rates.Sources().Select(x => x.Format));
+        // A new line is one of the banks of the list, once: the US Federal Reserve, with its own address to start with.
+        Assert.Equal(["European Central Bank", "Bank of Canada", "US Federal Reserve"], CentralBank.All.Select(b => b.Name));
+        var fed = rates.SaveSource(null, "fed", " " + CentralBank.FederalReserve.DefaultUrl + " ");
+        Assert.Equal(("US Federal Reserve", "USD", CentralBank.FederalReserve.DefaultUrl), (fed.Name, fed.Base, fed.Url));
         Assert.Equal(3, new ExchangeRates(s.Db).Sources().Count);
-        // Only full https addresses, names of 1 to 60 characters, each name once.
-        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "Plain", "http://example.test/rates.csv"));
-        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "Relative", "rates.csv"));
-        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "", "https://example.test/x"));
-        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "bank of canada", "https://example.test/x"));
-        // A new address drops what the old one gave.
-        rates.Save(added, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5000,"));
-        rates.SaveSource(added.Id, "Another bank", "https://example.test/other.csv");
-        Assert.Empty(s.Db.LoadRateSet(added.Id, 0));
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "fed", "https://example.test/x"));
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(null, "nowhere", "https://example.test/x"));
+        // Only full https addresses.
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(fed.Id, null, "http://example.test/rates.csv"));
+        Assert.Throws<ArgumentException>(() => rates.SaveSource(fed.Id, null, "rates.csv"));
+        // A new address drops what the old one gave; the bank stays the same.
+        rates.Save(fed, ExchangeRates.ParseFed(FederalReserve).Series);
+        Assert.Equal((4, "2025-10-10"), (rates.Views().Single(v => v.Id == fed.Id).Currencies, rates.Views().Single(v => v.Id == fed.Id).Latest));
+        Assert.Equal("fed", rates.SaveSource(fed.Id, "ecb", "https://example.test/other.csv").Format);
+        Assert.Empty(s.Db.LoadRateSet(fed.Id, 0));
+        // Without a copy, nothing is said about its rates.
+        Assert.Equal((0, null), (rates.Views().Single(v => v.Id == fed.Id).Currencies, rates.Views().Single(v => v.Id == fed.Id).Latest));
         // The source in use cannot be removed; another one can, with its rates.
         Assert.Throws<InvalidOperationException>(() => rates.RemoveSource("ecb"));
-        rates.RemoveSource(added.Id);
+        rates.RemoveSource(fed.Id);
         Assert.Equal(2, rates.Sources().Count);
     }
 
@@ -141,51 +185,92 @@ public class TwoBankTests
     public async Task Choosing_a_source_checks_its_address_and_says_cleanly_what_is_wrong()
     {
         using var s = new TempStore();
-        var id = "";
-        var rates = new ExchangeRates(s.Db, () => id);
-        id = rates.SaveSource(null, "Another bank", "https://example.test/rates").Id;
-        async Task<string?> Check(HttpStatusCode code, string body) =>
-            (await rates.UpdateAsync(id, new HttpClient(new Answer(code, System.Text.Encoding.UTF8.GetBytes(body))))).Error;
+        var rates = new ExchangeRates(s.Db, () => "boc");
+        async Task<string?> Check(string id, HttpStatusCode code, string body, Exception? fault = null) =>
+            (await rates.UpdateAsync(id, new HttpClient(new Answer(code, Utf8(body), fault: fault)))).Error;
 
-        Assert.Equal("Nothing at this address (404): check it.", await Check(HttpStatusCode.NotFound, ""));
-        Assert.StartsWith("This address gives a web page, not a file of rates", await Check(HttpStatusCode.OK, "<!doctype html><html></html>"));
-        Assert.StartsWith("The file at this address is not a table of exchange rates", await Check(HttpStatusCode.OK, "hello"));
-        Assert.Equal("The file at this address is not a file of exchange rates the app can read.", await Check(HttpStatusCode.OK, "{ broken"));
-        Assert.Equal("The file at this address holds no exchange rates.", await Check(HttpStatusCode.OK, """{"observations":[]}"""));
-        Assert.Null(rates.Source.Base);
+        Assert.Equal("Nothing at this address (404): check it.", await Check("boc", HttpStatusCode.NotFound, ""));
+        Assert.StartsWith("This address gives a web page, not a file of rates", await Check("boc", HttpStatusCode.OK, "<!doctype html><html></html>"));
+        Assert.Equal("The address gave an empty answer: try again later.", await Check("boc", HttpStatusCode.OK, " \r\n"));
+        Assert.Equal("The file at this address is not a file of exchange rates the app can read.", await Check("boc", HttpStatusCode.OK, "{ broken"));
+        Assert.Equal("The file at this address holds no exchange rates.", await Check("boc", HttpStatusCode.OK, """{"observations":[]}"""));
+        // Another bank's file at the address: said so.
+        Assert.Equal("This file is not in the layout of the Bank of Canada: check the address.", await Check("boc", HttpStatusCode.OK, Rates));
+        Assert.StartsWith("The file at this address is not a table of exchange rates", await Check("ecb", HttpStatusCode.OK, "hello"));
+        Assert.StartsWith("The table does not say which currency", await Check("ecb", HttpStatusCode.OK, "Date,EUR,USD\n2025-10-10,1,1.15"));
+        // Anything unexpected is said plainly too, and the copies kept so far stay.
+        Assert.Equal("The rates could not be downloaded: disk full", await Check("boc", HttpStatusCode.OK, "", new InvalidOperationException("disk full")));
+        Assert.Null(rates.Views().Single(v => v.Id == "boc").Latest);
 
-        // A Valet file: the currency the rates are against is read from it, and the error is gone.
-        Assert.Null(await Check(HttpStatusCode.OK, BankOfCanada));
+        // The bank's own file: the error is gone, the rates are there.
+        Assert.Null(await Check("boc", HttpStatusCode.OK, BankOfCanada));
         Assert.Equal("CAD", rates.Source.Base);
-        Assert.Equal("2025-10-10", rates.Views().Single(v => v.Id == id).Latest);
+        Assert.Equal("2025-10-10", rates.Views().Single(v => v.Id == "boc").Latest);
         Assert.Equal(162.00m, rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
-        // The European Central Bank's table: against the euro.
-        Assert.Null(await Check(HttpStatusCode.OK, Rates));
-        Assert.Equal("EUR", rates.Source.Base);
-        // A table with a euro column does not say what its rates are against.
-        Assert.StartsWith("The table does not say which currency", await Check(HttpStatusCode.OK, "Date,EUR,USD\n2025-10-10,1,1.15"));
         // The address itself must be https.
-        s.Db.SaveRateSource(new RateSource(id, "Another bank", "http://example.test/rates", "EUR"));
+        s.Db.SaveRateSource(RateSource.BankOfCanada with { Url = "http://example.test/rates" });
         rates.Reload();
-        Assert.Equal("The address must be a full web address starting with https://.", await Check(HttpStatusCode.OK, Rates));
+        Assert.Equal("The address must be a full web address starting with https://.", await Check("boc", HttpStatusCode.OK, BankOfCanada));
     }
 
     [Fact]
-    public void Only_the_latest_copy_and_the_one_before_are_kept_and_the_one_before_is_the_fallback()
+    public void Two_copies_at_most_the_day_before_and_today()
     {
         using var s = new TempStore();
         var rates = new ExchangeRates(s.Db);
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5000,"));
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-09,1.6000,"));
-        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-10,1.7000,"));
-        Assert.Equal(1.7m, rates.Convert(1m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
-        Assert.Equal("2025-10-09=1.6000;", Assert.Single(s.Db.LoadRateSet("ecb", 1)).Value);
+        var day1 = new DateOnly(2025, 10, 8);
+        string? Copy(int slot) => s.Db.LoadRateSet("ecb", slot).GetValueOrDefault("CAD");
+        List<string?> Days() => [.. s.Db.RateCopies("ecb").Select(c => c.Day)];
+
+        // Day n: one copy.
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5000,"), day1);
+        Assert.Equal(["2025-10-08"], Days());
+        // Downloaded again the same day: today's copy is replaced, still one.
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-08,1.5100,"), day1);
+        Assert.Equal(["2025-10-08"], Days());
+        Assert.Equal("2025-10-08=1.5100;", Copy(0));
+        // The next day: the day before (n-1) and today (n).
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-09,1.6000,"), day1.AddDays(1));
+        Assert.Equal(["2025-10-09", "2025-10-08"], Days());
+        // Again the same day: n is replaced, n-1 stays.
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-09,1.6100,"), day1.AddDays(1));
+        Assert.Equal(["2025-10-09", "2025-10-08"], Days());
+        Assert.Equal(("2025-10-09=1.6100;", "2025-10-08=1.5100;"), (Copy(0), Copy(1)));
+        // A new day: n becomes n-1, the older copy is deleted. Never more than two.
+        rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv("Date,CAD,\n2025-10-10,1.7000,"), day1.AddDays(2));
+        Assert.Equal(["2025-10-10", "2025-10-09"], Days());
         Assert.Empty(s.Db.LoadRateSet("ecb", 2));
-        // A latest copy that cannot be read: the one before is used, and the status says so.
-        s.Db.SaveRateSet("ecb", new Dictionary<string, string> { ["CAD"] = "garbage" });
-        rates.Reload();
+        // Today's copy is the one used.
         Assert.Equal(1.7m, rates.Convert(1m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
+        // A copy of today that cannot be read: the day before's is used, and the status says so.
+        s.Db.SaveRateSet("ecb", new Dictionary<string, string> { ["CAD"] = "garbage" }, day1.AddDays(2));
+        rates.Reload();
+        Assert.Equal(1.61m, rates.Convert(1m, "EUR", "CAD", new DateOnly(2025, 10, 10))!.Amount);
         Assert.True(rates.Status().FromPrevious);
+    }
+
+    [Fact]
+    public async Task Refreshing_downloads_every_bank_of_the_table_once_a_day_or_on_demand()
+    {
+        using var s = new TempStore();
+        var rates = new ExchangeRates(s.Db);
+        rates.SaveSource(null, "fed", CentralBank.FederalReserve.DefaultUrl);
+        var answer = new Answer(HttpStatusCode.OK, [], new()
+        {
+            ["www.ecb.europa.eu"] = Utf8(Rates), ["www.bankofcanada.ca"] = Utf8(BankOfCanada), ["www.federalreserve.gov"] = Utf8(FederalReserve),
+        });
+        using var client = new HttpClient(answer);
+        Assert.True(await rates.UpdateAllAsync(force: false, client));
+        Assert.Equal(3, answer.Calls);
+        // Every bank has its rates, read from what was downloaded.
+        Assert.All(rates.Views(), v => Assert.Equal(("2025-10-10", null), (v.Latest, v.Error)));
+        Assert.Equal([4, 3, 4], rates.Views().Select(v => v.Currencies));
+        // The same day, nothing is due; the Refresh button downloads them all again anyway.
+        Assert.False(await rates.UpdateAllAsync(force: false, client));
+        Assert.Equal(3, answer.Calls);
+        Assert.True(await rates.UpdateAllAsync(force: true, client));
+        Assert.Equal(6, answer.Calls);
+        Assert.All(rates.Sources(), x => Assert.Single(s.Db.RateCopies(x.Id)));
     }
 
     [Fact]
@@ -201,7 +286,7 @@ public class TwoBankTests
     }
 
     [Fact]
-    public async Task Each_bank_in_its_currency_then_all_banks_converted_operation_by_operation()
+    public async Task Every_bank_and_all_banks_together_in_the_display_currency_converted_operation_by_operation()
     {
         using var s = new TempStore();
         var rates = new ExchangeRates(s.Db);
@@ -214,35 +299,38 @@ public class TwoBankTests
         Assert.Equal(["Caisse d'Epargne", KnownBanks.National], r.Banks.Select(b => b.Name));
         var caisse = r.Banks[0].Summary;
         var national = r.Banks[1].Summary;
-        Assert.Equal(("EUR", "CAD"), (caisse.Currency, national.Currency));
-        // The Caisse in euros, as printed: the Livret A transfer is money moved, not spent.
+        // Every bank in the display currency; the Caisse's own currency is said.
+        Assert.Equal(("CAD", "CAD"), (caisse.Currency, national.Currency));
+        Assert.Equal(("EUR", "CAD"), (r.Banks[0].Native, r.Banks[1].Native));
         var current = st.Accounts[0];
-        Assert.Equal(current.Debits - 200m, caisse.Expenses);
-        Assert.Equal(current.Credits, caisse.Earnings);
 
-        // All banks: every euro operation converted at the rate of its own day, rounded to the cent, then added up.
+        // Every euro operation converted at the rate of its own day, rounded to the cent, then added up (the Livret A
+        // transfer is money moved, not spent).
         decimal Cad(decimal eur, DateOnly d) => Math.Round(eur * (1.60m + d.Day / 1000m), 2, MidpointRounding.AwayFromZero);
         var spentCad = current.Lines.Where(l => l.Amount < 0 && !l.Label.Contains("LIVRET", StringComparison.Ordinal)).Sum(l => -Cad(l.Amount, l.Date));
         var earnedCad = current.Lines.Where(l => l.Amount > 0).Sum(l => Cad(l.Amount, l.Date));
+        Assert.Equal(spentCad, caisse.Expenses);
+        Assert.Equal(earnedCad, caisse.Earnings);
         Assert.Equal(national.Expenses + spentCad, r.Global.Expenses);
         Assert.Equal(national.Earnings + earnedCad, r.Global.Earnings);
         Assert.Equal(r.Global.Earnings - r.Global.Expenses, r.Global.Balance);
-        // The operations are sent once (in the banks' parts); all banks together list how each euro one was converted.
+        // The operations are sent once (in the banks' parts), each euro one with the amount the bank wrote and its rate.
         Assert.Empty(r.Global.Transactions);
-        Assert.Equal(caisse.Transactions.Count, r.Converted.Count);
+        Assert.All(caisse.Transactions, t => Assert.Equal(("CAD", "EUR"), (t.Currency, t.OriginalCurrency)));
         Assert.Empty(r.Unconverted);
 
         // How it was done, shown: one line for the Caisse's euros, before and after, and the rate of every day.
         var line = Assert.Single(r.Conversion.Lines);
         Assert.Equal(("Caisse d'Epargne", "EUR", "CAD"), (line.Group, line.From, line.To));
-        Assert.Equal(caisse.Expenses, line.Expenses);
+        Assert.Equal(current.Debits - 200m, line.Expenses);
+        Assert.Equal(current.Credits, line.Earnings);
         Assert.Equal(spentCad, line.ConvertedExpenses);
         Assert.Equal(0, line.Unconverted);
         Assert.All(line.Rates, u => Assert.Equal(1.60m + int.Parse(u.Day[8..], CultureInfo.InvariantCulture) / 1000m, u.Rate));
         Assert.Equal((RateSource.Ecb.Url, "EUR"), (r.Conversion.Url, r.Conversion.Base));
         // The salary: its amount in CAD at the rate of its day.
-        var salary = caisse.Transactions.First(t => t.Amount == 2450.00m);
-        Assert.Equal(Cad(2450.00m, DateOnly.ParseExact(salary.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture)), r.Converted[salary.Id].Amount);
+        var salary = caisse.Transactions.First(t => t.Original == 2450.00m);
+        Assert.Equal(Cad(2450.00m, DateOnly.ParseExact(salary.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture)), salary.Amount);
 
         // The Summary view is global: its balance is the one of all banks together.
         Assert.Equal(r.Global.Balance, Assert.Single(r.Global.Breakdown).Balance);
@@ -251,6 +339,27 @@ public class TwoBankTests
         var text = string.Join(' ', (await ProductivityApp.Finance.Pdf.PdfReader.ReadAsync(pdf)).SelectMany(p => p.Words).Select(w => w.Text));
         Assert.Contains("All banks", text, StringComparison.Ordinal);
         Assert.Contains("converted", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_currency_of_an_account_is_the_currency_its_operations_come_in()
+    {
+        using var s = new TempStore();
+        var rates = WithRates(s);
+        var (national, _, _) = await TwoBanks(s);
+        var from = new DateOnly(2025, 10, 8);
+        var to = new DateOnly(2025, 10, 10);
+        var account = s.Db.Accounts().First(a => a.BankId == national);
+        var before = s.Summaries.Report(from, to, Granularity.Range, "CAD", rates).Banks.Single(b => b.Name == KnownBanks.National).Summary;
+        // The account says its money comes in US dollars: its operations are in USD, converted to the display currency.
+        account.Currency = "USD";
+        s.Db.UpdateAccount(account);
+        var after = s.Summaries.Report(from, to, Granularity.Range, "CAD", rates).Banks.Single(b => b.Name == KnownBanks.National).Summary;
+        Assert.All(after.Transactions.Where(t => t.AccountId == account.Id), t => Assert.Equal(("CAD", "USD"), (t.Currency, t.OriginalCurrency)));
+        var tx = after.Transactions.First(t => t.AccountId == account.Id);
+        var rate = tx.Date == "2025-10-10" ? 1.62m / 1.15m : tx.Date == "2025-10-09" ? 1.63m / 1.16m : 1.60m / 1.17m;
+        Assert.Equal(Math.Round(tx.Original!.Value * rate, 2, MidpointRounding.AwayFromZero), tx.Amount);
+        Assert.NotEqual(before.Expenses, after.Expenses);
     }
 
     [Fact]
@@ -265,6 +374,9 @@ public class TwoBankTests
         Assert.Equal(38, line.Unconverted);
         Assert.Equal(38, r.Unconverted.Count);
         Assert.Equal(r.Banks[1].Summary.Balance, r.Global.Balance);
+        // The Caisse's operations are still listed, in euros, outside every total.
+        Assert.Equal(38, r.Banks[0].Summary.Transactions.Count(t => t.Currency == "EUR"));
+        Assert.Equal(0m, r.Banks[0].Summary.Balance);
         // In euros as the global currency, the Canadian bank is the one left out.
         r = s.Summaries.Report(new DateOnly(2025, 10, 1), new DateOnly(2025, 10, 31), Granularity.Month, "EUR", new ExchangeRates(s.Db));
         Assert.Equal(("CAD", "EUR"), (Assert.Single(r.Conversion.Lines).From, r.Conversion.Lines[0].To));

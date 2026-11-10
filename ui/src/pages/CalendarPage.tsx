@@ -12,7 +12,7 @@ import '@fullcalendar/react/themes/classic/theme.css'
 import '@fullcalendar/react/themes/classic/palette.css'
 import { api, globalTransactions, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { daysInMonth, iso, money, monthName, parts, today } from '../format'
+import { daysInMonth, iso, money, moneyBeside, monthName, parts, today } from '../format'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { Money, useCategoryColor } from '../components/common'
 import { TransactionDialog } from '../components/TransactionDialog'
@@ -38,8 +38,6 @@ export function CalendarPage() {
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
   const currency = settings.currency
-  // The operations as their bank wrote them (editing changes those, never a converted amount).
-  const [originals, setOriginals] = useState<Map<number, TransactionView>>(new Map())
 
   // Start on the latest month that has data, in any bank.
   useEffect(() => {
@@ -57,7 +55,6 @@ export function CalendarPage() {
     const to = iso(month.y, month.m, daysInMonth(month.y, month.m))
     api.periods.report(from, to, 'month').then((r) => {
       setSummary({ ...r.global, transactions: globalTransactions(r) })
-      setOriginals(new Map(r.banks.flatMap((b) => b.summary.transactions.map((t) => [t.id, t] as const))))
     }, fail)
   }, [month, currency, dataVersion, fail])
 
@@ -108,6 +105,14 @@ export function CalendarPage() {
       <Box sx={{ flex: 1, minWidth: 0, border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
           <Typography variant="h5" sx={{ flex: 1 }}>{monthName(month.m)} {month.y}</Typography>
+          {/* The month's totals, every bank together in the display currency. */}
+          {summary && (
+            <Box data-month-totals className="tnum" sx={{ display: 'flex', alignItems: 'baseline', gap: 2.25, mr: 1.5, fontSize: 14, color: 'text.secondary', whiteSpace: 'nowrap' }}>
+              <span>Spent <Box component="b" sx={{ color: 'text.primary', fontWeight: 650 }}>{money(summary.expenses, currency)}</Box></span>
+              <span>Earned <Box component="b" sx={{ color: theme.palette.money.positive, fontWeight: 650 }}>{money(summary.earnings, currency)}</Box></span>
+              <span>Balance <Box component="b" sx={{ fontWeight: 650, color: summary.balance > 0 ? theme.palette.money.positive : summary.balance < 0 ? theme.palette.money.negative : 'text.primary' }}>{money(summary.balance, currency, { sign: true })}</Box></span>
+            </Box>
+          )}
           <Button size="small" variant="outlined" onClick={() => { const t = parts(today()); setMonth({ y: t.y, m: t.m }); setDay(today()) }}>Today</Button>
           <IconButton aria-label="Previous month" onClick={() => shift(-1)}><ChevronLeft /></IconButton>
           <IconButton aria-label="Next month" onClick={() => shift(1)}><ChevronRight /></IconButton>
@@ -171,7 +176,7 @@ export function CalendarPage() {
             return (
               <Box
                 key={t.id}
-                onClick={() => setEditing(originals.get(t.id) ?? t)}
+                onClick={() => { if (t.originalCurrency) api.tx.get(t.id).then(setEditing, fail); else setEditing(t) }}
                 sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1, mx: -1, borderRadius: 2.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
               >
                 <Box sx={{ width: 36, height: 36, borderRadius: '12px', bgcolor: color ? `${color}22` : 'action.hover', display: 'grid', placeItems: 'center', flex: '0 0 36px' }}>
@@ -182,7 +187,7 @@ export function CalendarPage() {
                   <Typography variant="caption" color="text.secondary" noWrap component="div">{c.name}</Typography>
                   {t.original != null && t.originalCurrency && (
                     <Typography data-original variant="caption" color="text.secondary" noWrap component="div" className="tnum">
-                      {money(t.original, t.originalCurrency, { sign: true })} at {t.rate}
+                      {moneyBeside(t.original, t.originalCurrency, currency, { sign: true })} at {t.rate}
                     </Typography>
                   )}
                 </Box>

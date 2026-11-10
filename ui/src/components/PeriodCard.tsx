@@ -10,7 +10,7 @@ import Public from '@mui/icons-material/PublicRounded'
 import CurrencyExchange from '@mui/icons-material/CurrencyExchangeRounded'
 import { api, globalTransactions, type Conversion, type ConversionLine, type Granularity, type PeriodReport, type PeriodSummary, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { formatDate, money, plural } from '../format'
+import { formatDate, money, moneyBeside, plural } from '../format'
 // The charts (the largest library of the interface) are not needed to start: their code is read when the browser is
 // idle after start-up, or when a period first shows its analytics. Once read, they are drawn at once (no waiting state).
 type ChartsModule = typeof import('./Charts') & typeof import('./CategoryLines')
@@ -37,6 +37,43 @@ function Stat({ label, value, color, bg, note, ...rest }: { label: string; value
       {note && <Typography variant="body2" color="text.secondary" className="tnum" sx={{ mt: 0.25 }}>{note}</Typography>}
     </Box>
   )
+}
+
+/**
+ * Switching between Summary, Statements and Analytics: the period at the top of the screen is drawn in its new view at
+ * once, the others one per frame, the nearest to the screen first, so the screen never freezes while tens of periods
+ * draw their tables or charts.
+ */
+const switches: { el: HTMLElement; run: () => void }[] = []
+let pumping = false
+function distance(el: HTMLElement) {
+  const main = el.closest('main')?.getBoundingClientRect()
+  const r = el.getBoundingClientRect()
+  if (!main) return 0
+  return r.bottom < main.top ? main.top - r.bottom : r.top > main.bottom ? r.top - main.bottom : 0
+}
+function pump() {
+  pumping = false
+  if (switches.length === 0) return
+  let best = 0
+  for (let i = 1; i < switches.length; i++) if (distance(switches[i].el) < distance(switches[best].el)) best = i
+  switches.splice(best, 1)[0].run()
+  if (switches.length > 0) { pumping = true; setTimeout(() => requestAnimationFrame(pump), 0) }
+}
+function later(el: HTMLElement, run: () => void) {
+  const item = { el, run }
+  switches.push(item)
+  if (!pumping) { pumping = true; requestAnimationFrame(pump) }
+  return () => { const i = switches.indexOf(item); if (i >= 0) switches.splice(i, 1) }
+}
+/** True for the period at the top of the screen (the first one on screen, under the bar of the page). */
+function atTop(el: HTMLElement) {
+  const main = el.closest('main')?.getBoundingClientRect()
+  if (!main) return true
+  const r = el.getBoundingClientRect()
+  if (r.bottom <= main.top || r.top >= main.bottom) return false
+  const before = el.previousElementSibling?.getBoundingClientRect()
+  return !before || before.bottom <= main.top + 1 || before.top >= main.bottom
 }
 
 // In the Summary view every month (or year) is as tall as the others: periods not loaded yet take the height of a loaded
@@ -70,17 +107,28 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
  */
 export type PeriodView = 'summary' | 'statements' | 'analytics'
 
-/** One bank (or every bank together): a heading, then what the view shows, in one bordered block. */
-function Part({ kind, name, currency, children, partKey }: { kind: 'bank' | 'global'; name: string; currency: string; children: ReactNode; partKey: string }) {
+/** Height of a bank's heading: it stays at the top of the screen while the bank's tables scroll, their headers just under it. */
+const PART_HEAD = 52
+
+/**
+ * One bank (or every bank together): a heading, then what the view shows, in one bordered block. The heading stays at
+ * the top of the screen while the block scrolls by; native: the currency of the bank's accounts, shown with the
+ * display currency when they differ ("EUR → CAD").
+ */
+function Part({ kind, name, currency, native, children, partKey }: { kind: 'bank' | 'global'; name: string; currency: string; native?: string; children: ReactNode; partKey: string }) {
+  const bg = kind === 'global' ? 'surface.sunken' : 'background.paper'
   return (
     <Box
       data-part-block={partKey}
-      sx={{ mt: 2.5, border: 1, borderColor: 'divider', borderRadius: '20px', p: { xs: 2, md: 2.5 }, bgcolor: kind === 'global' ? 'surface.sunken' : undefined, minWidth: 0 }}
+      sx={{ mt: 2.5, border: 1, borderColor: 'divider', borderRadius: '20px', px: { xs: 2, md: 2.5 }, pb: { xs: 2, md: 2.5 }, pt: 1, bgcolor: bg, minWidth: 0, '--part-head': `${PART_HEAD}px` }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 2 }}>
+      <Box data-part-head sx={{ position: 'sticky', top: 'var(--sticky-top, 0px)', zIndex: 3, height: PART_HEAD, display: 'flex', alignItems: 'center', gap: 1.25, bgcolor: bg, mb: 1 }}>
         <Box sx={{ display: 'flex', color: 'text.secondary' }}>{kind === 'global' ? <Public /> : <AccountBalance />}</Box>
-        <Typography data-part-name variant="h6" sx={{ flex: 1 }}>{name}</Typography>
-        <Typography data-part-currency className="tnum" sx={{ fontWeight: 650, border: 1, borderColor: 'divider', borderRadius: '10px', px: 1, py: 0.25, fontSize: 13 }}>{currency}</Typography>
+        <Typography data-part-name variant="h6" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</Typography>
+        <Typography data-part-currency className="tnum" title={native && native !== currency ? `Its accounts are in ${native}, shown in ${currency}` : undefined}
+          sx={{ fontWeight: 650, border: 1, borderColor: 'divider', borderRadius: '10px', px: 1, py: 0.25, fontSize: 13, whiteSpace: 'nowrap' }}>
+          {native && native !== currency ? `${native} → ${currency}` : currency}
+        </Typography>
       </Box>
       {children}
     </Box>
@@ -142,6 +190,12 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
 
   return (
     <>
+      {/* Each bank starts with what it spent, earned and its balance. */}
+      <Box data-totals sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mb: tables || view === 'analytics' ? 3 : 0 }}>
+        <Stat label="Expenses" value={money(summary.expenses, currency)} bg={theme.palette.money.expenseSoft} />
+        <Stat label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
+        <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
+      </Box>
       {view === 'statements' ? (tables && (
         <>
           <TransactionTable keep={keep + ':main'} transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
@@ -210,12 +264,7 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
         </>
       )}
 
-      <Box data-totals sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: tables || view === 'analytics' ? 3.5 : 0 }}>
-        <Stat label="Expenses" value={money(summary.expenses, currency)} bg={theme.palette.money.expenseSoft} />
-        <Stat label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
-        <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
-      </Box>
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
+      <Box data-ratios sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: tables || view === 'analytics' ? 3.5 : 1.5 }}>
         <Stat label="Recurring payments, rent excluded" value={money(summary.recurringWithoutHousing, currency)} bg="surface.sunken" />
         {/* Above 100% more was spent than earned (red, like the expenses); below, a surplus (green, like the earnings). */}
         <Stat label="Expenses / earnings" value={percent(summary.expensesShare)} bg={ratioBg} />
@@ -237,8 +286,8 @@ function ConversionRow({ line }: { line: ConversionLine }) {
         <TableCell>{line.group}</TableCell>
         <TableCell>{line.from} → {line.to}</TableCell>
         <TableCell align="right" className="tnum">{line.operations}</TableCell>
-        <TableCell align="right" className="tnum">{money(line.expenses, line.from)} → {money(line.convertedExpenses, line.to)}</TableCell>
-        <TableCell align="right" className="tnum">{money(line.earnings, line.from)} → {money(line.convertedEarnings, line.to)}</TableCell>
+        <TableCell align="right" className="tnum">{moneyBeside(line.expenses, line.from, line.to)} → {money(line.convertedExpenses, line.to)}</TableCell>
+        <TableCell align="right" className="tnum">{moneyBeside(line.earnings, line.from, line.to)} → {money(line.convertedEarnings, line.to)}</TableCell>
         <TableCell className="tnum">
           {range}
           {line.rates.length > 0 && <Link component="button" data-rates-toggle sx={{ ml: 1, verticalAlign: 'baseline' }} onClick={() => setOpen(!open)}>{open ? 'Hide rates' : 'Rates by day'}</Link>}
@@ -346,22 +395,30 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
   const [report, setReport] = useState<PeriodReport | null>(null)
   const [exporting, setExporting] = useState(false)
   const [, redraw] = useReducer((n: number) => n + 1, 0)
+  // The view drawn: the one chosen, at once for the period at the top of the screen, a frame later for each other one.
+  const [shown, setShown] = useState(view)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (shown === view) return
+    if (!report || !el || atTop(el)) { setShown(view); return }
+    return later(el, () => setShown(view))
+  }, [view, shown, report])
   // All banks together: the totals and charts of the report, the operations of every bank in the global currency.
   const global = useMemo(() => (report ? { ...report.global, transactions: globalTransactions(report) } : null), [report])
   useEffect(() => { summaryListeners.add(redraw); return () => { summaryListeners.delete(redraw) } }, [])
   useLayoutEffect(() => {
     const el = ref.current
-    if (view !== 'summary' || !global || global.breakdown.length > 1 || !el) return
+    if (shown !== 'summary' || !global || global.breakdown.length > 1 || !el) return
     if (summaryHeights.get(granularity) !== el.offsetHeight) {
       summaryHeights.set(granularity, el.offsetHeight)
       summaryListeners.forEach((l) => l())
     }
-  }, [view, global, granularity])
-  const sameHeight = view === 'summary' ? summaryHeights.get(granularity) : undefined
+  }, [shown, global, granularity])
+  const sameHeight = shown === 'summary' ? summaryHeights.get(granularity) : undefined
   // Whenever its content changes (loaded, or another view), the period is drawn in full once, even off screen, so the
   // browser knows its real height before it is reached (scrolling never skips part of it); then it may skip it again.
   const [drawn, setDrawn] = useState(false)
-  useLayoutEffect(() => { setDrawn(false) }, [report, view])
+  useLayoutEffect(() => { setDrawn(false) }, [report, shown])
   useEffect(() => {
     if (drawn || !report) return
     let second = 0
@@ -406,7 +463,7 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
       // Periods away from the screen are not laid out or painted (the browser skips them until they come near), at the
       // height they had when last drawn.
       // Only their height is guessed meanwhile: a guessed width would stretch every period wider than the window.
-      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: report ? undefined : height, ...(!report && sameHeight ? { height: sameHeight, minHeight: 0, overflow: 'hidden' } : {}), contentVisibility: view === 'summary' || (report && !drawn) ? 'visible' : 'auto', minWidth: 0, containIntrinsicHeight: 'auto 2400px' }}
+      sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3.5 }, minHeight: report ? undefined : height, ...(!report && sameHeight ? { height: sameHeight, minHeight: 0, overflow: 'hidden' } : {}), contentVisibility: shown === 'summary' || (report && !drawn) ? 'visible' : 'auto', minWidth: 0, containIntrinsicHeight: 'auto 2400px' }}
     >
       {!report || !global ? (
         <>
@@ -416,13 +473,13 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
         </>
       ) : (
         <>
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: view === 'summary' ? 2.5 : 0 }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: shown === 'summary' ? 2.5 : 0 }}>
             <Typography variant="h5" component="h2" sx={{ flex: 1 }}>{report.title}</Typography>
             <Typography data-days color="text.secondary" className="tnum" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
             </Typography>
           </Box>
-          {view === 'summary' ? (
+          {shown === 'summary' ? (
             // The summary stays global: every bank together, in the global display currency.
             <Box data-summary sx={{ display: 'grid', gap: 1.5 }}>
               {global.breakdown.length > 1 && (
@@ -437,13 +494,13 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
           ) : (
             <>
               {report.banks.map((b) => (
-                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency}>
-                  <Body summary={b.summary} view={view} keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables />
+                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native}>
+                  <Body summary={b.summary} view={shown} keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables />
                 </Part>
               ))}
               {showsGlobal(report) && (
                 <Part kind="global" partKey="all" name="All banks" currency={report.currency}>
-                  <Body summary={global} view={view} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} />
+                  <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} />
                   <ConversionPanel conversion={report.conversion} />
                 </Part>
               )}

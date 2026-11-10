@@ -15,8 +15,13 @@ public sealed record Converted(decimal Amount, decimal Rate, DateOnly RateDay);
 public sealed record RatesStatus(string SourceId, string Source, string Base, string Url, string? UpdatedAt, string? Latest,
     string? First, int Currencies, string? Error, bool FromPrevious);
 
-/// <summary>A source of rates as the table of sources shows it: its last download, or why it failed.</summary>
-public sealed record RateSourceView(string Id, string Name, string Url, string? Base, string? Latest, string? UpdatedAt, string? Error, bool InUse);
+/// <summary>
+/// A source of rates as the table of sources shows it: the bank, its address, what its copy in use holds (the number
+/// of currencies, its own included, and the last day of rates: read from the downloaded data, null without it), and
+/// why its last download failed.
+/// </summary>
+public sealed record RateSourceView(string Id, string Name, string Format, string Url, string? Base, string? Latest, int Currencies,
+    string? UpdatedAt, string? Error, bool InUse);
 
 /// <summary>A file or an address that does not give exchange rates; the message says why, in the person's words.</summary>
 public sealed class RatesFileException(string message) : Exception(message);
@@ -122,30 +127,37 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
             newest, oldest, raw.Count + (raw.Count > 0 ? 1 : 0), db.GetSetting($"rates.{source.Id}.error") is { Length: > 0 } e ? e : null, previous);
     }
 
-    /// <summary>Every source defined, with the last day of its rates and the error of its last download.</summary>
+    /// <summary>Every source defined, with what its copy in use holds and the error of its last download.</summary>
     public List<RateSourceView> Views()
     {
         var current = Source.Id;
-        return [.. Sources().Select(s => new RateSourceView(s.Id, s.Name, s.Url, s.Base, db.RateSetLatest(s.Id), db.GetSetting($"rates.{s.Id}.updatedAt"),
-            db.GetSetting($"rates.{s.Id}.error") is { Length: > 0 } e ? e : null, s.Id == current))];
+        return [.. Sources().Select(s =>
+        {
+            var copy = db.RateCopies(s.Id).FirstOrDefault(c => c.Slot == 0);
+            return new RateSourceView(s.Id, s.Name, s.Format, s.Url, s.Base, copy.Currencies > 0 ? db.RateSetLatest(s.Id) : null,
+                copy.Currencies > 0 ? copy.Currencies + 1 : 0, db.GetSetting($"rates.{s.Id}.updatedAt"),
+                db.GetSetting($"rates.{s.Id}.error") is { Length: > 0 } e ? e : null, s.Id == current);
+        })];
     }
 
     /// <summary>
-    /// Adds a source (no id) or changes one. A new address drops the rates downloaded from the old one: they are
-    /// downloaded again from the new address, which checks it.
+    /// Adds a central bank (no id: <paramref name="format"/> says which, once each) or changes the address of one. A
+    /// new address drops the rates downloaded from the old one: they are downloaded again from the new address, which
+    /// checks it.
     /// </summary>
-    public RateSource SaveSource(string? id, string name, string url)
+    public RateSource SaveSource(string? id, string? format, string url)
     {
-        name = name.Trim();
         url = url.Trim();
-        if (name.Length is 0 or > 60) throw new ArgumentException("A name has 1 to 60 characters.");
         CheckAddress(url);
         var old = Find(id);
         if (id is not null && old is null) throw new ArgumentException("This source no longer exists.");
-        if (Sources().Any(s => s.Id != id && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException($"A source is already named {name}.");
+        var bank = old is null ? CentralBank.Find(format) ?? throw new ArgumentException("Choose a central bank of the list.") : null;
+        if (bank is not null && Sources().Any(s => s.Format == bank.Format))
+            throw new ArgumentException($"The {bank.Name} is already in the table.");
         var changedAddress = old is null || old.Url != url;
-        var saved = new RateSource(id ?? "s" + Guid.NewGuid().ToString("N")[..10], name, url, changedAddress ? null : old!.Base);
+        var saved = old is null
+            ? new RateSource("s" + Guid.NewGuid().ToString("N")[..10], bank!.Name, url, bank.Currency, bank.Format)
+            : old with { Url = url };
         db.InTransaction(() =>
         {
             db.SaveRateSource(saved);
@@ -158,7 +170,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     public void RemoveSource(string id)
     {
         if (Find(id) is null) return;
-        if (Source.Id == id) throw new InvalidOperationException("This source is in use: choose another one in Settings first.");
+        if (Source.Id == id) throw new InvalidOperationException("This bank is in use: choose another one first.");
         db.RemoveRateSource(id);
         Reload();
     }
@@ -205,10 +217,24 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
             Math.Round(b.Value.PerBase / a.Value.PerBase, 6, MidpointRounding.AwayFromZero), rateDay);
     }
 
-    /// <summary>True when today's copy has not been downloaded yet (rates are downloaded again every day).</summary>
-    public bool DueToday() =>
-        db.GetSetting($"rates.{Source.Id}.updatedAt") is not { Length: > 0 } at
+    /// <summary>True when today's copy of the source in use has not been downloaded yet (rates are downloaded again every day).</summary>
+    public bool DueToday() => DueToday(Source);
+
+    public bool DueToday(RateSource source) =>
+        db.GetSetting($"rates.{source.Id}.updatedAt") is not { Length: > 0 } at
         || DateTime.Parse(at, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToLocalTime().Date < DateTime.Today;
+
+    /// <summary>
+    /// Downloads the rates of every source defined, all of them (<paramref name="force"/>) or only the ones without
+    /// today's copy, side by side; says whether the copy of the source in use changed.
+    /// </summary>
+    public async Task<bool> UpdateAllAsync(bool force, HttpClient? client = null, CancellationToken ct = default)
+    {
+        var inUse = Source.Id;
+        var due = Sources().Where(s => force || DueToday(s)).ToList();
+        var done = await Task.WhenAll(due.Select(s => UpdateAsync(s.Id, client, ct))).ConfigureAwait(false);
+        return done.Any(d => d.SourceId == inUse && d.Error is null);
+    }
 
     /// <summary>
     /// Downloads the whole history of a source's rates (the chosen one by default), which also checks its address; the
@@ -230,13 +256,13 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
                     ? "Nothing at this address (404): check it."
                     : $"The address answered with an error ({(int)response.StatusCode} {response.ReasonPhrase}).");
             var bytes = await ReadLimited(response, ct).ConfigureAwait(false);
-            var (series, currency) = Parse(bytes);
+            var (series, currency) = Parse(bytes, CentralBank.Find(source.Format));
             if (source.Base != currency)
             {
                 source = source with { Base = currency };
                 db.SaveRateSource(source);
             }
-            Save(source, series);
+            Save(source, series, DateOnly.FromDateTime(DateTime.Now));
             db.SetSetting($"rates.{source.Id}.updatedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             db.SetSetting($"rates.{source.Id}.error", "");
         }
@@ -250,6 +276,11 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
                 HttpRequestException => "The address could not be reached: check it, and the connection to the Internet.",
                 _ => "The file at this address is not a file of exchange rates the app can read.",
             });
+        }
+        catch (Exception e)
+        {
+            // Anything else (a fault of the app or of the computer): said plainly; the copies kept so far stay in use.
+            db.SetSetting($"rates.{source.Id}.error", $"The rates could not be downloaded: {e.Message}");
         }
         finally
         {
@@ -274,21 +305,37 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         return copy.ToArray();
     }
 
-    /// <summary>Keeps a downloaded copy of a source's rates as the latest; the one before stays as the fallback, older ones go.</summary>
-    public void Save(RateSource source, Dictionary<string, string> series)
+    /// <summary>Keeps the copy of a source's rates downloaded on <paramref name="day"/> as the one in use (see <see cref="Database.SaveRateSet"/>).</summary>
+    public void Save(RateSource source, Dictionary<string, string> series) => Save(source, series, DateOnly.FromDateTime(DateTime.Now));
+
+    public void Save(RateSource source, Dictionary<string, string> series, DateOnly day)
     {
         if (series.Count == 0) throw new RatesFileException("The file at this address holds no exchange rates.");
-        db.SaveRateSet(source.Id, series);
+        db.SaveRateSet(source.Id, series, day);
         Reload();
     }
 
     /// <summary>
     /// Reads a downloaded file of rates, whatever its layout, and the currency they are quoted against: a table in the
-    /// European Central Bank's layout (CSV, or ZIP holding one), or a Valet JSON file like the Bank of Canada's.
+    /// European Central Bank's layout (CSV, or ZIP holding one), a Valet JSON file like the Bank of Canada's, or the
+    /// US Federal Reserve's H.10 table.
     /// </summary>
-    public static (Dictionary<string, string> Series, string Base) Parse(byte[] bytes)
+    public static (Dictionary<string, string> Series, string Base) Parse(byte[] bytes) => Parse(bytes, null);
+
+    /// <summary>
+    /// The same, for the file of one central bank: a file in another bank's layout is refused, saying so (the address
+    /// is probably the one of another file).
+    /// </summary>
+    public static (Dictionary<string, string> Series, string Base) Parse(byte[] bytes, CentralBank? bank)
     {
-        if (bytes is [0x50, 0x4B, ..])
+        var text = bytes is [0x50, 0x4B, ..] ? null : Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
+        if (text is { Length: 0 }) throw new RatesFileException("The address gave an empty answer: try again later.");
+        if (text is not null && text.StartsWith('<'))
+            throw new RatesFileException("This address gives a web page, not a file of rates: on that page, copy the link of the download instead.");
+        var layout = text is null ? "ecb" : text.StartsWith('{') ? "boc" : text.StartsWith("\"Series Description\"", StringComparison.Ordinal) ? "fed" : "ecb";
+        if (bank is not null && layout != bank.Format)
+            throw new RatesFileException($"This file is not in the layout of the {bank.Name}: check the address.");
+        if (text is null)
         {
             using var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
             var entry = archive.Entries.FirstOrDefault(e => e.Name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
@@ -296,11 +343,48 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
             using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
             return ParseTable(reader.ReadToEnd());
         }
-        var text = Encoding.UTF8.GetString(bytes).TrimStart('﻿', ' ', '\t', '\r', '\n');
-        if (text.StartsWith('<'))
-            throw new RatesFileException("This address gives a web page, not a file of rates: on that page, copy the link of the download instead.");
-        if (text.StartsWith('{')) return ParseValet(bytes);
-        return ParseTable(text);
+        return layout switch { "boc" => ParseValet(bytes), "fed" => ParseFed(text), _ => ParseTable(text) };
+    }
+
+    /// <summary>
+    /// The US Federal Reserve's H.10 table (Data Download Program, "layout=seriescolumn"): five lines describing each
+    /// column ("Currency:" names the currency, "Unique Identifier:" says which way it is quoted: RXI$US_ is US dollars
+    /// per unit of the currency, RXI_ units of the currency per US dollar; "Multiplier:"), a line "Time Period", then
+    /// one line per day, "ND" where a currency had no rate. Kept, like the others, as units of the currency per US dollar.
+    /// </summary>
+    public static (Dictionary<string, string> Series, string Base) ParseFed(string csv)
+    {
+        static string[] Cells(string line) => [.. line.Split(',').Select(c => c.Trim().Trim('"').Trim())];
+        var lines = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[]? currencies = null, ids = null, multipliers = null;
+        var points = new Dictionary<string, List<(DateOnly, decimal)>>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            var cells = Cells(line);
+            switch (cells[0])
+            {
+                case "Currency:": currencies = cells; continue;
+                case "Unique Identifier:": ids = cells; continue;
+                case "Multiplier:": multipliers = cells; continue;
+            }
+            if (currencies is null || ids is null
+                || !DateOnly.TryParseExact(cells[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)) continue;
+            for (var i = 1; i < cells.Length && i < currencies.Length && i < ids.Length; i++)
+            {
+                var currency = currencies[i];
+                if (currency.Length != 3 || !currency.AsSpan().ContainsOnlyAsciiUpper() || currency == "USD") continue;
+                if (!decimal.TryParse(cells[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || value <= 0) continue;
+                if (multipliers is not null && i < multipliers.Length && decimal.TryParse(multipliers[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var m) && m > 0)
+                    value *= m;
+                var perDollar = ids[i].Contains("$US", StringComparison.Ordinal) ? Math.Round(1m / value, 10, MidpointRounding.AwayFromZero) : value;
+                if (!points.TryGetValue(currency, out var list)) points[currency] = list = [];
+                list.Add((day, perDollar));
+            }
+        }
+        if (currencies is null || ids is null)
+            throw new RatesFileException("The file at this address is not a table of the US Federal Reserve the app can read.");
+        if (points.Count == 0) throw new RatesFileException("The table at this address holds no exchange rates.");
+        return (Serialize(points), "USD");
     }
 
     public static Dictionary<string, string> ParseZip(byte[] zip) => Parse(zip).Series;

@@ -52,7 +52,7 @@ public class ServiceTests
         Assert.Equal(spec.Transactions.Count, r.Added);
 
         var sum = s.Summaries.Summarize(new DateOnly(2025, 10, 1), new DateOnly(2025, 10, 31), Granularity.Month, "CAD");
-        Assert.Equal("October, from Wednesday 1 to Friday 31, 2025", sum.Title);
+        Assert.Equal("October 2025", sum.Title);
         var transfers = spec.Transactions.Where(t => t.Label.Contains("E-TRANSFER")).Sum(t => t.Amount);
         Assert.Equal(spec.Transactions.Where(t => t.Amount > 0).Sum(t => t.Amount) - transfers, sum.Earnings);
         Assert.Equal(-spec.Transactions.Where(t => t.Amount < 0).Sum(t => t.Amount), sum.Expenses);
@@ -145,7 +145,7 @@ public class ServiceTests
         var pdf = ReportBuilder.Build(sum, "DD month YYYY", new DateTime(2025, 6, 2));
         using var doc = UglyToad.PdfPig.PdfDocument.Open(pdf);
         var text = string.Join(' ', doc.GetPages().Select(p => p.Text));
-        Assert.Contains("May,", text);
+        Assert.Contains("May", text);
         Assert.Contains("Expenses per category", text);
         Assert.Contains(Formatting.Money(sum.Expenses, "CAD").Replace("−", ""), text);
         Assert.Equal("Finances 2025-05.pdf", ReportBuilder.FileName(sum));
@@ -154,8 +154,10 @@ public class ServiceTests
     [Fact]
     public void Period_titles()
     {
-        Assert.Equal("October, from Wednesday 1 to Friday 31, 2025", Formatting.PeriodTitle(new(2025, 10, 1), new(2025, 10, 31), Granularity.Month));
-        Assert.Equal("2025, from Wednesday, January 1 to Wednesday, December 31", Formatting.PeriodTitle(new(2025, 1, 1), new(2025, 12, 31), Granularity.Year));
+        Assert.Equal("October 2025", Formatting.PeriodTitle(new(2025, 10, 1), new(2025, 10, 31), Granularity.Month));
+        Assert.Equal("October, from Wednesday 1 to Wednesday 15, 2025", Formatting.PeriodTitle(new(2025, 10, 1), new(2025, 10, 15), Granularity.Month));
+        Assert.Equal("2025", Formatting.PeriodTitle(new(2025, 1, 1), new(2025, 12, 31), Granularity.Year));
+        Assert.Equal("2025, from Saturday, March 1 to Wednesday, December 31", Formatting.PeriodTitle(new(2025, 3, 1), new(2025, 12, 31), Granularity.Year));
         Assert.Equal("From Sunday, January 1, 2023 to Wednesday, December 31, 2025", Formatting.PeriodTitle(new(2023, 1, 1), new(2025, 12, 31), Granularity.Range));
         Assert.Equal("03 October 2025", Formatting.FormatDate(new(2025, 10, 3), "DD month YYYY"));
         Assert.Equal("10/03/2025", Formatting.FormatDate(new(2025, 10, 3), "MM/DD/YYYY"));

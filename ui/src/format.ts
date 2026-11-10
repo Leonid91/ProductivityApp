@@ -64,6 +64,16 @@ export function money(value: number, currency: string, opts: { sign?: boolean; c
   return abs
 }
 
+/**
+ * An amount shown beside amounts in another currency: its code is added when both write the same sign ("−$70.52 USD"
+ * beside Canadian dollars), so the two never read alike.
+ */
+export function moneyBeside(value: number, currency: string, other: string, opts: { sign?: boolean } = {}): string {
+  const sign = (c: string) => numberFormat(c, false, true).format(0).replace(/[\d\s.,]/g, '')
+  const text = money(value, currency, opts)
+  return currency !== other && sign(currency) === sign(other) ? `${text} ${currency}` : text
+}
+
 /** A share with two decimals (0.29%, 88.50%): a small share never reads as 0%. */
 export function percent(share: number): string {
   return `${(share * 100).toFixed(2)}%`

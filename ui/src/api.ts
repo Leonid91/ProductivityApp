@@ -143,8 +143,8 @@ export interface PeriodSummary {
 }
 
 export interface MonthEntry { year: number; month: number; count: number }
-/** One bank's part of a period, in the bank's currency ("other": cash and manual entries). */
-export interface BankPart { key: string; name: string; currency: string; system: BankingSystem | null; summary: PeriodSummary }
+/** One bank's part of a period, in the global display currency; native: the currency of its accounts ("other": cash and manual entries). */
+export interface BankPart { key: string; name: string; currency: string; native: string; system: BankingSystem | null; summary: PeriodSummary }
 export interface RateUse { day: string; rateDay: string; rate: number }
 /** How the operations of one bank in one currency were converted to another. */
 export interface ConversionLine {
@@ -154,32 +154,20 @@ export interface ConversionLine {
   rates: RateUse[]; unconverted: number; unconvertedAmount: number; oldRates: number
 }
 export interface Conversion { to: string; source: string; base: string; url: string; updatedAt: string | null; latest: string | null; lines: ConversionLine[] }
-export interface ConvertedView { amount: number; rate: number; rateDay: string; earned?: number | null }
 /**
  * A period bank by bank, then every bank together in the global display currency. The operations are in the banks'
  * parts only (global holds the totals and charts): globalTransactions() gives them all in the global currency.
  */
 export interface PeriodReport {
   from: string; to: string; title: string; granularity: Granularity; currency: string; banks: BankPart[]; global: PeriodSummary; conversion: Conversion
-  /** Operations in another currency than the global one, by id: converted amount, rate and day of the rate. */
-  converted: Record<string, ConvertedView>
-  /** Operations left out of all banks together (no rate known for their day). */
+  /** Operations left out of every total (no rate known for their day): the banks' parts list them in their own currency. */
   unconverted: number[]
 }
 
 /** Every operation of every bank in the global currency (converted ones keep the amount the bank wrote, and the rate). */
 export function globalTransactions(r: PeriodReport): TransactionView[] {
-  const left = new Set(r.unconverted)
   return r.banks.flatMap((b) => b.summary.transactions)
-    .filter((t) => !left.has(t.id))
-    .map((t) => {
-      // A bank part may show an account in another currency converted to the bank's: start from what the bank wrote.
-      const amount = t.original ?? t.amount
-      const currency = t.originalCurrency ?? t.currency
-      const c = r.converted[t.id]
-      if (c) return { ...t, amount: c.amount, currency: r.currency, original: amount, originalCurrency: currency, rate: c.rate, rateDay: c.rateDay, earned: c.earned }
-      return { ...t, amount, currency, original: null, originalCurrency: null, rate: null, rateDay: null }
-    })
+    .filter((t) => t.currency === r.currency)
     .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
 }
 export interface RatesStatus {
@@ -189,12 +177,16 @@ export interface RatesStatus {
   fromPrevious: boolean
 }
 /**
- * A place the daily exchange rates are downloaded from (Definitions > Exchange rates): its name, the address of its file
- * of rates, the currency they are against (read from the file), the last day of the rates and why the last download failed.
+ * A central bank the daily exchange rates are downloaded from (Definitions > Exchange rates): which bank (format), the
+ * address of its file of rates, what its copy in use holds (number of currencies and last day: none without a copy)
+ * and why its last download failed.
  */
 export interface RateSource {
-  id: string; name: string; url: string; base: string | null; latest: string | null; updatedAt: string | null; error: string | null; inUse: boolean
+  id: string; name: string; format: string; url: string; base: string | null; latest: string | null; currencies: number
+  updatedAt: string | null; error: string | null; inUse: boolean
 }
+/** A central bank whose file the app reads: its file's layout (format), its currency and the address to start with. */
+export interface CentralBank { format: string; name: string; currency: string; defaultUrl: string }
 
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
@@ -312,14 +304,21 @@ export const api = {
     status: () => invoke<RatesStatus>('rates.status'),
     /** Downloads a source's rates again (the chosen one by default), which checks its address too. */
     update: (id?: string) => invoke<RatesStatus>('rates.update', { id }),
-    saveSource: (source: { id?: string; name: string; url: string }) => invoke<{ id: string; sources: RateSource[] }>('rates.saveSource', source),
+    /** The central banks the app reads. */
+    banks: () => invoke<CentralBank[]>('rates.banks'),
+    /** A new bank of the table (format), or a new address for one (id). */
+    saveSource: (source: { id?: string; format?: string; url: string }) => invoke<{ id: string; sources: RateSource[] }>('rates.saveSource', source),
     removeSource: (id: string) => invoke<RateSource[]>('rates.removeSource', { id }),
-    /** Downloads the chosen bank's rates when today's copy is not there yet; says whether anything changed. */
+    /** Downloads every bank of the table again now; updated: the rates in use changed. */
+    refresh: () => invoke<{ updated: boolean; sources: RateSource[] }>('rates.refresh'),
+    /** Downloads every bank without today's copy; says whether the rates in use changed. */
     ensure: () => invoke<{ updated: boolean; status: RatesStatus }>('rates.ensure'),
   },
   tx: {
     setCategory: (id: number, categoryId: string, allOfBrand: boolean) => invoke<{ changed: number }>('tx.setCategory', { id, categoryId, allOfBrand }),
     setBrand: (id: number, brand: string) => invoke<{ changed: number }>('tx.setBrand', { id, brand }),
+    /** The operation as its bank wrote it (not converted). */
+    get: (id: number) => invoke<TransactionView>('tx.get', { id }),
     create: (input: TransactionInput) => invoke<TransactionView>('tx.create', { input }),
     update: (id: number, input: TransactionInput, allOfBrand = true) => invoke<TransactionView>('tx.update', { id, input, allOfBrand }),
     remove: (id: number) => invoke<null>('tx.delete', { id }),

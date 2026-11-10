@@ -187,9 +187,9 @@ try {
   await sleep(1200)
   await shot(p, '07-periods-top.png')
   const title = await p.eval(`document.querySelector('section h2').innerText`)
-  check('month title as on the sketch', /^[A-Z][a-z]+, from [A-Z][a-z]+ \d+ to [A-Z][a-z]+ \d+, \d{4}$/.test(title), title)
+  check('month title: the month and its year alone', /^[A-Z][a-z]+ \d{4}$/.test(title), title)
   const days = await p.eval(`document.querySelector('section [data-days]')?.innerText`)
-  check('days of the month shown', days === `${title.match(/to [A-Z][a-z]+ (\d+),/)[1]} days`, days)
+  check('days of the month shown', days === `${new Date(Number(title.slice(-4)), ['January','February','March','April','May','June','July','August','September','October','November','December'].indexOf(title.split(' ')[0]) + 1, 0).getDate()} days`, days)
   await p.eval(`(() => { const s = document.querySelector('section'); const t = [...s.querySelectorAll('p, span')].find(e => e.innerText === 'Expenses'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
   await sleep(800)
   await shot(p, '08-periods-totals.png')
@@ -248,9 +248,9 @@ try {
   // Table headers stay under the bar of tabs while the table scrolls.
   await p.eval(`(() => { const t = document.querySelector('section tbody tr:nth-child(12)'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 200 }) })()`)
   await sleep(300)
-  const sticky = await p.eval(`(() => { const th = document.querySelector('section thead th').getBoundingClientRect(); const bar = document.querySelector('main [class*=MuiToggleButtonGroup]').parentElement.getBoundingClientRect(); return [Math.round(th.top), Math.round(bar.bottom)] })()`)
+  const sticky = await p.eval(`(() => { const th = document.querySelector('section thead th').getBoundingClientRect(); const head = document.querySelector('section [data-part-head]').getBoundingClientRect(); const bar = document.querySelector('main [class*=MuiToggleButtonGroup]').parentElement.getBoundingClientRect(); return [Math.round(th.top), Math.round(head.bottom), Math.round(head.top), Math.round(bar.bottom)] })()`)
   await shot(p, '09c-sticky-header.png')
-  check('table headers stay visible while scrolling', Math.abs(sticky[0] - sticky[1]) <= 2, sticky.join(' / '))
+  check('table headers stay visible while scrolling, under the bank’s name, itself under the bar', Math.abs(sticky[0] - sticky[1]) <= 2 && Math.abs(sticky[2] - sticky[3]) <= 2, sticky.join(' / '))
 
   // Second layer under Month / Year / All time / Custom: Statements or Analytics; the totals under both.
   await p.scrollMain(0)
@@ -259,7 +259,7 @@ try {
   await p.waitFor(`document.querySelector('${sec} [data-totals]') !== null`, 20000, 'period loaded')
   await sleep(500)
   check('periods open on their statements, without charts', await p.eval(`document.querySelector('${sec} table') !== null && document.querySelector('${sec} [data-pie]') === null && document.querySelector('${sec} [data-flowchart]') === null`))
-  check('totals under the tables', await p.eval(`document.querySelector('${sec} [data-totals]') !== null && document.querySelector('${sec} [data-stat="Expenses / earnings"]') !== null`))
+  check('each bank starts with its totals, above its tables', await p.eval(`(() => { const b = document.querySelector('${sec} [data-part-block]'); const t = b.querySelector('[data-totals]'); return !!t && t.getBoundingClientRect().bottom <= b.querySelector('table').getBoundingClientRect().top && !!b.querySelector('[data-stat="Expenses / earnings"]') })()`))
   const ratio = await p.eval(`(() => { const s = document.querySelector('${sec}'); const bg = (l) => getComputedStyle(s.querySelector('[data-stat="' + l + '"]')).backgroundColor; const r = s.querySelector('[data-stat="Expenses / earnings"]'); return { text: r.innerText, rec: s.querySelector('[data-stat="Recurring payments, rent excluded"]').innerText, ratio: bg('Expenses / earnings'), exp: bg('Expenses'), earn: bg('Earnings') } })()`)
   const share = parseInt(ratio.text.match(/(\d+)%/)?.[1] ?? '0', 10)
   check('expenses / earnings red above 100%, green below, without the spent-of-earned line', !ratio.text.includes('spent of') && (share > 100 ? ratio.ratio === ratio.exp : ratio.ratio === ratio.earn), `${share}% ${ratio.ratio}`)
@@ -725,7 +725,7 @@ try {
   const monthSummary = await p.eval(`(() => { const s = document.querySelector('${sec}'); return { stats: [...s.querySelectorAll('[data-stat]')].map(x => x.dataset.stat), text: s.innerText, tables: s.querySelectorAll('table').length, pies: s.querySelectorAll('[data-pie]').length } })()`)
   const augBalance = (await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })).balance
   check('Summary first, a month shows only its balance under its title and days', viewOrder === 'Summary,Statements,Analytics' && monthSummary.stats.join() === 'Balance' && monthSummary.tables === 0 && monthSummary.pies === 0
-    && monthSummary.text.includes('August, from Friday 1 to Sunday 31, 2025') && monthSummary.text.includes('31 days') && monthSummary.text.includes(Math.abs(augBalance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), monthSummary.stats.join())
+    && monthSummary.text.includes('August 2025') && monthSummary.text.includes('31 days') && monthSummary.text.includes(Math.abs(augBalance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), monthSummary.stats.join())
   await shot(p, '23a-summary-month.png')
   await p.clickText('Year', { selector: 'button' })
   await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'year summary')
@@ -740,7 +740,7 @@ try {
   await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'all time summary')
   await sleep(500)
   const allParts = await p.eval(`[...document.querySelector('section [data-summary]').querySelectorAll('[data-part]')].map(x => x.dataset.stat)`)
-  check('Summary of more than a year: by year', allParts.length >= 2 && allParts.every((t) => /^\d{4}, from /.test(t)), allParts.join(' | '))
+  check('Summary of more than a year: by year', allParts.length >= 2 && allParts.every((t) => /^\d{4}(, from |$)/.test(t)), allParts.join(' | '))
   await shot(p, '23c-summary-all-time.png')
   await p.clickText('Custom', { selector: 'button' })
   await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'custom summary')
@@ -749,28 +749,35 @@ try {
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(600)
 
-  // ---- Banks side by side (the samples have Canadian banks in CAD and French banks in EUR in October 2025): each bank
-  // in its currency, then all banks in the global currency, every euro operation converted at the rate of its day.
+  // ---- Banks side by side (the samples have Canadian banks in CAD and French banks in EUR in October 2025): every bank
+  // in the display currency, then all banks together; every euro operation converted at the rate of its day, with the
+  // amount its bank wrote under it.
   const octSec = 'section[data-period="2025-10-01"]'
   await p.eval(`document.querySelector('${octSec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${octSec} [data-conversion-panel]') !== null`, 30000, 'October with all banks')
   await sleep(500)
-  const octUi = await p.eval(`(() => { const s = document.querySelector('${octSec}'); return { parts: [...s.querySelectorAll('[data-part-block]')].map(b => [b.dataset.partBlock, b.querySelector('[data-part-name]').innerText, b.querySelector('[data-part-currency]').innerText]), balance: s.querySelector('[data-part-block="all"] [data-totals] [data-stat="Balance"]').innerText, panel: s.querySelector('[data-conversion-panel]').innerText } })()`)
+  const octUi = await p.eval(`(() => { const s = document.querySelector('${octSec}'); return { parts: [...s.querySelectorAll('[data-part-block]')].map(b => [b.dataset.partBlock, b.querySelector('[data-part-name]').textContent, b.querySelector('[data-part-currency]').textContent]), balance: s.querySelector('[data-part-block="all"] [data-totals] [data-stat="Balance"]').textContent, panel: s.querySelector('[data-conversion-panel]').textContent, originals: [...s.querySelectorAll('[data-original]')].map(o => o.textContent).slice(0, 3) } })()`)
   const oct = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
-  const cadBanks = oct.banks.filter((b) => b.currency === 'CAD')
   const eurLines = oct.conversion.lines.filter((l) => l.from === 'EUR' && l.to === 'CAD')
-  check('a block per bank in its currency, then all banks in CAD', octUi.parts.length === oct.banks.length + 1 && octUi.parts.some((x) => x[2] === 'EUR') && octUi.parts.some((x) => x[2] === 'CAD' && x[0] !== 'all')
-    && octUi.parts.at(-1).join() === 'all,All banks,CAD', octUi.parts.map((x) => x[1] + ' ' + x[2]).join(' | '))
-  check('all banks = each CAD bank + each euro bank converted operation by operation', eurLines.length > 0 && eurLines.every((l) => l.unconverted === 0 && l.rates.length > 0)
-    && cents(oct.global.expenses) === cents(cadBanks.reduce((x, b) => x + b.summary.expenses, 0) + eurLines.reduce((x, l) => x + l.convertedExpenses, 0))
-    && cents(oct.global.earnings) === cents(cadBanks.reduce((x, b) => x + b.summary.earnings, 0) + eurLines.reduce((x, l) => x + l.convertedEarnings, 0))
+  check('a block per bank in the display currency (euro banks shown EUR → CAD), then all banks in CAD', octUi.parts.length === oct.banks.length + 1
+    && oct.banks.every((b) => b.currency === 'CAD') && octUi.parts.some((x) => x[2] === 'EUR → CAD') && octUi.parts.at(-1).join() === 'all,All banks,CAD', octUi.parts.map((x) => x[1] + ' ' + x[2]).join(' | '))
+  check('all banks = every bank added up, each euro operation converted on its own', eurLines.length > 0 && eurLines.every((l) => l.unconverted === 0 && l.rates.length > 0)
+    && cents(oct.global.expenses) === cents(oct.banks.reduce((x, b) => x + b.summary.expenses, 0))
+    && cents(oct.global.earnings) === cents(oct.banks.reduce((x, b) => x + b.summary.earnings, 0))
     && octUi.balance.includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), `${eurLines.length} euro banks`)
+  check('a converted operation shows the amount its bank wrote', octUi.originals.length > 0 && octUi.originals.every((o) => o.includes('€')), octUi.originals.join(' '))
   check('how amounts are converted is shown: source, method, each rate', /European Central Bank/.test(octUi.panel) && /rate published for its own day/.test(octUi.panel) && /rounded to the cent/.test(octUi.panel) && /1 EUR = [\d.]+/.test(octUi.panel))
   await p.eval(`document.querySelector('${octSec} [data-rates-toggle]').click()`)
   await sleep(300)
   const dayRates = await p.eval(`[...document.querySelectorAll('${octSec} [data-rates] p')].length`)
   check('the rate of every day with operations on demand', dayRates === eurLines[0].rates.length, `${dayRates} days`)
   await shot(p, '24a-banks-and-conversion.png')
+  // The bank's name stays at the top of the screen while its table scrolls, the table's header just under it.
+  await p.eval(`(() => { const t = document.querySelector('${octSec} [data-part-block] tbody tr:nth-child(12)'); const m = document.querySelector('main'); m.scrollTop += t.getBoundingClientRect().top - m.getBoundingClientRect().top - 220 })()`)
+  await sleep(500)
+  const pinned = await p.eval(`(() => { const b = document.querySelector('${octSec} [data-part-block]'); const h = b.querySelector('[data-part-head]').getBoundingClientRect(); const th = b.querySelector('thead th').getBoundingClientRect(); const bar = document.querySelector('[data-period-view]').parentElement.parentElement.getBoundingClientRect(); return { bar: Math.round(bar.bottom), head: [Math.round(h.top), Math.round(h.bottom)], th: [Math.round(th.top), Math.round(th.bottom)], top: Math.round(b.getBoundingClientRect().top) } })()`)
+  check('the bank stays named while its table scrolls, the table header under its name', pinned.top < pinned.head[0] && Math.abs(pinned.head[0] - pinned.bar) <= 1 && Math.abs(pinned.th[0] - pinned.head[1]) <= 1, JSON.stringify(pinned))
+  await shot(p, '24b-bank-name-pinned.png')
   // The Summary stays global.
   await p.clickText('Summary', { selector: '[data-period-view] button' })
   await p.waitFor(`document.querySelector('${octSec} [data-summary]') !== null`, 20000, 'October summary')
@@ -782,7 +789,7 @@ try {
     await sleep(150)
   }
   // Settings > Display: the global display currency and the bank of the exchange rates are rows like the date format,
-  // their values in the same column; the European Central Bank by default, the Bank of Canada as another choice.
+  // their values in the same column; the European Central Bank by default.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('General', { selector: 'button' })
   await sleep(600)
@@ -792,8 +799,9 @@ try {
     return rows.map(r => { const v = r.querySelector('.MuiInputBase-root').getBoundingClientRect(); return { label: r.firstElementChild.innerText, value: r.querySelector('.MuiInputBase-root').innerText.replace(/[​s]+/g, ' ').trim(), right: Math.round(v.right), width: Math.round(v.width) } })
   })()`)
   check('Display: global currency and exchange rates as rows, values aligned with the date format', display.map((r) => r.label).join() === 'Global display currency,Exchange rates,Date format'
-    && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[1].value === 'European Central Bank' && (await p.eval(`!!document.querySelector('[data-rates-link]')`)), JSON.stringify(display))
-  await shot(p, '24b-display-settings.png')
+    && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[1].value === 'European Central Bank'
+    && (await p.eval(`document.querySelector('[data-rates-link]')?.innerText`)) === 'Edit banks', JSON.stringify(display))
+  await shot(p, '24c-display-settings.png')
   await p.engine('settings.set', { key: 'ratesSource', value: 'boc' })
   const boc = await p.engine('rates.update')
   const octBoc = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
@@ -801,65 +809,95 @@ try {
     && octBoc.conversion.lines.length > 0 && octBoc.conversion.lines.every((l) => l.unconverted === 0) && Math.abs(octBoc.global.balance - oct.global.balance) < Math.abs(oct.global.balance) * 0.02,
     `${octBoc.global.balance} with the Bank of Canada, ${oct.global.balance} with the ECB`)
   await p.engine('settings.set', { key: 'ratesSource', value: 'ecb' })
-  // Definitions > Exchange rates: a table of sources (name, address of the file) filling the choice of Settings, the two
-  // central banks to start with. A wrong address is checked in the background and the reason shown cleanly.
+  // Definitions > Exchange rates: one line per central bank the app reads (two to start with), the round button for
+  // the one in use, what each download holds; Refresh all; a new line is a choice among the banks; a wrong address is
+  // checked in the background and the reason shown cleanly.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('General', { selector: 'button' })
   await sleep(500)
   await p.mouseClick('[data-rates-link]')
   await p.waitFor(`document.querySelector('[data-rate-sources]') !== null`, 10000, 'sources table')
-  const sourcesUi = await p.eval(`(() => ({
+  await p.click('[data-rates-refresh]')
+  await p.waitFor(`!document.querySelector('[data-rates-refresh]').disabled`, 120000, 'every bank downloaded')
+  await sleep(400)
+  const ratesTable = () => p.eval(`(() => ({
     tab: [...document.querySelectorAll('main [role=group] button[aria-pressed=true]')].map(b => b.innerText),
-    rows: [...document.querySelectorAll('[data-rate-source]')].map(r => [r.querySelector('[data-field=name]').value, r.querySelector('[data-field=url]').value, r.cells[2].innerText, r.cells[3].innerText, !!r.querySelector('[data-in-use]')]),
+    rows: [...document.querySelectorAll('[data-rate-source]')].map(r => ({ name: r.cells[1].innerText, url: r.querySelector('[data-field=url]').value, currencies: r.querySelector('[data-currencies]').innerText, latest: r.querySelector('[data-latest]').innerText, inUse: r.querySelector('input[type=radio]').checked, tint: getComputedStyle(r).backgroundColor, error: r.querySelector('[data-rates-error]')?.innerText ?? null })),
     help: document.querySelector('[data-rates-help]').innerText,
     tabs: [...document.querySelectorAll('main [role=group]')].at(-1).innerText.replace(/\\s+/g, ' '),
+    head: [...document.querySelectorAll('[data-rate-sources] thead th')].map(t => t.innerText).join('|'),
   }))()`)
-  check('Definitions: Exchange rates after Bank, opened from the Settings row', sourcesUi.tab.includes('Exchange rates') && /^Bank Exchange rates Brands/.test(sourcesUi.tabs), sourcesUi.tabs)
-  check('the two central banks to start with, with their address, currency and last day', sourcesUi.rows.length === 2
-    && sourcesUi.rows[0][0] === 'European Central Bank' && sourcesUi.rows[0][1].startsWith('https://www.ecb.europa.eu/') && sourcesUi.rows[0][2] === 'EUR' && sourcesUi.rows[0][3] !== '—' && sourcesUi.rows[0][4]
-    && sourcesUi.rows[1][0] === 'Bank of Canada' && sourcesUi.rows[1][1].startsWith('https://www.bankofcanada.ca/') && sourcesUi.rows[1][2] === 'CAD', JSON.stringify(sourcesUi.rows))
-  check('where to find the address: two sentences at most', (sourcesUi.help.match(/[.!?](\s|$)/g) ?? []).length <= 2 && /link of its download/.test(sourcesUi.help), sourcesUi.help)
-  // A source whose address is the bank's web page instead of its file.
-  await p.clickText('Add source', { selector: 'main button' })
-  await p.waitFor(`document.querySelector('[data-rate-source-dialog] [data-field="url"]') !== null`, 5000, 'add source dialog')
-  await typeInto('[data-rate-source-dialog] [data-field="name"]', 'Test web page')
-  await typeInto('[data-rate-source-dialog] [data-field="url"]', 'https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html')
-  await p.clickText('Add', { selector: '[data-rate-source-dialog] button' })
+  let rt = await ratesTable()
+  check('Definitions: Exchange rates after Bank, opened from the Settings row', rt.tab.includes('Exchange rates') && /^Bank Exchange rates Brands/.test(rt.tabs), rt.tabs)
+  check('the two central banks to start with, each with its currencies and last day read from its download', rt.rows.length === 2
+    && rt.rows[0].name === 'European Central Bank' && rt.rows[0].url.startsWith('https://www.ecb.europa.eu/') && rt.rows[1].name === 'Bank of Canada' && rt.rows[1].url.startsWith('https://www.bankofcanada.ca/')
+    && rt.rows.every((r) => Number(r.currencies) > 20 && r.latest !== '' && r.error === null) && rt.head === 'In use|Central bank|Address of the rates file|Currencies|Rates up to|', JSON.stringify(rt.rows))
+  check('the bank in use: its round button checked, its line tinted, the others plain', rt.rows[0].inUse && !rt.rows[1].inUse && rt.rows[0].tint !== rt.rows[1].tint, rt.rows.map((r) => r.tint).join())
+  check('what to paste as the address: one short sentence', (rt.help.match(/[.!?](\s|$)/g) ?? []).length === 1 && rt.help.length < 110 && /not the address of its web page/.test(rt.help), rt.help)
+  // Choose the Bank of Canada with its round button: its line tinted, the European Central Bank's plain.
+  await p.mouseClick('[data-rate-source="boc"] input[type=radio]')
+  await p.waitFor(`document.querySelector('[data-rate-source="boc"] input[type=radio]').checked`, 10000, 'Bank of Canada in use')
+  check('a round button makes its bank the one in use', (await p.engine('rates.status')).sourceId === 'boc')
+  await p.mouseClick('[data-rate-source="ecb"] input[type=radio]')
+  await p.waitFor(`document.querySelector('[data-rate-source="ecb"] input[type=radio]').checked`, 10000, 'back to the ECB')
+  // A new line: a choice among the central banks not in the table yet (the US Federal Reserve), with its address.
+  await p.clickText('Add bank', { selector: 'main button' })
+  await p.waitFor(`document.querySelector('[data-new-rate-source] [data-field=url]') !== null`, 5000, 'new line')
+  await p.mouseClick('[data-new-rate-source] [role=combobox]')
+  const choices = await p.eval(`[...document.querySelectorAll('[role=option]')].map(o => o.innerText).join()`)
+  await p.clickText('US Federal Reserve', { selector: '[role=option]' })
+  check('a new line: one of the central banks the app reads, the US Federal Reserve among them', choices === 'US Federal Reserve' && (await p.eval(`document.querySelector('[data-new-rate-source] [data-field=url]').value`)).startsWith('https://www.federalreserve.gov/'), choices)
+  // Its address replaced by the web page of its release: refused cleanly, in the background.
+  await typeInto('[data-new-rate-source] [data-field="url"]', 'https://www.federalreserve.gov/releases/h10/current/')
+  await p.clickText('Add', { selector: '[data-new-rate-source] button' })
   await p.waitFor(`[...document.querySelectorAll('[data-rate-source]')].some(r => r.querySelector('[data-rates-error]'))`, 60000, 'the wrong address checked')
   const wrong = await p.eval(`[...document.querySelectorAll('[data-rate-source]')].map(r => r.querySelector('[data-rates-error]')?.innerText).find(Boolean)`)
   check('a wrong address: checked in the background, the reason shown under it', /web page, not a file of rates/.test(wrong) && !(await p.eval(`!!document.querySelector('.MuiSnackbar-root .MuiAlert-standardError, .MuiSnackbar-root .MuiAlert-filledError')`)), wrong)
-  await shot(p, '24c-exchange-rate-sources.png')
+  check('every central bank of the list in the table: no more to add', await p.eval(`[...document.querySelectorAll('main button')].find(b => b.innerText === 'Add bank').disabled`))
+  await shot(p, '24d-exchange-rate-sources.png')
+  // The delete button: a plain icon, red under the mouse, nothing drawn around it.
+  const del = await p.eval(`(() => { const b = document.querySelector('[data-rate-source="boc"] button[aria-label^="Delete"]'); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: del.x, y: del.y })
+  await sleep(300)
+  const hovered = await p.eval(`(() => { const s = (q) => getComputedStyle(document.querySelector(q + ' button[aria-label^="Delete"]')); const h = s('[data-rate-source="boc"]'); const o = s('[data-rate-source]:last-child'); return { bg: h.backgroundColor, color: h.color, other: o.color } })()`)
+  check('delete under the mouse: red, no shape around it', /rgba\(0, 0, 0, 0\)|transparent/.test(hovered.bg) && hovered.color !== hovered.other, JSON.stringify(hovered))
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
   // Chosen in Settings: the same reason under the choice; nothing said when a good one is chosen again.
   await p.clickText('General', { selector: 'button' })
   await sleep(500)
   await p.mouseClick('[data-rates-source-select]')
-  await p.clickText('Test web page', { selector: '[role=option]' })
+  await p.clickText('US Federal Reserve', { selector: '[role=option]' })
   await p.waitFor(`document.querySelector('main [data-rates-error]') !== null`, 60000, 'the error under the choice')
-  check('the chosen source checked at once, its error under the choice', /web page/.test(await p.eval(`document.querySelector('main [data-rates-error]').innerText`)))
-  await shot(p, '24d-wrong-source-chosen.png')
+  check('the chosen bank checked at once, its error under the choice', /web page/.test(await p.eval(`document.querySelector('main [data-rates-error]').innerText`)))
+  await shot(p, '24e-wrong-source-chosen.png')
   await p.mouseClick('[data-rates-source-select]')
   await p.clickText('European Central Bank', { selector: '[role=option]' })
-  await p.waitFor(`document.querySelector('main [data-rates-error]') === null && document.querySelector('[aria-label="Download the exchange rates again"]') !== null`, 90000, 'the good source checked')
-  check('a good source: checked silently', !(await p.eval(`[...document.querySelectorAll('.MuiSnackbar-root')].some(x => /rates/i.test(x.innerText))`)) && (await p.engine('rates.status')).error === null)
-  const extra = (await p.engine('rates.sources')).find((x) => x.name === 'Test web page')
-  await p.engine('rates.removeSource', { id: extra.id })
-  check('a source not in use can be deleted', (await p.engine('rates.sources')).length === 2)
+  await p.waitFor(`document.querySelector('main [data-rates-error]') === null`, 90000, 'the good source checked')
+  check('a good source: chosen silently', !(await p.eval(`[...document.querySelectorAll('.MuiSnackbar-root')].some(x => /rates/i.test(x.innerText))`)) && (await p.engine('rates.status')).error === null)
+  const fed = (await p.engine('rates.sources')).find((x) => x.format === 'fed')
+  await p.engine('rates.removeSource', { id: fed.id })
+  check('a bank not in use can be deleted', (await p.engine('rates.sources')).length === 2)
+  // The display currency changes every amount: every bank in euros, the Canadian ones converted.
   await p.engine('settings.set', { key: 'currency', value: 'EUR' })
   const octEur = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
-  check('in euros, the Canadian banks are the ones converted', octEur.currency === 'EUR' && octEur.conversion.lines.length > 0 && octEur.conversion.lines.every((l) => l.from === 'CAD' && l.to === 'EUR')
-    && Object.keys(octEur.converted).length + Object.keys(oct.converted).length === oct.banks.reduce((x, b) => x + b.summary.transactions.length, 0))
+  check('in euros, every bank in euros, the Canadian ones converted', octEur.currency === 'EUR' && octEur.banks.every((b) => b.currency === 'EUR')
+    && octEur.conversion.lines.length > 0 && octEur.conversion.lines.every((l) => l.from === 'CAD' && l.to === 'EUR')
+    && octEur.banks.filter((b) => b.native === 'CAD').every((b) => b.summary.transactions.every((t) => t.currency === 'EUR' && t.originalCurrency === 'CAD')))
   await p.engine('settings.set', { key: 'currency', value: 'CAD' })
-  // The calendar: every bank together; a euro operation shows what the bank wrote and the rate.
+  // The calendar: every bank together, the month's totals in its header; a euro operation shows what the bank wrote.
   await p.eval('location.reload()')
   await p.waitFor(`document.querySelector('nav') !== null`, 20000, 'reloaded')
   await p.clickText('Calendar', { selector: 'nav button' })
   await sleep(1200)
-  const converted = oct.banks.find((b) => b.currency === 'EUR').summary.transactions.find((t) => oct.converted[t.id])
+  const converted = oct.banks.find((b) => b.native === 'EUR').summary.transactions.find((t) => t.originalCurrency === 'EUR')
   for (let i = 0; i < 24 && (await p.eval(`document.querySelector('main h5')?.innerText`)) !== 'October 2025'; i++) await p.click('[aria-label="Previous month"]')
+  await sleep(600)
+  const header = await p.eval(`document.querySelector('[data-month-totals]')?.innerText.replace(/\\s+/g, ' ')`)
+  check('calendar: the month’s totals in its header', header?.includes('Spent') && header.includes('Earned') && header.includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), header)
   await p.mouseClick(`div[data-date="${converted.date}"]`)
   await sleep(600)
   check('calendar: all banks, a converted amount with the amount the bank wrote', await p.eval(`[...document.querySelectorAll('[data-original]')].some(e => e.innerText.includes('€'))`), converted.date)
-  await shot(p, '24c-calendar-all-banks.png')
+  await shot(p, '24f-calendar-all-banks.png')
   await p.clickText('Periods', { selector: 'nav button' })
   await sleep(600)
 
@@ -904,7 +942,7 @@ try {
 
   // year and all time
   await p.clickText('Year', { selector: 'button' })
-  await p.waitFor(`document.querySelector('section h2')?.innerText.startsWith('2025, from')`, 20000, 'year title')
+  await p.waitFor(`document.querySelector('section h2')?.innerText === '2025'`, 20000, 'year title')
   await sleep(1200)
   await shot(p, '13-year.png')
   await p.clickText('All time', { selector: 'button' })

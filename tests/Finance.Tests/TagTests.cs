@@ -119,7 +119,7 @@ public class TagTests
         var only = Assert.Single(month.Breakdown);
         Assert.Equal(("2025-10-01", "2025-10-31"), (only.From, only.To));
         Assert.Equal(month.Balance, only.Balance);
-        Assert.StartsWith("October, from Wednesday 1 to Friday 31, 2025", only.Title);
+        Assert.StartsWith("October 2025", only.Title);
 
         var year = s.Summaries.Summarize(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), Granularity.Year, "CAD");
         // A year: the year alone.

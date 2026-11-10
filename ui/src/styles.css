@@ -26,8 +26,14 @@ html, body, #root {
 body {
   font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
-  user-select: none;
   cursor: default;
+}
+
+/* Every text can be selected and copied; controls (buttons, tabs, the window's bar and the side menu) cannot, so a
+   click or a drag on them never selects anything. */
+button, [role='button'], [role='tab'], [role='menuitem'], [role='option'], label, nav, .drag, .MuiChip-root, .MuiToggleButton-root,
+.MuiSwitch-root, .MuiPaginationItem-root, .MuiSelect-select {
+  user-select: none;
 }
 
 input, textarea, [contenteditable], .selectable {

@@ -489,3 +489,37 @@ real app with `tools/e2e/perf.mjs`.
   311 MB).
 - `tools/e2e/perf.mjs` also times actions until drawn and measures every process of the app;
   `tools/e2e/perf-quick.mjs` compares two builds on period changes; the engine benchmark times the converted reports.
+
+## November 9th, 2026 - Central banks to choose from, every amount in the display currency - Commit 22
+
+### Added
+- Definitions > Exchange rates is a table of central banks: a round button chooses the one whose rates are used (its
+  line tinted), each line shows the address of its file, the number of currencies and the last day of rates, both
+  read from its last download (nothing shown without one). A new line is chosen among the central banks the app
+  reads: the European Central Bank, the Bank of Canada and the US Federal Reserve (its H.10 table, 23 currencies
+  against the US dollar). One short sentence above the table says what address to paste.
+- Refresh all downloads every bank of the table again; every bank is also downloaded once a day by itself. Each bank
+  keeps two copies at most: the one of the day before and today's (a second download the same day replaces today's).
+- Any unexpected fault while downloading is said plainly under the bank, like the known ones; an empty answer and a
+  file in another bank's layout are said too.
+- Every text of the app can be selected and copied (controls cannot).
+- The calendar shows the month's spent, earned and balance in its header.
+
+### Changed
+- The global display currency is used everywhere: each bank's block, totals, tables and charts are in it; an
+  operation in another currency shows the amount its bank wrote under the converted one, and its bank's currency
+  shows beside the display one ("EUR → CAD"). An account's currency is the currency its operations come in.
+  Operations without a rate for their day are listed in their own currency, outside the totals. Editing an operation
+  edits it as its bank wrote it.
+- Each bank's block starts with its expenses, earnings and balance; its name stays at the top of the screen while its
+  tables scroll, their headers just under it.
+- A month is titled "October 2026", a year "2026".
+- Settings > Exchange rates: an "Edit banks" button opens the table; the delete button of a line turns red under the
+  mouse, with nothing drawn around it.
+- Import: the warning about PDFs is a one-line note with a shield icon.
+- ExcelDataReader 3.7.0 → 3.9.0.
+
+### Speed (41,520 operations over ten years; previous version, then this one)
+- Summary to Statements: the screen froze 1.2 s (one frame, 1 fps), now 0.14 s (longest frame 7 fps); Summary to
+  Analytics 1.1 s, now 0.11 s. The period at the top of the screen changes view at once, the others one per frame
+  (the screen stays at about 240 fps meanwhile).

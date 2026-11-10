@@ -55,20 +55,25 @@ internal static class Api
         b.RegisterBackground("rates.update", async p => await s.Rates.UpdateAsync(p.Opt<string>("id")));
         // The sources the person defined (Definitions > Exchange rates): name and address of the file of rates.
         b.Register("rates.sources", _ => s.Rates.Views());
+        // The central banks whose files the app reads (the choices of a new line of the table).
+        b.Register("rates.banks", _ => CentralBank.All);
         b.Register("rates.saveSource", p =>
         {
-            var saved = s.Rates.SaveSource(p.Opt<string>("id"), p.Get<string>("name"), p.Get<string>("url"));
+            var saved = s.Rates.SaveSource(p.Opt<string>("id"), p.Opt<string>("format"), p.Get<string>("url"));
             return new { id = saved.Id, sources = s.Rates.Views() };
         });
         b.Register("rates.removeSource", p => { s.Rates.RemoveSource(p.Get<string>("id")); return s.Rates.Views(); });
-        // The chosen bank's rates are downloaded again every day (the copy before stays as the fallback). Says whether
-        // anything changed.
+        // Every source downloaded again now (the Refresh button): today's copy replaces today's, the day before stays.
+        b.RegisterBackground("rates.refresh", async _ =>
+        {
+            var updated = await s.Rates.UpdateAllAsync(force: true);
+            return new { updated, sources = s.Rates.Views() };
+        });
+        // Every source is downloaded again once a day (checked at start and every hour). Says whether the rates in use changed.
         b.RegisterBackground("rates.ensure", async _ =>
         {
-            var status = s.Rates.Status();
-            if (!s.Rates.DueToday()) return new { updated = false, status };
-            var after = await s.Rates.UpdateAsync();
-            return new { updated = after.Error is null, status = after };
+            var updated = await s.Rates.UpdateAllAsync(force: false);
+            return new { updated, status = s.Rates.Status() };
         });
         b.Register("periods.summary", p => s.Summaries.Summarize(
             ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
@@ -78,6 +83,9 @@ internal static class Api
         // ------------------------------------------------------------ operations
         b.Register("tx.setCategory", p => new { changed = s.Transactions.SetCategory(p.Get<long>("id"), p.Get<string>("categoryId"), p.Opt<bool?>("allOfBrand") ?? true) });
         b.Register("tx.setBrand", p => new { changed = s.Transactions.SetBrand(p.Get<long>("id"), p.Get<string>("brand")) });
+        // An operation as its bank wrote it (the periods show it converted to the display currency): what is edited.
+        b.Register("tx.get", p => s.Db.AllTransactions().FirstOrDefault(t => t.Id == p.Get<long>("id")) is { } tx
+            ? SummaryService.View(tx, s.Db.TagIndex()) : throw new ArgumentException("This operation no longer exists."));
         b.Register("tx.create", p => s.Transactions.Create(p.Get<TransactionInput>("input")));
         b.Register("tx.update", p => s.Transactions.Update(p.Get<long>("id"), p.Get<TransactionInput>("input"), p.Opt<bool?>("allOfBrand") ?? true));
         b.Register("tx.delete", p => { s.Transactions.Delete(p.Get<long>("id")); return null; });

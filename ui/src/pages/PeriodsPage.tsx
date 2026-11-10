@@ -65,7 +65,11 @@ export function PeriodsPage() {
     return [{ from: index.first, to: today < index.first ? index.first : today, key: `${index.first}_${today}` }]
   }, [index, mode, customFrom, customTo])
 
-  const onEdit = useCallback((tx: TransactionView) => setEditing(tx), [])
+  // An operation shown converted is edited as its bank wrote it.
+  const onEdit = useCallback((tx: TransactionView) => {
+    if (tx.originalCurrency || tx.currency !== settings.currency) api.tx.get(tx.id).then(setEditing, fail)
+    else setEditing(tx)
+  }, [settings.currency, fail])
 
   // Table headers stick just under the bar of tabs, whatever its height.
   const bar = useRef<HTMLDivElement>(null)

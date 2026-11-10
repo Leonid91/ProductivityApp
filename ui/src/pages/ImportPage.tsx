@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert, Box, Button, IconButton, LinearProgress, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
+  Box, Button, IconButton, LinearProgress, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import CloudUpload from '@mui/icons-material/CloudUploadRounded'
@@ -8,6 +8,7 @@ import CheckCircle from '@mui/icons-material/CheckCircleRounded'
 import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 import WarningAmber from '@mui/icons-material/WarningAmberRounded'
+import GppMaybe from '@mui/icons-material/GppMaybeRounded'
 import { api, currencies, type BankTemplate, type Draft, type StatementInfo } from '../api'
 import { useApp } from '../AppContext'
 import { plural, shortDate } from '../format'
@@ -137,9 +138,12 @@ export function ImportPage() {
       </Box>
 
       {readingPdf && (
-        <Alert data-pdf-warning severity="warning" sx={{ mt: 3 }}>
-          Import only PDF statements downloaded from your bank: a PDF from anywhere else can be made to slow the app down or stop it.
-        </Alert>
+        // A PDF from anywhere else can be made to slow the app down or stop it: a short note, not a banner.
+        <Typography data-pdf-warning variant="body2" color="text.secondary" title="A PDF from anywhere else can be made to slow the app down or stop it."
+          sx={{ mt: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.75 }}>
+          <GppMaybe sx={{ fontSize: 18, color: 'warning.main' }} />
+          Import only PDFs downloaded from your bank.
+        </Typography>
       )}
       <Box sx={{ display: 'grid', gap: 3, mt: 3 }}>
         {drafts.map((d) => (

@@ -30,10 +30,15 @@ public static class Formatting
     {
         string Day(DateOnly d) => d.ToString("dddd", English) + " " + d.Day.ToString(CultureInfo.InvariantCulture);
         string DayMonth(DateOnly d) => d.ToString("dddd, MMMM ", English) + d.Day.ToString(CultureInfo.InvariantCulture);
+        // A whole month or a whole year is named alone ("October 2026", "2026").
         if (g == Granularity.Month && from.Year == to.Year && from.Month == to.Month)
-            return $"{from.ToString("MMMM", English)}, from {Day(from)} to {Day(to)}, {from.Year}";
+            return from.Day == 1 && to.Day == DateTime.DaysInMonth(to.Year, to.Month)
+                ? $"{from.ToString("MMMM", English)} {from.Year}"
+                : $"{from.ToString("MMMM", English)}, from {Day(from)} to {Day(to)}, {from.Year}";
         if (g == Granularity.Year && from.Year == to.Year)
-            return $"{from.Year}, from {DayMonth(from)} to {DayMonth(to)}";
+            return from is { Month: 1, Day: 1 } && to is { Month: 12, Day: 31 }
+                ? from.Year.ToString(CultureInfo.InvariantCulture)
+                : $"{from.Year}, from {DayMonth(from)} to {DayMonth(to)}";
         return $"From {DayMonth(from)}, {from.Year} to {DayMonth(to)}, {to.Year}";
     }
 

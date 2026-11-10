@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 13;
+    private const int SchemaVersion = 14;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -177,7 +177,20 @@ public sealed class Database : IDisposable
             var position = 0;
             foreach (var s in RateSource.Defaults)
                 Exec("INSERT INTO rate_sources(id, name, url, base, position) VALUES($i, $n, $u, $b, $p)", ("$i", s.Id), ("$n", s.Name), ("$u", s.Url), ("$b", s.Base), ("$p", position++));
+            // (the layout of each source's file is added by version 14)
             Exec("PRAGMA user_version = 13;");
+        }
+        if (version < 14)
+        {
+            // Each source is one of the central banks the app reads (the layout of its file); each copy of rates keeps
+            // the day it was downloaded (one copy per day: the day before and today).
+            Exec("""
+                ALTER TABLE rate_sources ADD COLUMN format TEXT NOT NULL DEFAULT 'ecb';
+                UPDATE rate_sources SET format = CASE WHEN id = 'boc' OR base = 'CAD' THEN 'boc' WHEN base = 'USD' THEN 'fed' ELSE 'ecb' END;
+                ALTER TABLE rate_sets ADD COLUMN fetched TEXT;
+                UPDATE rate_sets SET fetched = (SELECT substr(value, 1, 10) FROM settings WHERE key = 'rates.' || rate_sets.source || '.updatedAt') WHERE slot = 0;
+                PRAGMA user_version = 14;
+                """);
         }
     }
 
@@ -340,28 +353,43 @@ public sealed class Database : IDisposable
         Query("SELECT currency, data FROM rate_sets WHERE source = $s AND slot = $n", r => (r.GetString(0), r.GetString(1)), ("$s", source), ("$n", slot))
             .ToDictionary(x => x.Item1, x => x.Item2);
 
-    /// <summary>Keeps a new download as the latest copy; the latest becomes the previous one; anything older is deleted.</summary>
-    public void SaveRateSet(string source, IReadOnlyDictionary<string, string> series) => InTransaction(() =>
+    /// <summary>
+    /// Keeps a download of <paramref name="day"/> as the copy in use. Two copies at most: the one of the day before and
+    /// the one of today. A second download the same day replaces today's copy (the day before stays); a download on a
+    /// new day makes today's copy the day before, and the older one is deleted.
+    /// </summary>
+    public void SaveRateSet(string source, IReadOnlyDictionary<string, string> series, DateOnly day) => InTransaction(() =>
     {
-        Exec("DELETE FROM rate_sets WHERE source = $s AND slot = 1", ("$s", source));
-        Exec("UPDATE rate_sets SET slot = 1 WHERE source = $s AND slot = 0", ("$s", source));
+        var iso = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (Scalar("SELECT fetched FROM rate_sets WHERE source = $s AND slot = 0 LIMIT 1", ("$s", source)) as string == iso)
+            Exec("DELETE FROM rate_sets WHERE source = $s AND slot = 0", ("$s", source));
+        else
+        {
+            Exec("DELETE FROM rate_sets WHERE source = $s AND slot = 1", ("$s", source));
+            Exec("UPDATE rate_sets SET slot = 1 WHERE source = $s AND slot = 0", ("$s", source));
+        }
         foreach (var (currency, data) in series)
-            Exec("INSERT INTO rate_sets(source, slot, currency, data) VALUES($s, 0, $c, $d)", ("$s", source), ("$c", currency), ("$d", data));
+            Exec("INSERT INTO rate_sets(source, slot, currency, data, fetched) VALUES($s, 0, $c, $d, $f)", ("$s", source), ("$c", currency), ("$d", data), ("$f", iso));
     });
+
+    /// <summary>The copies of a source's rates kept: slot 0 in use, slot 1 the day before; the day each was downloaded and how many currencies it has.</summary>
+    public List<(int Slot, string? Day, int Currencies)> RateCopies(string source) =>
+        Query("SELECT slot, MAX(fetched), COUNT(*) FROM rate_sets WHERE source = $s GROUP BY slot ORDER BY slot",
+            r => (r.GetInt32(0), r.IsDBNull(1) ? null : r.GetString(1), r.GetInt32(2)), ("$s", source));
 
     /// <summary>The newest day of the latest copy of a source's rates (every currency's text starts with its newest day).</summary>
     public string? RateSetLatest(string source) =>
         Scalar("SELECT MAX(substr(data, 1, 10)) FROM rate_sets WHERE source = $s AND slot = 0", ("$s", source)) as string;
 
     public List<RateSource> RateSources() =>
-        Query("SELECT id, name, url, base FROM rate_sources ORDER BY position, rowid",
-            r => new RateSource(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3)));
+        Query("SELECT id, name, url, base, format FROM rate_sources ORDER BY position, rowid",
+            r => new RateSource(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetString(4)));
 
     /// <summary>Adds the source (at the end) or saves its name, address and currency.</summary>
     public void SaveRateSource(RateSource s) => Exec("""
-        INSERT INTO rate_sources(id, name, url, base, position) VALUES($i, $n, $u, $b, (SELECT COALESCE(MAX(position), -1) + 1 FROM rate_sources))
-        ON CONFLICT(id) DO UPDATE SET name = excluded.name, url = excluded.url, base = excluded.base
-        """, ("$i", s.Id), ("$n", s.Name), ("$u", s.Url), ("$b", s.Base));
+        INSERT INTO rate_sources(id, name, url, base, format, position) VALUES($i, $n, $u, $b, $f, (SELECT COALESCE(MAX(position), -1) + 1 FROM rate_sources))
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, url = excluded.url, base = excluded.base, format = excluded.format
+        """, ("$i", s.Id), ("$n", s.Name), ("$u", s.Url), ("$b", s.Base), ("$f", s.Format));
 
     /// <summary>Forgets the rates downloaded from a source, with the day and the error of its last download.</summary>
     public void ClearRates(string source) => InTransaction(() =>

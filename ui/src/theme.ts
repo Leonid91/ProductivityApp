@@ -172,8 +172,9 @@ export function makeTheme(mode: 'light' | 'dark'): Theme {
       MuiTableCell: {
         styleOverrides: {
           root: { borderBottomColor: divider, fontSize: 13.5 },
-          // Table headers stay visible while a long table scrolls (below the page's own sticky bar, if any).
-          head: { fontWeight: 600, color: text.secondary, fontSize: 12.5, position: 'sticky', top: 'var(--sticky-top, 0px)', zIndex: 2, backgroundColor: dark ? '#1c1c1b' : '#ffffff' },
+          // Table headers stay visible while a long table scrolls (below the page's own sticky bar and the bank's
+          // heading, if any).
+          head: { fontWeight: 600, color: text.secondary, fontSize: 12.5, position: 'sticky', top: 'calc(var(--sticky-top, 0px) + var(--part-head, 0px))', zIndex: 2, backgroundColor: dark ? '#1c1c1b' : '#ffffff' },
         },
       },
       MuiTableRow: {

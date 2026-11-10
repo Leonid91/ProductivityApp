@@ -86,8 +86,11 @@ public sealed record MonthEntry(int Year, int Month, int Count);
 
 public sealed record PeriodIndex(List<MonthEntry> Months, List<int> Years, List<string> Currencies, string? First, string? Last);
 
-/// <summary>One bank's part of a period, in the bank's currency (a group "Other accounts" holds cash and manual entries).</summary>
-public sealed record BankPart(string Key, string Name, string Currency, BankingSystem? System, PeriodSummary Summary);
+/// <summary>
+/// One bank's part of a period, in the global display currency (<see cref="Currency"/>); <see cref="Native"/> is the
+/// currency the bank's accounts are in. A group "Other accounts" holds cash and manual entries.
+/// </summary>
+public sealed record BankPart(string Key, string Name, string Currency, string Native, BankingSystem? System, PeriodSummary Summary);
 
 /// <summary>One rate used: for operations of <see cref="Day"/>, the rate published on <see cref="RateDay"/>.</summary>
 public sealed record RateUse(string Day, string RateDay, decimal Rate);
@@ -104,7 +107,7 @@ public sealed record ConversionLine(
 /// <param name="Base">The currency the bank quotes every rate against (two other currencies are converted through it).</param>
 public sealed record Conversion(string To, string Source, string Base, string Url, string? UpdatedAt, string? Latest, List<ConversionLine> Lines);
 
-/// <summary>A period bank by bank (each in its own currency), then every bank together in the global currency.</summary>
+/// <summary>A period bank by bank, then every bank together, all in the global display currency.</summary>
 public sealed class PeriodReport
 {
     public required string From { get; init; }
@@ -117,17 +120,12 @@ public sealed class PeriodReport
     public required PeriodSummary Global { get; init; }
     public required Conversion Conversion { get; init; }
     /// <summary>
-    /// Every operation of all banks together in the global currency, by id: its converted amount, the rate and the day of
-    /// the rate (operations already in the global currency are not listed, operations without a rate are left out). The
-    /// banks' parts hold the operations once; <see cref="Global"/> carries the totals and charts, not the operations again.
+    /// Ids of the operations left out of every total (no rate known for their day): the banks' parts list them in
+    /// their own currency. The banks' parts hold the operations once; <see cref="Global"/> carries the totals and
+    /// charts, not the operations again.
     /// </summary>
-    public required Dictionary<long, ConvertedView> Converted { get; init; }
-    /// <summary>Ids of the operations all banks together leave out (no rate known for their day).</summary>
     public required List<long> Unconverted { get; init; }
 }
-
-/// <param name="Earned">The earned part of an investment coming back, converted the same way.</param>
-public sealed record ConvertedView(decimal Amount, decimal Rate, string RateDay, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? Earned);
 
 public sealed class SummaryService(Database db)
 {
@@ -182,8 +180,10 @@ public sealed class SummaryService(Database db)
     }
 
     /// <summary>
-    /// A period bank by bank, each in its bank's currency, then every bank together converted to <paramref name="global"/>
-    /// at the rate of each operation's day (<see cref="ExchangeRates"/>), with every conversion shown.
+    /// A period bank by bank, then every bank together, every amount in <paramref name="global"/> (the display
+    /// currency): an operation in another currency is converted at the rate of its day (<see cref="ExchangeRates"/>),
+    /// with every conversion shown. An operation without a rate for its day is listed in its own currency and left
+    /// out of the totals.
     /// </summary>
     public PeriodReport Report(DateOnly from, DateOnly to, Granularity g, string global, ExchangeRates rates)
     {
@@ -207,22 +207,19 @@ public sealed class SummaryService(Database db)
         {
             var bank = group.Key is { } id ? banks[id] : null;
             var name = bank?.Name ?? "Other accounts";
-            var currency = bank?.Currency ?? global;
             var txs = group.ToList();
-
-            var (mine, conversions, own) = ConvertAll(txs, currency, rates, source, name);
-            lines.AddRange(own);
-            parts.Add(new BankPart(group.Key is { } k ? k.ToString(CultureInfo.InvariantCulture) : "other", name, currency, bank?.System, Build(mine, from, to, g, currency, conversions, accounts)));
 
             var (converted, toGlobal, globalLines) = ConvertAll(txs, global, rates, source, name);
             lines.AddRange(globalLines);
+            var left = txs.Where(t => t.Currency != global && !toGlobal.ContainsKey(t.Id)).ToList();
+            parts.Add(new BankPart(group.Key is { } k ? k.ToString(CultureInfo.InvariantCulture) : "other", name, global, bank?.Currency ?? global, bank?.System,
+                Build(converted, from, to, g, global, toGlobal, accounts, unconverted: left)));
             everything.AddRange(converted);
             foreach (var (txId, c) in toGlobal) everyConversion[txId] = c;
         }
         everything.Sort((a, b) => a.Date != b.Date ? a.Date.CompareTo(b.Date) : a.Id.CompareTo(b.Id));
         var status = rates.Status(source);
-        var copies = everything.ToDictionary(t => t.Id);
-        // The operations are in the banks' parts already (the interface converts them with Converted): not listed again.
+        // The operations are in the banks' parts already: not listed again.
         var globalSummary = Build(everything, from, to, g, global, everyConversion, accounts, listOperations: false);
         return new PeriodReport
         {
@@ -234,8 +231,6 @@ public sealed class SummaryService(Database db)
             Banks = parts,
             Global = globalSummary,
             Conversion = new Conversion(global, status.Source, status.Base, status.Url, status.UpdatedAt, status.Latest, lines),
-            Converted = everyConversion.ToDictionary(kv => kv.Key, kv => new ConvertedView(kv.Value.Rate.Amount, kv.Value.Rate.Rate,
-                kv.Value.Rate.RateDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), copies.GetValueOrDefault(kv.Key)?.Earned)),
             Unconverted = [.. all.Where(t => t.Currency != global && !everyConversion.ContainsKey(t.Id)).Select(t => t.Id)],
         };
     }
@@ -287,7 +282,8 @@ public sealed class SummaryService(Database db)
     };
 
     private PeriodSummary Build(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g, string currency,
-        Dictionary<long, (Transaction Original, Converted Rate)>? converted, Dictionary<long, Account> accounts, bool listOperations = true)
+        Dictionary<long, (Transaction Original, Converted Rate)>? converted, Dictionary<long, Account> accounts, bool listOperations = true,
+        List<Transaction>? unconverted = null)
     {
         var (recurring, byId) = History();
         var tags = db.TagIndex();
@@ -369,7 +365,8 @@ public sealed class SummaryService(Database db)
             Balance = earnings - expenses,
             TransfersOut = transfersOut,
             TransfersIn = transfersIn,
-            Transactions = !listOperations ? [] : txs.OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => converted is not null && converted.TryGetValue(t.Id, out var c)
+            // Operations without a rate for their day are listed too, in their own currency (outside every total).
+            Transactions = !listOperations ? [] : txs.Concat(unconverted ?? []).OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => converted is not null && converted.TryGetValue(t.Id, out var c)
                 ? View(t, recurring.GetValueOrDefault(t.Id), tags) with
                 {
                     Original = c.Original.Amount, OriginalCurrency = c.Original.Currency, Rate = c.Rate.Rate,

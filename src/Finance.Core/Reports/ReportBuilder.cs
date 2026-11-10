@@ -57,11 +57,11 @@ public static class ReportBuilder
     {
         var o = options ?? new Options();
         var count = r.Banks.Sum(b => b.Summary.Transactions.Count);
-        return Document(r.Title, $"{count} operation{(count == 1 ? "" : "s")} · {r.Banks.Count} bank{(r.Banks.Count == 1 ? "" : "s")} · global amounts in {r.Currency}", generatedAt, col =>
+        return Document(r.Title, $"{count} operation{(count == 1 ? "" : "s")} · {r.Banks.Count} bank{(r.Banks.Count == 1 ? "" : "s")} · amounts in {r.Currency}", generatedAt, col =>
         {
             foreach (var bank in r.Banks)
             {
-                col.Item().PaddingTop(4).Text($"{bank.Name} · {bank.Currency}").FontSize(14).SemiBold();
+                col.Item().PaddingTop(4).Text(bank.Native == bank.Currency ? $"{bank.Name} · {bank.Currency}" : $"{bank.Name} · {bank.Native} → {bank.Currency}").FontSize(14).SemiBold();
                 Part(col, bank.Summary, o, dateFormat, tables: true);
             }
             if (!ShowsGlobal(r)) return;
@@ -258,7 +258,7 @@ public static class ReportBuilder
                 table.Cell().Element(Cell).Text(t.Brand).ClampLines(1);
                 table.Cell().Element(Cell).Text(TagText(t.Tags, s)).FontColor(Palette.InkSecondary).ClampLines(1);
                 if (frequency) table.Cell().Element(Cell).Text(t.Recurring ?? "").FontColor(Palette.InkSecondary);
-                table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(t.Amount, currency, sign: true)).EnableFontFeature("tnum")
+                table.Cell().Element(Cell).AlignRight().Text(Formatting.Money(t.Amount, t.Currency, sign: true)).EnableFontFeature("tnum")
                     .FontColor(transfer ? Palette.InkMuted : t.Amount > 0 ? Palette.Positive : Palette.Ink);
             }
         });
