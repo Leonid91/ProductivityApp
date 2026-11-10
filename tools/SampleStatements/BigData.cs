@@ -113,7 +113,7 @@ internal static class Bench
             for (var d = new DateOnly(last.Year, 12, 31); d >= new DateOnly(last.Year - 10, 1, 1); d = d.AddDays(-1))
                 if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
                     csv.Append(CultureInfo.InvariantCulture, $"{d:yyyy-MM-dd},{1.45m + d.DayNumber % 97 / 1000m},{1.10m + d.DayNumber % 53 / 1000m},\n");
-            rates.Save(RateSource.Ecb, ExchangeRates.ParseCsv(csv.ToString()));
+            rates.Save(RateSource.Ecb, Encoding.UTF8.GetBytes(csv.ToString()));
             Cost("month report (2 banks, converted)", 30, () => summaries.Report(month, month.AddMonths(1).AddDays(-1), Granularity.Month, "CAD", rates));
             Cost("year report (2 banks, converted)", 10, () => summaries.Report(new DateOnly(last.Year, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Year, "CAD", rates));
             Cost("ten years report (2 banks, converted)", 3, () => summaries.Report(new DateOnly(last.Year - 9, 1, 1), new DateOnly(last.Year, 12, 31), Granularity.Range, "CAD", rates));

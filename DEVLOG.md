@@ -626,3 +626,12 @@ real app with `tools/e2e/perf.mjs`.
   deletes its downloads, and moving the database moves its downloads with it.
 - The database keeps only the person's choices (the banks and calendars, their addresses, the bank in use and the
   checked calendars). A database made before drops its copies; every source is downloaded again at the next start.
+
+## November 10th, 2026 - Euro statements shown in euros at import - Commit 29
+
+### Fixed
+- Import: a euro statement that prints no currency (the Mutuelle sample) showed its amounts with "$" in the column
+  editor. Its SEPA operations now make it a euro statement, whatever the display currency.
+- Import: every amount of a statement's card (balance check, status, "add up to" warning) and of its column editor is
+  shown in the currency of the account it is imported into, the same as its lines.
+- The sample tool's large-data measure builds again (it still saved rates the way the database used to).

@@ -130,11 +130,12 @@ internal sealed partial class DocumentContext
 
     private static string DetectCurrency(string folded, string fallback)
     {
-        // Whole words only: "EUR" is also the end of VALEUR, DEBITEUR...
+        // Whole words only: "EUR" is also the end of VALEUR, DEBITEUR... SEPA operations are euro operations (the euro
+        // payments area): a statement that lists them and prints no currency is in euros.
         int Count(params string[] keys) => keys.Sum(k => Regex.Matches(folded, (char.IsLetter(k[0]) ? @"(?<![A-Z])" : "") + Regex.Escape(k) + (char.IsLetter(k[^1]) ? @"(?![A-Z])" : "")).Count);
         var scores = new Dictionary<string, int>
         {
-            ["EUR"] = Count("EUR", "€", "EUROS"),
+            ["EUR"] = Count("EUR", "€", "EUROS", "SEPA"),
             ["USD"] = Count("USD", "US$", "$ US", "$US"),
             ["GBP"] = Count("GBP", "£"),
             ["CHF"] = Count("CHF"),

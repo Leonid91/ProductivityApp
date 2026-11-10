@@ -111,6 +111,9 @@ public class StatementParserTests
         var (spec, p) = await Read(Style.Atypical, template: template);
         AssertMatches(spec, p, periodPrinted: false);
         Assert.StartsWith("Template", p.Method);
+        // It prints no currency; its SEPA operations make it a euro statement, whatever the display currency.
+        Assert.Equal("EUR", p.Currency);
+        Assert.Equal("EUR", auto.Currency);
     }
 
     [Fact]

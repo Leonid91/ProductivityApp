@@ -30,7 +30,7 @@ function initialColumns(draft: Draft): TemplateColumn[] {
  * columns; the person drags the borders and says what each column holds. The result is checked live against
  * the statement's balances, and saved for every later statement from the same bank.
  */
-export function TemplateEditor({ draft, onClose }: { draft: Draft; onClose: (next: Draft | null) => void }) {
+export function TemplateEditor({ draft, currency, onClose }: { draft: Draft; currency: string; onClose: (next: Draft | null) => void }) {
   const { notify, fail, settings } = useApp()
   const theme = useTheme()
   const start = useMemo(() => initialColumns(draft), [draft])
@@ -245,7 +245,7 @@ export function TemplateEditor({ draft, onClose }: { draft: Draft; onClose: (nex
           </Box>
           {preview && (
             <>
-              <Box><StatusChip draft={preview} /></Box>
+              <Box><StatusChip draft={preview} currency={currency} /></Box>
               <Typography variant="body2" color="text.secondary">
                 {plural(preview.rows.length, 'operation')}
                 {preview.opening !== null && preview.closing !== null ? ' · balances found' : ''}
@@ -257,7 +257,7 @@ export function TemplateEditor({ draft, onClose }: { draft: Draft; onClose: (nex
                     <TableRow key={r.index}>
                       <TableCell className="tnum" sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>{formatDate(r.date, settings.dateFormat)}</TableCell>
                       <TableCell sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</TableCell>
-                      <TableCell align="right"><Money value={r.amount} currency={preview.currency} sign sx={{ fontSize: 12.5 }} /></TableCell>
+                      <TableCell align="right"><Money value={r.amount} currency={currency} sign sx={{ fontSize: 12.5 }} /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

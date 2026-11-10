@@ -46,13 +46,14 @@ function DraftRowDialog({ row, onClose, onSave }: {
   )
 }
 
-export function StatusChip({ draft }: { draft: Draft }) {
+/** The state of a read statement; amounts in <currency>, the currency of the account it is imported into. */
+export function StatusChip({ draft, currency }: { draft: Draft; currency: string }) {
   if (draft.alreadyImported) return <Chip size="small" color="default" label="Already imported" />
   switch (draft.status) {
     case 'verified':
       return <Chip size="small" color="success" icon={<CheckCircle />} label="Balanced to the cent" variant="outlined" />
     case 'mismatch':
-      return <Chip size="small" color="warning" icon={<ErrorOutline />} label={`Off by ${money(Math.abs(draft.difference ?? 0), draft.currency)}`} variant="outlined" />
+      return <Chip size="small" color="warning" icon={<ErrorOutline />} label={`Off by ${money(Math.abs(draft.difference ?? 0), currency)}`} variant="outlined" />
     case 'noBalances':
       return (
         <Tooltip title="This file prints no opening, closing or running balance, so its total cannot be checked">
@@ -65,10 +66,10 @@ export function StatusChip({ draft }: { draft: Draft }) {
 }
 
 /** The balance check in plain words: what the file says it starts and ends with, and what its lines add up to. */
-function BalanceCheck({ draft }: { draft: Draft }) {
+function BalanceCheck({ draft, currency }: { draft: Draft; currency: string }) {
   const { settings } = useApp()
   const d = (x: string | null) => (x ? formatDate(x, settings.dateFormat) : '')
-  const m = (v: number, sign = false) => money(v, draft.currency, { sign })
+  const m = (v: number, sign = false) => money(v, currency, { sign })
   const lines = draft.rows.length
   const sum = draft.rows.reduce((s, r) => s + r.amount, 0)
   let body: React.ReactNode
@@ -226,11 +227,11 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
           {draft.usedOcr && <Chip size="small" icon={<DocumentScanner />} label="Scanned" variant="outlined" />}
           {draft.method === 'CSV' && <Chip size="small" label="CSV" variant="outlined" />}
           {draft.template && <Chip size="small" icon={<ViewColumn />} label={draft.template.name} variant="outlined" />}
-          <StatusChip draft={draft} />
+          <StatusChip draft={draft} currency={currency} />
         </Box>
       </Box>
 
-      {!draft.alreadyImported && <BalanceCheck draft={draft} />}
+      {!draft.alreadyImported && <BalanceCheck draft={draft} currency={currency} />}
       {needsColumns && draft.pageCount > 0 && (
         <Alert
           severity={draft.status === 'mismatch' ? 'warning' : 'error'}
@@ -238,7 +239,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
           action={<Button color="inherit" size="small" startIcon={<ViewColumn />} onClick={() => setEditingColumns(true)}>Set columns</Button>}
         >
           {draft.status === 'mismatch'
-            ? `The operations add up to ${money(draft.computedClosing ?? 0, draft.currency)}, the statement says ${money(draft.closing ?? 0, draft.currency)}.`
+            ? `The operations add up to ${money(draft.computedClosing ?? 0, currency)}, the statement says ${money(draft.closing ?? 0, currency)}.`
             : 'The table of this statement was not recognised.'}
         </Alert>
       )}
@@ -387,6 +388,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
       {editingColumns && (
         <TemplateEditor
           draft={draft}
+          currency={currency}
           onClose={(next) => { setEditingColumns(false); if (next) { setDraft(next); setEdits(new Map()) } }}
         />
       )}

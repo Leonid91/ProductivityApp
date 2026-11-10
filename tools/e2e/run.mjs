@@ -79,10 +79,18 @@ try {
   await p.waitFor(`document.querySelector('[role=dialog]').innerText.includes('Balanced to the cent')`, 15000, 'template balances')
   await shot(p, '05-template-editor-after.png')
   check('hand-set columns balance the unusual statement', true)
+  // The Mutuelle statement prints no currency: its SEPA operations make it a euro statement, shown in euros.
+  const editorAmounts = await p.eval(`[...document.querySelectorAll('[role=dialog] td.MuiTableCell-alignRight')].map(e => e.innerText)`)
+  check('column editor: amounts of the euro statement in euros', editorAmounts.length > 0 && editorAmounts.every((t) => t.includes('€') && !t.includes('$')), editorAmounts.slice(0, 3).join(' '))
   await p.clickText('Save', { selector: '[role=dialog] button' })
   await p.waitFor(`!document.querySelector('[role=dialog] img')`, 10000, 'editor closed')
   await sleep(500)
   check('draft re-read with the template', await p.eval(`document.querySelector('[data-draft^="Mutuelle"]').innerText.includes('Balanced to the cent')`))
+  const cardText = await p.eval(`document.querySelector('[data-draft^="Mutuelle"]').innerText`)
+  check('import card: balances and amounts of the euro statement in euros', cardText.includes('€') && !cardText.includes('$'))
+  await p.eval(`document.querySelector('[data-draft^="Mutuelle"]').scrollIntoView({ block: 'start' })`)
+  await sleep(300)
+  await shot(p, '05b-import-card-euros.png')
 
   // ---- save every draft (PDFs first; the CSVs of the same BNC accounts must then bring nothing new)
   // Nothing may be pre-selected: every file waits for its account, and cannot be saved before.
