@@ -795,10 +795,6 @@ real app with `tools/e2e/perf.mjs`.
   → 10 MB).
 - The last reports made are kept until the operations, the settings, the rates, the holidays or the day change: going
   back to a period shows it at once (at most 8 reports and 60,000 operations kept).
-- How many times per second a view can be shown, from the click to the periods on screen drawn (fps; ten years of
-  fictitious operations, median of 3 runs, commit 32 → now): Month 4.0 → 7.1, Year 2.4 → 3.3, All time 0.75 → 1.35,
-  Custom 4.2 → 7.1. The engine alone, for ten years: reports made 5.3 → 6.5 per second, written for the interface
-  8.8 → 10.8 per second.
 
 ### Added
 - Unit test: a report is kept until something it depends on changes.
@@ -818,3 +814,21 @@ real app with `tools/e2e/perf.mjs`.
 - Unit tests: a PDF holds the views chosen and only those; the drawing of the transfers over time is in it.
 - End-to-end checks: one Export at the top of each period in every view, none at the bottom; everything but the
   summary ticked at first; nothing ticked, nothing to export; the PDF written.
+
+## November 12th, 2026 - No freeze when periods come in - Commit 36
+
+### Changed
+- The screen keeps moving while periods come in. Frame rate at the worst moment of each action (the longest frame;
+  ten years of fictitious operations, a 240 Hz screen, median of 3 runs, commit 32 → now): switching to Year 10 → 48
+  fps, to All time 9 → 48 fps, to Custom 18 → 27 fps, to Month 16 → 60 fps; scrolling years 9 → 30 fps, months 16 → 40
+  fps. The average stays 180 to 240 fps.
+- How: a period is drawn in the background, a little at a time (the one on the screen first, the others when the
+  screen has a moment); its banks appear one per frame, and in each bank its tables (or its rows of charts) one per
+  frame; the periods of the kind left and those far from the screen are let go in the background too.
+- A long period comes in pieces: its latest 2,000 operations of each bank with everything else, then the older ones
+  6,000 at a time (ten years were 10 MB read by the browser in one frame). Totals and charts are the whole period's
+  from the start; tables and filters hold every operation a moment later.
+- The numbers given for the last change were not frame rates (one over the time a view took to show): removed.
+
+### Added
+- Unit test: a long period sent in pieces makes the whole list again, in its order.

@@ -144,6 +144,8 @@ export interface PeriodSummary {
   transfersOut: number
   transfersIn: number
   transactions: TransactionView[]
+  /** Set while only the latest operations are there: how many the period has in all. */
+  transactionCount?: number
   byCategory: Slice[]
   categoryPie: Slice[]
   /** Expenses per first-level category (nested categories counted in theirs). */
@@ -347,7 +349,11 @@ export const api = {
     summary: (from: string, to: string, granularity: Granularity, currency?: string) =>
       invoke<PeriodSummary>('periods.summary', { from, to, granularity, currency }),
     /** Every bank on its own, then all of them in the global display currency. */
-    report: (from: string, to: string, granularity: Granularity) => invoke<PeriodReport>('periods.report', { from, to, granularity }),
+    /** first: only the latest operations of each bank (summary.transactionCount says how many there are in all). */
+    report: (from: string, to: string, granularity: Granularity, first?: number) => invoke<PeriodReport>('periods.report', { from, to, granularity, first }),
+    /** The operations of a bank of the period from one place to another, in the order they are listed in. */
+    operations: (from: string, to: string, granularity: Granularity, bank: string, start: number, end: number) =>
+      invoke<TransactionView[]>('periods.operations', { from, to, granularity, bank, start, end }),
   },
   rates: {
     sources: () => invoke<RateSource[]>('rates.sources'),

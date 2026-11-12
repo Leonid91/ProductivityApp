@@ -46,9 +46,14 @@ internal static class Api
         // ------------------------------------------------------------ periods
         // Without a currency: every bank (the periods and the calendar); with one: only the operations in it.
         b.Register("periods.index", p => s.Summaries.Index(p.Opt<string>("currency")));
-        b.Register("periods.report", p => s.Summaries.Report(
-            ParseDate(p.Get<string>("from")), ParseDate(p.Get<string>("to")),
-            p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates, s.Holidays));
+        // first: only the latest operations of each bank (a long period shows at once; see periods.operations).
+        b.Register("periods.report", p =>
+        {
+            var report = ReportFrom(p, s);
+            return p.Opt<int?>("first") is { } first and > 0 ? report.Listing(first) : report;
+        });
+        // The older operations of a bank of a long period, from one place to another (the report is kept: not made again).
+        b.Register("periods.operations", p => ReportFrom(p, s).Slice(p.Get<string>("bank"), p.Get<int>("start"), p.Get<int>("end")));
 
         // ------------------------------------------------------------ holidays
         // The calendars of Definitions > Holidays, with the number of holidays of this year each one holds.

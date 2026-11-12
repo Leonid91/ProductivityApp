@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Box, Button, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -22,6 +22,9 @@ export function PeriodsPage() {
   }, [])
   const [index, setIndex] = useState<PeriodIndex | null>(null)
   const [mode, setMode] = useState<'month' | 'year' | 'all' | 'custom'>('month')
+  // The periods follow the button in the background: the button answers at once, the periods of the old kind are
+  // replaced a little at a time (the screen keeps moving).
+  const listMode = useDeferredValue(mode)
   // Second layer, the same for every kind of period: its summary (balances), statements (tables) or analytics (charts).
   const [view, setView] = useState<'summary' | 'statements' | 'analytics'>('statements')
   // Analytics in two parts: the charts of the spending and income (General), the money moved between accounts (Transfers).
@@ -58,9 +61,9 @@ export function PeriodsPage() {
 
   const periods: Period[] = useMemo(() => {
     if (!index) return []
-    if (mode === 'month') return index.months.map((m) => ({ from: iso(m.year, m.month, 1), to: iso(m.year, m.month, daysInMonth(m.year, m.month)), key: `${m.year}-${m.month}` }))
-    if (mode === 'year') return index.years.map((y) => ({ from: iso(y, 1, 1), to: iso(y, 12, 31), key: `${y}` }))
-    if (mode === 'custom') {
+    if (listMode === 'month') return index.months.map((m) => ({ from: iso(m.year, m.month, 1), to: iso(m.year, m.month, daysInMonth(m.year, m.month)), key: `${m.year}-${m.month}` }))
+    if (listMode === 'year') return index.years.map((y) => ({ from: iso(y, 1, 1), to: iso(y, 12, 31), key: `${y}` }))
+    if (listMode === 'custom') {
       if (!customFrom?.isValid() || !customTo?.isValid() || customTo.isBefore(customFrom, 'day')) return []
       const from = customFrom.format('YYYY-MM-DD')
       const to = customTo.format('YYYY-MM-DD')
@@ -70,7 +73,7 @@ export function PeriodsPage() {
     if (!index.first) return []
     const today = dayjs().format('YYYY-MM-DD')
     return [{ from: index.first, to: today < index.first ? index.first : today, key: `${index.first}_${today}` }]
-  }, [index, mode, customFrom, customTo])
+  }, [index, listMode, customFrom, customTo])
 
   // An operation shown converted is edited as its bank wrote it.
   const onEdit = useCallback((tx: TransactionView) => {
@@ -185,10 +188,10 @@ export function PeriodsPage() {
         <Box ref={list} sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 3, pb: 6 }}>
           {periods.map((p) => (
             <PeriodCard
-              key={`${mode}:${p.key}:${currency}`}
+              key={`${listMode}:${p.key}:${currency}`}
               from={p.from}
               to={p.to}
-              granularity={mode === 'month' || mode === 'year' ? mode : 'range'}
+              granularity={listMode === 'month' || listMode === 'year' ? listMode : 'range'}
               currency={currency}
               view={shown}
               onEdit={onEdit}

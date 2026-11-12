@@ -29,7 +29,7 @@ public sealed record TransactionView(
 /// </summary>
 public sealed record PeriodBalance(string From, string To, string Title, decimal Expenses, decimal Earnings, decimal Balance);
 
-public sealed class PeriodSummary
+public sealed record PeriodSummary
 {
     public required string From { get; init; }
     public required string To { get; init; }
@@ -43,6 +43,11 @@ public sealed class PeriodSummary
     public required decimal TransfersOut { get; init; }
     public required decimal TransfersIn { get; init; }
     public required List<TransactionView> Transactions { get; init; }
+    /// <summary>
+    /// When <see cref="Transactions"/> holds only the latest operations (a long period sent in pieces, see <see
+    /// cref="PeriodReport.Listing"/>): how many the period has in all. Null when they are all there.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? TransactionCount { get; init; }
     public required List<Slice> ByCategory { get; init; }
     public required List<Slice> CategoryPie { get; init; }
     /// <summary>
@@ -119,8 +124,28 @@ public sealed record Conversion(string To, string Source, string Base, string Ur
 public sealed record SalaryRate(decimal Net, int BusinessDays, decimal HoursPerDay, decimal PerHour, decimal YearBusinessDays, decimal PerYear);
 
 /// <summary>A period bank by bank, then every bank together, all in the global display currency.</summary>
-public sealed class PeriodReport
+public sealed record PeriodReport
 {
+    /// <summary>
+    /// The same report with only the latest <paramref name="first"/> operations of each bank (and how many it has in
+    /// all): a long period reaches the interface at once, its older operations follow in pieces (<see cref="Slice"/>).
+    /// </summary>
+    public PeriodReport Listing(int first) => Banks.All(b => b.Summary.Transactions.Count <= first) ? this : this with
+    {
+        Banks = [.. Banks.Select(b => b.Summary.Transactions.Count <= first ? b : b with
+        {
+            Summary = b.Summary with { Transactions = b.Summary.Transactions[^first..], TransactionCount = b.Summary.Transactions.Count },
+        })],
+    };
+
+    /// <summary>The operations of a bank from one place to another (by date, then id: the order they are listed in).</summary>
+    public List<TransactionView> Slice(string bank, int start, int end)
+    {
+        var all = Banks.FirstOrDefault(b => b.Key == bank)?.Summary.Transactions ?? throw new ArgumentException("This bank is not in the period.");
+        start = Math.Clamp(start, 0, all.Count);
+        return all[start..Math.Clamp(end, start, all.Count)];
+    }
+
     public required string From { get; init; }
     public required string To { get; init; }
     public required string Title { get; init; }

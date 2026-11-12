@@ -139,6 +139,27 @@ function Part({ kind, name, currency, native, children, partKey }: { kind: 'bank
 }
 
 /** Statements (the tables) or analytics (the charts) of one bank or of all of them, then their totals (drawn again only when they change). */
+/**
+ * 1, 2, 3… up to `n`, one more each frame, drawn in the background: long content appears piece by piece, so no frame
+ * has to lay it out at once and the screen keeps moving. Starts again at 1 when `key` changes.
+ */
+function useSteps(n: number, key: unknown) {
+  const [shown, setShown] = useState(1)
+  useLayoutEffect(() => { setShown(1) }, [key])
+  useEffect(() => {
+    if (shown >= n) return
+    const id = requestAnimationFrame(() => startTransition(() => setShown((x) => x + 1)))
+    return () => cancelAnimationFrame(id)
+  }, [shown, n])
+  return shown
+}
+
+/** A long period's operations: the latest FIRST of each bank first, then the older ones PIECE at a time. */
+const FIRST = 2000, PIECE = 6000
+
+/** Frames a period waits after its last piece appeared before the browser may skip it again (see useSteps). */
+const SETTLE_FRAMES = 8
+
 const Body = memo(function Body({ summary, view, keep, currency, granularity, onEdit, tables }: {
   summary: PeriodSummary
   view: 'statements' | 'analytics'
@@ -184,6 +205,8 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
   const per = granularity === 'month' ? 'this month' : granularity === 'year' ? 'this year' : 'over the period'
   const months = Math.max(1, Math.round((Date.parse(summary.to) - Date.parse(summary.from)) / (30.44 * 86400000)))
   const monthly = (v: number) => (granularity === 'month' ? undefined : `about ${money(v / months, currency)} a month`)
+  // The tables (statements) or the rows of charts (analytics) appear one per frame.
+  const step = useSteps(view === 'statements' ? 4 : 5, `${view}:${summary.from}:${summary.to}`)
   const fold = (slices: PeriodSummary['byCategory']) => {
     if (showAll || slices.length <= 6) return slices
     const head = slices.slice(0, 5)
@@ -203,23 +226,23 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
         <>
           <TransactionTable keep={keep + ':main'} transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />
 
-          {recurringOut.length > 0 && (
+          {step > 1 && recurringOut.length > 0 && (
             <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<EventRepeat />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
               <TransactionTable keep={keep + ':recurring'} transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency />
             </Section>
           )}
-          {income.length > 0 && (
+          {step > 2 && income.length > 0 && (
             <Section id="income" tint={theme.palette.money.incomeSoft} icon={<Payments />} title="Income" total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
               <TransactionTable keep={keep + ':income'} transactions={income} currency={currency} paged onEdit={editOriginal} frequency />
             </Section>
           )}
 
-          {mode === 'table' && summary.movements.length > 0 && (
+          {step > 3 && mode === 'table' && summary.movements.length > 0 && (
             <Section id="movements" icon={<SwapHoriz />} title="Transfers, card payments & investments" note={String(summary.movements.length)}>
               <MovementsTable keep={keep + ':movements'} movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
             </Section>
           )}
-          {mode === 'separate' && summary.movements.length > 0 && (
+          {step > 3 && mode === 'separate' && summary.movements.length > 0 && (
             <Accordion
               data-section="movements"
               disableGutters
@@ -246,21 +269,21 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
             <c.ExpensePie title="Expenses per category" slices={fold(topLevel ? summary.byTopCategory : summary.byCategory)} currency={currency} />
             <c.ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
           </Box>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
+          {step > 1 && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
             <c.ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
             <c.ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
-          </Box>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
+          </Box>}
+          {step > 2 && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
             {/* Each tagged expense in the slice of its whole set of tags: no money is counted twice. */}
             <c.ExpensePie title="Tags" slices={fold(summary.tagPie)} currency={currency} empty="No tagged expenses" />
             <Box sx={{ flex: '1 1 340px', minWidth: 0 }} />
-          </Box>
-          <Box sx={{ mt: 1.5 }}>
+          </Box>}
+          {step > 3 && <Box sx={{ mt: 1.5 }}>
             <c.ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
-          </Box>
-          <Box sx={{ mt: 1.5 }}>
+          </Box>}
+          {step > 4 && <Box sx={{ mt: 1.5 }}>
             <c.CategoryLines keep={`${keep}:lines:${topLevel}`} from={summary.from} to={summary.to} transactions={summary.transactions} categories={topLevel ? summary.byTopCategory : summary.byCategory} topLevel={topLevel} currency={currency} />
-          </Box>
+          </Box>}
         </>
       )}
 
@@ -423,12 +446,23 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
   // Whenever its content changes (loaded, or another view), the period is drawn in full once, even off screen, so the
   // browser knows its real height before it is reached (scrolling never skips part of it); then it may skip it again.
   const [drawn, setDrawn] = useState(false)
-  useLayoutEffect(() => { setDrawn(false) }, [report, shown])
+  // The parts of a period (each bank, then every bank together) appear one per frame: no frame has to lay out a whole
+  // period at once, so the screen never freezes while a long period comes in.
+  const parts = report ? report.banks.length + (showsGlobal(report) ? 1 : 0) : 0
+  const [partsShown, setPartsShown] = useState(1)
+  useLayoutEffect(() => { setPartsShown(1) }, [report, shown])
+  useEffect(() => {
+    if (partsShown >= parts) return
+    const id = requestAnimationFrame(() => startTransition(() => setPartsShown((n) => n + 1)))
+    return () => cancelAnimationFrame(id)
+  }, [partsShown, parts])
+  useLayoutEffect(() => { setDrawn(false) }, [report, shown, partsShown])
   useEffect(() => {
     if (drawn || !report) return
-    let second = 0
-    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setDrawn(true)) })
-    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second) }
+    let id = 0, left = SETTLE_FRAMES
+    const wait = () => { if (--left > 0) id = requestAnimationFrame(wait); else setDrawn(true) }
+    id = requestAnimationFrame(wait)
+    return () => cancelAnimationFrame(id)
   }, [drawn, report])
 
   // Load a period only when it comes near the screen: years of history stay fast.
@@ -447,17 +481,43 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
   }, [])
 
   useEffect(() => {
-    if (!visible) { setReport(null); return }
+    // Far from the screen again: its data let go once the screen has a moment, in the background.
+    if (!visible) {
+      const id = requestIdleCallback(() => startTransition(() => setReport(null)), { timeout: 2000 })
+      return () => cancelIdleCallback(id)
+    }
     let live = true
-    // A period on the screen is drawn at once; the others in the background, a little at a time, so scrolling stays smooth
-    // while periods come in (and periods arriving together never hold back the one on the screen).
-    api.periods.report(from, to, granularity).then((r) => {
+    // Drawn in the background, a little at a time, so the screen keeps moving while periods come in: a period on the
+    // screen at once, the others around it once the screen has a moment (periods arriving together never hold back
+    // the one on the screen).
+    let idle = 0
+    // A long period comes in pieces: its latest operations with everything else, at once; then its older operations,
+    // a few thousand at a time, so the browser never has to read megabytes in one frame.
+    const rest = async (r: PeriodReport) => {
+      for (const b of r.banks) {
+        let end = (b.summary.transactionCount ?? 0) - b.summary.transactions.length
+        while (live && end > 0) {
+          const start = Math.max(0, end - PIECE)
+          const older = await api.periods.operations(from, to, granularity, b.key, start, end)
+          if (!live) return
+          startTransition(() => setReport((cur) => cur && {
+            ...cur,
+            banks: cur.banks.map((x) => x.key !== b.key ? x : {
+              ...x,
+              summary: { ...x.summary, transactions: [...older, ...x.summary.transactions], transactionCount: start > 0 ? x.summary.transactionCount : undefined },
+            }),
+          }))
+          end = start
+        }
+      }
+    }
+    api.periods.report(from, to, granularity, FIRST).then((r) => {
       if (!live) return
-      const show = () => { setReport(r); onLoaded?.(r) }
+      const show = () => { if (live) { startTransition(() => { setReport(r); onLoaded?.(r) }); void rest(r).catch(fail) } }
       if (ref.current && distance(ref.current) === 0) show()
-      else startTransition(show)
+      else idle = requestIdleCallback(show, { timeout: 600 })
     }, fail)
-    return () => { live = false }
+    return () => { live = false; cancelIdleCallback(idle) }
   }, [visible, from, to, granularity, currency, dataVersion, fail, onLoaded])
 
   // A balance in green above zero, red below, plain at zero.
@@ -533,12 +593,12 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
             </Box>
           ) : (
             <>
-              {report.banks.map((b) => (
+              {report.banks.slice(0, partsShown).map((b) => (
                 <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native}>
                   <Body summary={b.summary} view={shown} keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables />
                 </Part>
               ))}
-              {showsGlobal(report) && (
+              {showsGlobal(report) && partsShown > report.banks.length && (
                 <Part kind="global" partKey="all" name="All banks" currency={report.currency}>
                   <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} />
                   <ConversionPanel conversion={report.conversion} />

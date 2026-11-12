@@ -38,4 +38,29 @@ public class ReportCacheTests
         source = "boc";
         Assert.NotSame(third, March());
     }
+
+    [Fact]
+    public void A_long_period_is_sent_in_pieces_that_make_the_whole_list_again()
+    {
+        using var s = new TempStore();
+        var bank = s.Db.AddBank(new Bank { Name = "Banque Exemple", System = BankingSystem.NorthAmerica, Currency = "CAD" });
+        var account = s.Db.AddAccount(new Account { Name = "Chequing", Currency = "CAD", Kind = AccountKind.Bank, BankId = bank });
+        for (var d = 1; d <= 28; d++) s.Transactions.Create(new TransactionInput($"2026-02-{d:00}", -d, "Market", "groceries", account, null));
+        var rates = new ExchangeRates(s.Db, () => "ecb");
+        var full = s.Summaries.Report(new(2026, 2, 1), new(2026, 2, 28), Granularity.Month, "CAD", rates);
+        var all = full.Banks.Single().Summary.Transactions;
+        // The latest 10 first, and how many there are in all; the totals are the whole period's.
+        var first = full.Listing(10);
+        var part = first.Banks.Single();
+        Assert.Equal(all.TakeLast(10).Select(t => t.Id), part.Summary.Transactions.Select(t => t.Id));
+        Assert.Equal(28, part.Summary.TransactionCount);
+        Assert.Equal(full.Banks.Single().Summary.Expenses, part.Summary.Expenses);
+        Assert.Null(full.Banks.Single().Summary.TransactionCount);
+        // The older ones in pieces, from the end: together, the whole list in its order.
+        var pieces = new List<TransactionView>(part.Summary.Transactions);
+        for (var end = 18; end > 0; end -= 7) pieces.InsertRange(0, full.Slice(part.Key, Math.Max(0, end - 7), end));
+        Assert.Equal(all.Select(t => t.Id), pieces.Select(t => t.Id));
+        // A short period is sent whole.
+        Assert.Same(full, full.Listing(100));
+    }
 }
