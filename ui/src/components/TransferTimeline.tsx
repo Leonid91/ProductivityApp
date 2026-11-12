@@ -6,25 +6,37 @@ import { formatDate, money, moneyBeside, monthName, parts, plural } from '../for
 import { Legend } from './FlowChart'
 
 /**
- * The transfers of a period over time (the model comes from the engine, src/Finance.Core/Services/TransferTimeline.cs):
- * one coloured line per account, the accounts of a bank together in the box of their bank, the outside last, in orange;
- * time from left to right. Each movement leaves the line of its account at its day, in the colour of that account, as
- * thick as its amount, and ends with a dot on the line it reached: inside a bank it stays in the bank's box, between
- * two banks it goes from one box to the other. The largest movements are written beside their dot (as many as fit
- * without covering one another), every one on hover. On the right, what each account gained or gave over the period.
+ * The transfers of a period as streams of money over time (the model comes from the engine,
+ * src/Finance.Core/Services/TransferTimeline.cs): one stream per account, the accounts of a bank together in the box of
+ * their bank, the outside last, in orange; time from left to right. A stream is as thick as the money transfers have
+ * put in it so far: it widens when money comes in and narrows when money leaves. Every transfer is a band as thick as
+ * its amount that leaves the stream of its account, in its colour, and ends with an arrow in the stream it reaches
+ * (thinner on arrival when the banks kept part of it); inside a bank it stays in the bank's box, between two banks it
+ * goes from one box to the other. One scale for everything, so widths compare across streams and transfers. Steps
+ * without transfers are narrowed to leave room to those with transfers. The largest transfers are written beside their
+ * arrow (as many as fit without covering one another), every one on hover. On the right, what each account gained or
+ * gave over the period.
  */
 
 const W = 1000, LEFT = 196, RIGHT = 128, X0 = LEFT, X1 = W - RIGHT, TOP = 46
-const LANE = 46, BAND = 16, BANK_HEAD = 26, BANK_PAD = 6, BANK_GAP = 12
-const CHIP_H = 52, MAX_LABELS = 16
+const LANE_MIN = 46, LANE_PAD = 18, BANK_HEAD = 26, BANK_PAD = 6, BANK_GAP = 12
+const CHIP_H = 52, MAX_LABELS = 16, STEP_MIN = 70
 
-interface Placed { e: TimelineEvent; i: number; x0: number; x1: number; xc: number; y0: number; y1: number; width: number; path: string }
+interface Placed {
+  e: TimelineEvent; i: number
+  /** The step of the transfer, left to right; the centre of the band where it leaves and where it arrives. */
+  x0: number; x1: number; xc: number; y0: number; y1: number
+  /** Thickness where it leaves and where it arrives. */
+  sent: number; got: number
+  path: string; arrow: string
+}
 interface Chip { x: number; y: number; w: number; lines: [string, string, string] }
 type Rect = { x: number; y: number; w: number; h: number }
 
 const short = (m: number) => monthName(m).slice(0, 3)
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const weekday = (iso: string) => { const { y, m, d } = parts(iso); return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] }
+const f1 = (v: number) => v.toFixed(1)
 
 /** The step of an event in words: its day, the week or month it is in, or its year. */
 function when(t: Timeline, e: TimelineEvent, dateFormat: string, brief = false): string {
@@ -45,45 +57,118 @@ function fit(name: string, width: number, charW: number) {
 
 const overlaps = (a: Rect, b: Rect, pad = 0) => a.x < b.x + b.w + pad && b.x < a.x + a.w + pad && a.y < b.y + b.h + pad && b.y < a.y + a.h + pad
 
-/** Where everything goes: the rows (banks and their lines), the curve of every event, the labels that fit. */
+/** What reaches the other stream: the amount sent less what the banks kept on the way (as the engine counts it). */
+const arrived = (e: TimelineEvent) => Math.max(0, e.amount - (e.lost ?? 0))
+
+/** A band between two heights at x0 and two heights at x1, its edges curved (flat at both ends). */
+const band = (x0: number, a0: number, a1: number, x1: number, b0: number, b1: number) => {
+  const c = (x0 + x1) / 2
+  return `M${f1(x0)},${f1(a0)} C${f1(c)},${f1(a0)} ${f1(c)},${f1(b0)} ${f1(x1)},${f1(b0)} L${f1(x1)},${f1(b1)} C${f1(c)},${f1(b1)} ${f1(c)},${f1(a1)} ${f1(x0)},${f1(a1)} Z`
+}
+
+/** Where everything goes: the rows (banks and their streams), the streams, every transfer, the labels that fit. */
 export function layoutTimeline(t: Timeline, text: (e: TimelineEvent) => [string, string, string]) {
-  // Rows: each bank a box with its name, then one line per account; the outside in a box of its own.
-  const laneY: number[] = []
+  const n = Math.max(1, t.slots.length)
+  const drawn = t.events.filter((e) => e.from !== e.to)
+  // One scale for every stream and transfer: the widest moments of all streams share the room given to the drawing.
+  const most = t.lanes.map((l) => Math.max(0, l.start, ...l.levels))
+  const total = most.reduce((a, b) => a + b, 0)
+  const room = Math.min(440, Math.max(120, 64 * t.lanes.length))
+  const scale = total > 0 ? room / total : 0
+  const level = (lane: number, slot: number) => (slot < 0 ? t.lanes[lane].start : t.lanes[lane].levels[slot] ?? t.lanes[lane].start) * scale
+
+  // Rows: each bank a box with its name, then one row per account, as high as its stream at its widest.
+  const laneY: number[] = [], laneH = t.lanes.map((_, i) => Math.max(LANE_MIN, most[i] * scale + LANE_PAD))
   const boxes: { name: string | null; y: number; h: number }[] = []
   let y = TOP
   for (const b of t.banks) {
-    const h = BANK_HEAD + b.count * LANE + BANK_PAD
-    boxes.push({ name: b.name, y, h })
-    for (let i = 0; i < b.count; i++) laneY[b.first + i] = y + BANK_HEAD + i * LANE + LANE / 2
-    y += h + BANK_GAP
+    let h = BANK_HEAD
+    for (let i = b.first; i < b.first + b.count; i++) { laneY[i] = y + h + laneH[i] / 2; h += laneH[i] }
+    boxes.push({ name: b.name, y, h: h + BANK_PAD })
+    y += h + BANK_PAD + BANK_GAP
   }
   const outside = t.lanes.findIndex((l) => l.outside)
   if (outside >= 0) {
-    boxes.push({ name: null, y, h: LANE + 2 * BANK_PAD })
-    laneY[outside] = y + BANK_PAD + LANE / 2
-    y += LANE + 2 * BANK_PAD + BANK_GAP
+    boxes.push({ name: null, y, h: laneH[outside] + 2 * BANK_PAD })
+    laneY[outside] = y + BANK_PAD + laneH[outside] / 2
+    y += laneH[outside] + 2 * BANK_PAD + BANK_GAP
   }
   const height = y - BANK_GAP + 8
 
-  // Time: every step the same width; the events of one step side by side inside it.
-  const slotW = (X1 - X0) / Math.max(1, t.slots.length)
-  const inSlot = new Map<number, number>()
-  const seen = new Map<number, number>()
-  const drawn = t.events.filter((e) => e.from !== e.to)
-  for (const e of drawn) inSlot.set(e.slot, (inSlot.get(e.slot) ?? 0) + 1)
-  const largest = drawn.reduce((m, e) => Math.max(m, e.amount), 0)
-  const placed: Placed[] = drawn.map((e, i) => {
-    const n = seen.get(e.slot) ?? 0
-    seen.set(e.slot, n + 1)
-    const xc = X0 + e.slot * slotW + (slotW * (n + 1)) / ((inSlot.get(e.slot) ?? 1) + 1)
-    const d = Math.min(22, Math.max(7, slotW * 0.38))
-    const x0 = Math.max(X0 + 2, xc - d), x1 = Math.min(X1 - 2, xc + d)
-    const y0 = laneY[e.from], y1 = laneY[e.to]
-    const width = 3 + 11 * Math.sqrt(largest > 0 ? e.amount / largest : 1)
-    return { e, i, x0, x1, xc, y0, y1, width, path: `M${x0.toFixed(1)},${y0} C${xc.toFixed(1)},${y0} ${xc.toFixed(1)},${y1} ${x1.toFixed(1)},${y1}` }
+  // Time: steps with transfers at least STEP_MIN wide, the others share what is left.
+  const busy = new Set(drawn.map((e) => e.slot))
+  const even = (X1 - X0) / n
+  let quiet = even, wide = even
+  if (even < STEP_MIN && busy.size > 0 && busy.size < n) {
+    quiet = Math.max(0, Math.min(even, (X1 - X0 - busy.size * STEP_MIN) / (n - busy.size)))
+    wide = (X1 - X0 - quiet * (n - busy.size)) / busy.size
+  }
+  const xs: number[] = []
+  for (let s = 0, x = X0; s <= n; s++) { xs.push(s === n ? X1 : x); x += busy.has(s) ? wide : quiet }
+
+  // Each step with transfers: on its left the money of every stream it touches split into what leaves (towards each
+  // stream reached, in their order from top to bottom) and what stays; on its right what stays and what arrives.
+  const placed: Placed[] = drawn.map((e, i) => ({ e, i, x0: 0, x1: 0, xc: 0, y0: 0, y1: 0, sent: 0, got: 0, path: '', arrow: '' }))
+  const stays: { lane: number; path: string }[] = []
+  const touched = new Map<number, Set<number>>()
+  for (const p of placed) {
+    for (const lane of [p.e.from, p.e.to]) {
+      const set = touched.get(p.e.slot) ?? new Set<number>()
+      set.add(lane)
+      touched.set(p.e.slot, set)
+    }
+  }
+  const src = new Map<number, [number, number]>(), dst = new Map<number, [number, number]>()
+  for (const [slot, lanes] of touched) {
+    const xa = xs[slot], xb = xs[slot + 1]
+    for (const lane of lanes) {
+      const before = level(lane, slot - 1), after = level(lane, slot)
+      const outs = placed.filter((p) => p.e.slot === slot && p.e.from === lane)
+      const ins = placed.filter((p) => p.e.slot === slot && p.e.to === lane)
+      const stay = Math.max(0, before - outs.reduce((a, p) => a + p.e.amount * scale, 0))
+      const stack = (items: { key: number; h: number; p: Placed | null }[], top: number, into: Map<number, [number, number]>) => {
+        const at: [number, number] = [top, top]
+        for (const it of items.sort((a, b) => a.key - b.key || (a.p ? 1 : 0) - (b.p ? 1 : 0))) {
+          const seg: [number, number] = [top, top + it.h]
+          top += it.h
+          if (it.p) into.set(it.p.i, seg); else at.splice(0, 2, ...seg)
+        }
+        return at
+      }
+      const left = stack([{ key: laneY[lane], h: stay, p: null }, ...outs.map((p) => ({ key: laneY[p.e.to], h: p.e.amount * scale, p }))], laneY[lane] - before / 2, src)
+      const right = stack([{ key: laneY[lane], h: stay, p: null }, ...ins.map((p) => ({ key: laneY[p.e.from], h: arrived(p.e) * scale, p }))], laneY[lane] - after / 2, dst)
+      if (stay > 0.05) stays.push({ lane, path: band(xa, left[0], left[1], xb, right[0], right[1]) })
+    }
+  }
+  for (const p of placed) {
+    const xa = xs[p.e.slot], xb = xs[p.e.slot + 1]
+    const [a0, a1] = src.get(p.i)!, [b0, b1] = dst.get(p.i)!
+    // Very small amounts stay visible: a band at least a pixel thick, an arrow at least 7 pixels high.
+    const [sa, sb] = a1 - a0 < 1.2 ? [(a0 + a1) / 2 - 0.6, (a0 + a1) / 2 + 0.6] : [a0, a1]
+    const [da, db] = b1 - b0 < 1.2 ? [(b0 + b1) / 2 - 0.6, (b0 + b1) / 2 + 0.6] : [b0, b1]
+    const head = Math.min(10, (xb - xa) * 0.22), end = xb - head, mid = (b0 + b1) / 2, half = Math.max((b1 - b0) / 2, 3.5)
+    Object.assign(p, {
+      x0: xa, x1: xb, xc: (xa + xb) / 2, y0: (a0 + a1) / 2, y1: mid, sent: a1 - a0, got: b1 - b0,
+      path: band(xa, sa, sb, end, da, db),
+      arrow: `M${f1(end)},${f1(mid - half)} L${f1(xb)},${f1(mid)} L${f1(end)},${f1(mid + half)} Z`,
+    })
+  }
+  // The streams between the steps where they change: straight, as thick as the money they hold.
+  const runs = t.lanes.map((_, lane) => {
+    const out: { x: number; w: number; y: number; h: number }[] = []
+    let from = X0
+    for (let s = 0; s < n; s++) {
+      if (!touched.get(s)?.has(lane)) continue
+      const h = level(lane, s - 1)
+      if (xs[s] > from && h > 0.05) out.push({ x: from, w: xs[s] - from, y: laneY[lane] - h / 2, h })
+      from = xs[s + 1]
+    }
+    const h = level(lane, n - 1)
+    if (X1 > from && h > 0.05) out.push({ x: from, w: X1 - from, y: laneY[lane] - h / 2, h })
+    return out
   })
 
-  // Labels: the largest amounts first, each beside its dot where it covers no other label, no dot and the fewest lines.
+  // Labels: the largest amounts first, each beside its arrow where it covers no other label, no arrow and the fewest bands.
   const points = placed.map((p) => Array.from({ length: 9 }, (_, k) => {
     const s = k / 8, u = 1 - s
     return {
@@ -97,8 +182,8 @@ export function layoutTimeline(t: Timeline, text: (e: TimelineEvent) => [string,
     lines[2] = fit(lines[2], w - 20, 6.2)
     let best: Chip | null = null
     let bestCost = Infinity
-    // Beside the dot first, then farther from it (a line ties the label to its dot): the nearest place clear of the
-    // movements is kept.
+    // Beside the arrow first, then farther from it (a dashed line ties the label to its arrow): the nearest place clear of
+    // the transfers is kept.
     const places: [number, number][] = []
     for (const far of [0, 44, 96, 160]) {
       for (const dy of [-CHIP_H - 10 - far / 4, 12 + far / 4]) places.push([12 + far, dy], [-w - 12 - far, dy])
@@ -124,25 +209,42 @@ export function layoutTimeline(t: Timeline, text: (e: TimelineEvent) => [string,
     const c = chipOf(p, false, taken)
     if (c) { chips.set(p.i, c); taken.push({ x: c.x, y: c.y, w: c.w, h: CHIP_H }) }
   }
-  return { laneY, boxes, height, slotW, placed, chips, hoverChip: (p: Placed) => chips.get(p.i) ?? chipOf(p, true, []) }
+  return { laneY, laneH, boxes, height, xs, busy, scale, most, runs, stays, placed, chips, hoverChip: (p: Placed) => chips.get(p.i) ?? chipOf(p, true, []) }
 }
 
-/** The labels of the time axis: as many as have room, the weekday above the day when the steps are wide enough. */
-function ticks(t: Timeline, slotW: number): { x: number; top: string; bottom: string }[] {
-  const every = Math.max(1, Math.ceil((t.unit === 'day' ? 30 : 52) / slotW))
-  const out: { x: number; top: string; bottom: string }[] = []
-  t.slots.forEach((s, i) => {
-    if (i % every !== 0) return
+/** The labels of the time axis: the steps with transfers first, then others where there is room; the weekday above the day when wide enough. */
+function ticks(t: Timeline, xs: number[], busy: Set<number>): { x: number; top: string; bottom: string }[] {
+  const gap = t.unit === 'day' ? 30 : 52
+  const centre = (i: number) => (xs[i] + xs[i + 1]) / 2
+  const chosen: number[] = []
+  const room = (i: number) => chosen.every((j) => Math.abs(centre(i) - centre(j)) >= gap)
+  const order = t.slots.map((_, i) => i)
+  for (const i of order.filter((i) => busy.has(i))) if (room(i)) chosen.push(i)
+  for (const i of order.filter((i) => !busy.has(i))) if (xs[i + 1] - xs[i] > 0.5 && room(i)) chosen.push(i)
+  chosen.sort((a, b) => a - b)
+  return chosen.map((i, k) => {
+    const s = t.slots[i]
     const { y, m, d } = parts(s)
-    const x = X0 + (i + 0.5) * slotW
-    const prev = i >= every ? parts(t.slots[i - every]) : null
-    if (t.unit === 'year') out.push({ x, top: String(y), bottom: '' })
-    else if (t.unit === 'month') out.push({ x, top: short(m), bottom: !prev || prev.y !== y ? String(y) : '' })
-    else if (t.unit === 'week') out.push({ x, top: `${short(m)} ${d}`, bottom: !prev || prev.y !== y ? String(y) : '' })
-    else if (slotW >= 44) out.push({ x, top: weekday(s), bottom: `${short(m)} ${d}` })
-    else out.push({ x, top: String(d), bottom: !prev || prev.m !== m ? short(m) : '' })
+    const prev = k > 0 ? parts(t.slots[chosen[k - 1]]) : null
+    const x = centre(i)
+    if (t.unit === 'year') return { x, top: String(y), bottom: '' }
+    if (t.unit === 'month') return { x, top: short(m), bottom: !prev || prev.y !== y ? String(y) : '' }
+    if (t.unit === 'week') return { x, top: `${short(m)} ${d}`, bottom: !prev || prev.y !== y ? String(y) : '' }
+    if (xs[i + 1] - xs[i] >= 44) return { x, top: weekday(s), bottom: `${short(m)} ${d}` }
+    return { x, top: String(d), bottom: !prev || prev.m !== m ? short(m) : '' }
   })
-  return out
+}
+
+/** A colour mixed with the page's, as a solid colour (bands drawn over one another show no seams). */
+function mix(color: string, paper: string, share: number) {
+  const rgb = (c: string) => {
+    const h = c.replace('#', '')
+    const full = h.length === 3 ? h.split('').map((x) => x + x).join('') : h
+    return /^[0-9a-f]{6}$/i.test(full) ? [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)) : null
+  }
+  const a = rgb(color), b = rgb(paper)
+  if (!a || !b) return color
+  return '#' + a.map((v, i) => Math.round(v * share + b[i] * (1 - share)).toString(16).padStart(2, '0')).join('')
 }
 
 export function TransferTimelineChart({ timeline: t, currency }: { timeline: Timeline; currency: string }) {
@@ -155,6 +257,7 @@ export function TransferTimelineChart({ timeline: t, currency }: { timeline: Tim
   const all = theme.palette.chart.series
   const series = [...all.filter((_, i) => i !== 1 && i !== 7), all[7]]
   const color = (lane: number) => (t.lanes[lane].outside ? theme.palette.outside : series[lane % series.length])
+  const stream = (lane: number) => mix(color(lane), paper, dark ? 0.55 : 0.5)
   const full = (l: TimelineLane) => (l.outside ? l.name : l.title ?? (l.bank && !l.name.includes(l.bank) ? `${l.name}, ${l.bank}` : l.name))
 
   const lay = useMemo(() => layoutTimeline(t, (e) => [
@@ -170,7 +273,7 @@ export function TransferTimelineChart({ timeline: t, currency }: { timeline: Tim
 
   const chip = (p: Placed, c: Chip, hovered: boolean) => (
     <g key={'c' + p.i} data-timeline-label={p.i} style={{ pointerEvents: 'none', opacity: hover !== null && !hovered ? 0.2 : 1 }}>
-      <line x1={p.x1} y1={p.y1} x2={Math.min(c.x + c.w - 8, Math.max(c.x + 8, p.x1))} y2={c.y > p.y1 ? c.y : c.y + CHIP_H} stroke={color(p.e.from)} strokeWidth={1.2} />
+      <line x1={p.x1} y1={p.y1} x2={Math.min(c.x + c.w - 8, Math.max(c.x + 8, p.x1))} y2={c.y > p.y1 ? c.y : c.y + CHIP_H} stroke={theme.palette.text.secondary} strokeOpacity={0.7} strokeWidth={1} strokeDasharray="3 3" />
       <rect x={c.x} y={c.y} width={c.w} height={CHIP_H} rx={9} fill={paper} stroke={theme.palette.divider} strokeWidth={1.2} />
       <text x={c.x + 10} y={c.y + 15} fontSize={11} fill={theme.palette.text.secondary} className="tnum">{c.lines[0]}</text>
       <text x={c.x + 10} y={c.y + 31} fontSize={13.5} fontWeight={700} fill={color(p.e.from)} className="tnum">{c.lines[1]}</text>
@@ -179,6 +282,7 @@ export function TransferTimelineChart({ timeline: t, currency }: { timeline: Tim
   )
   const hovered = hover === null ? null : lay.placed.find((p) => p.i === hover) ?? null
   const hoveredChip = hovered ? lay.hoverChip(hovered) : null
+  const faded = hover !== null
 
   return (
     <Box data-transfer-timeline sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, bgcolor: 'background.paper' }}>
@@ -193,50 +297,54 @@ export function TransferTimelineChart({ timeline: t, currency }: { timeline: Tim
       {t.lanes.length === 0 ? (
         <Typography color="text.secondary" sx={{ py: 5, textAlign: 'center' }}>No transfers in this period</Typography>
       ) : (
-        <Box component="svg" viewBox={`0 0 ${W} ${lay.height}`} sx={{ width: '100%', maxWidth: 1000, height: 'auto', display: 'block', mx: 'auto', overflow: 'visible' }}>
-          {/* The boxes of the banks behind their lines. */}
+        <Box component="svg" data-timeline-scale={lay.scale} viewBox={`0 0 ${W} ${lay.height}`} sx={{ width: '100%', maxWidth: 1000, height: 'auto', display: 'block', mx: 'auto', overflow: 'visible' }}>
+          {/* The boxes of the banks behind their streams. */}
           {lay.boxes.map((b, i) => (
             <g key={'b' + i} {...(b.name === null ? { 'data-timeline-outside': '' } : { 'data-timeline-bank': b.name })}>
               <rect x={1} y={b.y} width={W - 2} height={b.h} rx={14} fill={b.name === null ? (dark ? '#2a211b' : '#fdf6f1') : theme.palette.surface.sunken} stroke={theme.palette.divider} />
               {b.name !== null && <text x={14} y={b.y + 18} fontSize={12.5} fontWeight={700} fill={theme.palette.text.secondary}>{fit(b.name, W - 40, 7)}</text>}
             </g>
           ))}
-          {/* Time: a faint line at every step (when wide enough to tell them apart), the labels above. */}
-          {lay.slotW >= 9 && t.slots.map((_, i) => i > 0 && (
-            <line key={'g' + i} x1={X0 + i * lay.slotW} x2={X0 + i * lay.slotW} y1={TOP - 4} y2={lay.height - 8} stroke={theme.palette.chart.axis} strokeOpacity={0.28} strokeDasharray="2 4" />
-          ))}
-          {ticks(t, lay.slotW).map((k) => (
+          {/* Time: a faint line in the middle of every labelled step, the labels above. */}
+          {ticks(t, lay.xs, lay.busy).map((k) => (
             <g key={'t' + k.x} data-timeline-tick>
+              <line x1={k.x} x2={k.x} y1={TOP - 4} y2={lay.height - 8} stroke={theme.palette.chart.axis} strokeOpacity={0.28} strokeDasharray="2 4" />
               <text x={k.x} y={16} fontSize={11.5} fill={theme.palette.text.secondary} textAnchor="middle">{k.top}</text>
               <text x={k.x} y={31} fontSize={11.5} fill={theme.palette.text.secondary} textAnchor="middle">{k.bottom}</text>
             </g>
           ))}
           <text x={W - RIGHT / 2} y={24} fontSize={11.5} fontWeight={650} fill={theme.palette.text.secondary} textAnchor="middle">Net moved</text>
-          {/* One line per account: its name and type, its coloured band across the period, what it gained or gave. */}
+          {/* One stream per account: its name and type, its money over the period, what it gained or gave. */}
           {t.lanes.map((l, i) => {
             const y = lay.laneY[i]
             const net = l.net > 0 ? theme.palette.money.positive : l.net < 0 ? theme.palette.money.negative : theme.palette.text.primary
             return (
-              <g key={l.id} data-timeline-lane={l.outside ? 'outside' : l.name}>
+              <g key={l.id} data-timeline-lane={l.outside ? 'outside' : l.name} data-timeline-most={lay.most[i]} data-timeline-thick={lay.most[i] * lay.scale}>
                 <title>{`${full(l)}: ${money(l.in, currency)} received, ${money(l.out, currency)} sent`}</title>
                 <text x={14} y={y - 2} fontSize={13} fontWeight={700} fill={l.outside ? theme.palette.outside : theme.palette.text.primary}>{fit(l.name, LEFT - 26, 7.3)}</text>
                 <text x={14} y={y + 14} fontSize={11.5} fill={theme.palette.text.secondary}>{fit(l.type, LEFT - 26, 6.3)}</text>
-                <rect x={X0} y={y - BAND / 2} width={X1 - X0} height={BAND} rx={BAND / 2} fill={color(i)} fillOpacity={dark ? 0.3 : 0.24} />
+                {/* A thread along the row: the stream stays visible while it holds nothing. */}
+                <line x1={X0} x2={X1} y1={y} y2={y} stroke={color(i)} strokeOpacity={0.55} strokeWidth={1.5} />
+                <g data-timeline-stream style={{ opacity: faded ? 0.45 : 1, transition: 'opacity 120ms' }}>
+                  {lay.runs[i].map((r, k) => <rect key={k} x={r.x} y={r.y} width={r.w} height={r.h} fill={stream(i)} />)}
+                  {lay.stays.filter((s) => s.lane === i).map((s, k) => <path key={'s' + k} d={s.path} fill={stream(i)} />)}
+                </g>
                 {!l.outside && <rect x={X1 + 12} y={y - 15} width={RIGHT - 24} height={30} rx={9} fill={color(i)} fillOpacity={dark ? 0.2 : 0.14} />}
                 {/* What an account gained or gave; the outside is not the person's (its totals are above the drawing). */}
                 {!l.outside && <text data-timeline-net x={W - RIGHT / 2} y={y + 4.5} fontSize={12.5} fontWeight={700} fill={net} textAnchor="middle" className="tnum">{money(l.net, currency, { sign: true })}</text>}
               </g>
             )
           })}
-          {/* The movements: from the line left to the line reached, in the colour of the account the money left. */}
+          {/* The transfers: from the stream left to the stream reached, in the colour of the account the money left. */}
           {lay.placed.map((p) => (
-            <g key={'e' + p.i} data-timeline-event={p.e.kind} onMouseEnter={() => setHover(p.i)} onMouseLeave={() => setHover(null)} style={{ opacity: hover !== null && hover !== p.i ? 0.2 : 1, transition: 'opacity 120ms' }}>
+            <g key={'e' + p.i} data-timeline-event={p.e.kind} data-timeline-sent={p.sent} data-timeline-amount={p.e.amount}
+              onMouseEnter={() => setHover(p.i)} onMouseLeave={() => setHover(null)}
+              style={{ opacity: hover !== null && hover !== p.i ? 0.2 : 1, transition: 'opacity 120ms' }}>
               <title>{title(p.e)}</title>
-              <path d={p.path} fill="none" stroke={color(p.e.from)} strokeOpacity={0.8} strokeWidth={p.width} strokeLinecap="round" />
-              {/* A wider unseen line: thin movements stay easy to point at. */}
-              <path d={p.path} fill="none" stroke="transparent" strokeWidth={Math.max(14, p.width)} />
-              <circle cx={p.x0} cy={p.y0} r={2.5} fill={paper} stroke={color(p.e.from)} strokeWidth={1.5} />
-              <circle cx={p.x1} cy={p.y1} r={5.5} fill={color(p.e.from)} stroke={paper} strokeWidth={2} />
+              <path d={p.path} fill={color(p.e.from)} fillOpacity={0.82} />
+              <path data-timeline-arrow d={p.arrow} fill={color(p.e.from)} stroke={paper} strokeWidth={0.8} strokeLinejoin="round" />
+              {/* A wider unseen line: thin transfers stay easy to point at. */}
+              <path d={`M${f1(p.x0)},${f1(p.y0)} C${f1(p.xc)},${f1(p.y0)} ${f1(p.xc)},${f1(p.y1)} ${f1(p.x1)},${f1(p.y1)}`} fill="none" stroke="transparent" strokeWidth={Math.max(14, p.sent)} />
             </g>
           ))}
           {lay.placed.map((p) => { const c = lay.chips.get(p.i); return c && p.i !== hover ? chip(p, c, false) : null })}

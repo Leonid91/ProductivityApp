@@ -33,7 +33,12 @@ public sealed class Database : IDisposable
         SeedCategories();
     }
 
-    public void Dispose() => _cn.Dispose();
+    public void Dispose()
+    {
+        foreach (var cmd in _commands.Values) cmd.Dispose();
+        _commands.Clear();
+        _cn.Dispose();
+    }
 
     private void Migrate()
     {
@@ -269,7 +274,7 @@ public sealed class Database : IDisposable
     {
         lock (_gate)
         {
-            using var cmd = Command(sql, args);
+            var cmd = Command(sql, args);
             cmd.ExecuteNonQuery();
         }
     }
@@ -291,7 +296,7 @@ public sealed class Database : IDisposable
     {
         lock (_gate)
         {
-            using var cmd = Command(sql, args);
+            var cmd = Command(sql, args);
             return cmd.ExecuteScalar();
         }
     }
@@ -300,7 +305,7 @@ public sealed class Database : IDisposable
     {
         lock (_gate)
         {
-            using var cmd = Command(sql, args);
+            var cmd = Command(sql, args);
             using var r = cmd.ExecuteReader();
             var list = new List<T>();
             while (r.Read()) list.Add(map(r));
@@ -321,12 +326,27 @@ public sealed class Database : IDisposable
                 || sql.Contains("PRAGMA", StringComparison.OrdinalIgnoreCase) || sql.Contains("ALTER", StringComparison.OrdinalIgnoreCase)))
             { _all = null; _index = null; }
         }
-        var cmd = _cn.CreateCommand();
-        cmd.CommandText = sql;
+        // One command per text, kept: SQLite compiles its statements once instead of at every operation written or
+        // read (an import writes thousands with the same text). Only used under the lock, one at a time.
+        if (!_commands.TryGetValue(sql, out var cmd))
+        {
+            if (_commands.Count >= MaxCommands)
+            {
+                foreach (var old in _commands.Values) old.Dispose();
+                _commands.Clear();
+            }
+            cmd = _cn.CreateCommand();
+            cmd.CommandText = sql;
+            _commands[sql] = cmd;
+        }
         cmd.Transaction = _tx;
+        cmd.Parameters.Clear();
         foreach (var (name, value) in args) cmd.Parameters.AddWithValue(name, value ?? DBNull.Value);
         return cmd;
     }
+
+    private readonly Dictionary<string, SqliteCommand> _commands = new(StringComparer.Ordinal);
+    private const int MaxCommands = 256;
 
     private SqliteTransaction? _tx;
 
@@ -713,18 +733,10 @@ public sealed class Database : IDisposable
 
     public void DeleteTransaction(long id) => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id = $id; DELETE FROM transactions WHERE id = $id", ("$id", id));
 
-    /// <summary>Forgets every pairing of movements between own accounts (they are found again right after).</summary>
-    public void ClearLinks() => Patch(() => Exec("UPDATE transactions SET linked_id = NULL WHERE linked_id IS NOT NULL"),
-        index => { foreach (var t in index.Values) t.LinkedId = null; });
-
-    /// <summary>Records that two operations are the two halves of one movement between own accounts.</summary>
-    public void SetLink(long a, long b) => Patch(
-        () => Exec("UPDATE transactions SET linked_id = $b WHERE id = $a; UPDATE transactions SET linked_id = $a WHERE id = $b", ("$a", a), ("$b", b)),
-        index =>
-        {
-            if (index.TryGetValue(a, out var ta)) ta.LinkedId = b;
-            if (index.TryGetValue(b, out var tb)) tb.LinkedId = a;
-        });
+    /// <summary>Records the other half of a movement between own accounts of an operation (null: none).</summary>
+    public void SetLinkOf(long id, long? other) => Patch(
+        () => Exec("UPDATE transactions SET linked_id = $o WHERE id = $id", ("$id", id), ("$o", other)),
+        index => { if (index.TryGetValue(id, out var t)) t.LinkedId = other; });
 
     public Transaction? GetTransaction(long id) => Query($"SELECT {TxColumns} FROM transactions WHERE id = $id", ReadTx, ("$id", id)).FirstOrDefault();
 

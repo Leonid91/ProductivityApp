@@ -1,3 +1,5 @@
+using ProductivityApp.Finance.Text;
+
 namespace ProductivityApp.Finance.Parsing;
 
 internal enum SummaryKind { None, Opening, Closing, BalanceAsOf, Intermediate, Total }
@@ -57,6 +59,22 @@ internal static class Keywords
         "La Banque Postale", "BoursoBank", "Boursorama", "Hello bank", "Fortuneo", "Revolut", "N26", "Monzo", "Barclays", "Lloyds",
         "Chase", "Bank of America", "Wells Fargo", "Citibank", "Capital One", "American Express", "Amex", "PC Financial", "Rogers Bank",
     ];
+
+    /// <summary>
+    /// The names of the banks as whole words (with or without their apostrophe), longest first; the card issuers stay
+    /// (their name says the account is a card).
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex BankNames = new(
+        @"(?<![A-Z0-9])(?:" + string.Join("|", KnownBanks.Where(b => b is not ("American Express" or "Amex")).Select(TextNorm.Fold)
+            .SelectMany(b => new[] { b, b.Replace("'", " "), b.Replace("'", "") }).Distinct().OrderByDescending(b => b.Length)
+            .Select(System.Text.RegularExpressions.Regex.Escape)) + @")(?![A-Z0-9])",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A folded text without the names of the banks in it: a bank's name says nothing of the account ("Caisse
+    /// d'Épargne" is not a savings account, "Crédit Mutuel" not a credit card).
+    /// </summary>
+    public static string WithoutBankNames(string folded) => BankNames.Replace(folded, " ");
 
     public static bool ContainsAny(string folded, IEnumerable<string> keys) => keys.Any(k => folded.Contains(k, StringComparison.Ordinal));
 

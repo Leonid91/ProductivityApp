@@ -173,6 +173,38 @@ public class TransferTimelineTests
     }
 
     [Fact]
+    public void Each_stream_widens_with_what_comes_in_and_narrows_with_what_leaves()
+    {
+        // Chequing gives 1000 on the 2nd, receives 300 on the 5th, gives 500 on the 9th; savings receives the 1000,
+        // gives the 300 back; the outside receives the 500.
+        var t = TransferTimeline.Build([
+            M("2026-03-02", "Chequing", "Bank A", "Savings", "Bank A", 1000m),
+            M("2026-03-05", "Savings", "Bank A", "Chequing", "Bank A", 300m),
+            M("2026-03-09", "Chequing", "Bank A", Out, null, 500m),
+        ], D("2026-03-01"), D("2026-03-10"));
+        var chequing = t.Lanes.Single(l => l.Name == "Chequing");
+        var savings = t.Lanes.Single(l => l.Name == "Savings");
+        var outside = t.Lanes.Single(l => l.Outside);
+        // Chequing gives 1200 in all and receives 300 between: it starts with 1200, ends with nothing.
+        Assert.Equal(1200m, chequing.Start);
+        Assert.Equal([1200m, 200m, 200m, 200m, 500m, 500m, 500m, 500m, 0m, 0m], chequing.Levels);
+        Assert.Equal(0m, savings.Start);
+        Assert.Equal([0m, 1000m, 1000m, 1000m, 700m, 700m, 700m, 700m, 700m, 700m], savings.Levels);
+        Assert.Equal(0m, outside.Start);
+        Assert.Equal(500m, outside.Levels[^1]);
+    }
+
+    [Fact]
+    public void A_stream_receives_what_arrives_after_the_banks_kept_their_part()
+    {
+        var t = TransferTimeline.Build([M("2026-03-02", "Chequing", "Bank A", "Euros", "Bank B", 1000m, lost: 30m)], D("2026-03-01"), D("2026-03-03"));
+        var chequing = t.Lanes.Single(l => l.Name == "Chequing");
+        Assert.Equal(1000m, chequing.Start);
+        Assert.Equal([1000m, 0m, 0m], chequing.Levels);
+        Assert.Equal(970m, t.Lanes.Single(l => l.Name == "Euros").Levels[^1]);
+    }
+
+    [Fact]
     public void Three_hundred_invented_periods_keep_every_rule()
     {
         var rng = new Random(20261111);
@@ -238,6 +270,23 @@ public class TransferTimelineTests
             }
             // No two events for the same two lines, the same way, in one step.
             Assert.Equal(t.Events.Count, t.Events.Select(e => (e.Slot, e.From, e.To)).Distinct().Count());
+            // Streams: one width per step, never below nothing, touching nothing at their narrowest (they start with
+            // only what they give before receiving more), changed at each step by what came in less what went out.
+            for (var li = 0; li < t.Lanes.Count; li++)
+            {
+                var l = t.Lanes[li];
+                Assert.Equal(t.Slots.Count, l.Levels.Count);
+                Assert.True(l.Start >= 0 && l.Levels.All(v => v >= 0), label);
+                Assert.Equal(0m, Math.Min(l.Start, l.Levels.Min()));
+                for (var sl = 0; sl < t.Slots.Count; sl++)
+                {
+                    var before = sl == 0 ? l.Start : l.Levels[sl - 1];
+                    var change = t.Events.Where(e => e.Slot == sl && e.To == li).Sum(TransferTimeline.Arrived) - t.Events.Where(e => e.Slot == sl && e.From == li).Sum(e => e.Amount);
+                    Assert.Equal(before + change, l.Levels[sl]);
+                }
+            }
+            // All the streams together hold the same money all along, less what the banks kept.
+            Assert.Equal(t.Lanes.Sum(l => l.Start) - t.Events.Sum(e => e.Amount - TransferTimeline.Arrived(e)), t.Lanes.Sum(l => l.Levels[^1]));
         }
     }
 }

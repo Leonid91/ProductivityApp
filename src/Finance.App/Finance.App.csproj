@@ -27,8 +27,9 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
     <!--
-      Smaller file: only the Windows API projection (used for the built-in text recognition) is trimmed to what the
-      app calls; every other assembly is kept whole, so the window, WebView2 (COM) and JSON keep working as before.
+      Smaller file: the .NET libraries and the Windows API projection (used for the built-in text recognition) are trimmed
+      to what the app and its libraries call; the app, the window (Windows Forms and its drawing), WebView2 (COM) and the
+      other packages are kept whole, so everything they reach by reflection keeps working.
     -->
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>partial</TrimMode>
@@ -42,16 +43,30 @@
   <PropertyGroup Condition="'$(E2E)' == 'true'">
     <DefineConstants>$(DefineConstants);E2E</DefineConstants>
   </PropertyGroup>
-  <Target Name="TrimOnlyWindowsProjection" AfterTargets="PrepareForILLink">
+  <PropertyGroup>
+    <KeptWhole>;System.Windows.Forms;System.Windows.Forms.Primitives;System.Private.Windows.Core;System.Private.Windows.GdiPlus;System.Drawing;System.Drawing.Common;Accessibility;</KeptWhole>
+  </PropertyGroup>
+  <Target Name="TrimLibrariesOnly" AfterTargets="PrepareForILLink">
     <ItemGroup>
-      <ManagedAssemblyToLink Condition="'%(Filename)' != 'Microsoft.Windows.SDK.NET'">
+      <_Library Include="@(ManagedAssemblyToLink)" Condition="('%(ManagedAssemblyToLink.NuGetPackageId)' == 'Microsoft.NETCore.App.Runtime.win-x64' or '%(ManagedAssemblyToLink.NuGetPackageId)' == 'Microsoft.WindowsDesktop.App.Runtime.win-x64' or '%(Filename)' == 'Microsoft.Windows.SDK.NET') and !$(KeptWhole.Contains(';%(Filename);'))" />
+      <ManagedAssemblyToLink Remove="@(_Library)" />
+      <ManagedAssemblyToLink>
         <IsTrimmable>false</IsTrimmable>
         <TrimMode>copy</TrimMode>
       </ManagedAssemblyToLink>
-      <ManagedAssemblyToLink Condition="'%(Filename)' == 'Microsoft.Windows.SDK.NET'">
+      <ManagedAssemblyToLink Include="@(_Library)">
         <IsTrimmable>true</IsTrimmable>
         <TrimMode>link</TrimMode>
       </ManagedAssemblyToLink>
+    </ItemGroup>
+  </Target>
+  <!--
+    Never used by the app: the debugger's and crash dump's own files, and the PDF library's PDF merger (qpdf; its
+    default font Lato stays: it is the fallback of every text of a report).
+  -->
+  <Target Name="DropDebuggerFiles" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(Configuration)' == 'Release'">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="$([System.String]::new('%(Filename)').StartsWith('mscordaccore')) or '%(Filename)' == 'mscordbi' or '%(Filename)' == 'Microsoft.DiaSymReader.Native.amd64' or '%(Filename)' == 'createdump' or '%(Filename)' == 'qpdf'" />
     </ItemGroup>
   </Target>
 

@@ -16,10 +16,11 @@ namespace ProductivityApp.Finance.Services;
 /// <list type="bullet">
 /// <item>the general way: the amount received is the amount sent at the rate of its day, within
 /// <see cref="CurrencyTolerance"/>, up to <see cref="Window"/> days apart, worded as a transfer on one side at least;</item>
-/// <item>the way of the transfer services (Wise, Revolut) first, then the general way for the rest: a half naming the
-/// service (or in an account held there) pairs with the other half up to <see cref="ServiceWindow"/> days apart, and
-/// the exchanges between the currencies of an account held at the service (a balance in CAD to a balance in EUR) are
-/// paired as movements.</item>
+/// <item>the way of the transfer services first, then the general way for the rest: a half naming the service (or in
+/// an account held there) pairs with the other half up to <see cref="ServiceWindow"/> days apart, and the exchanges
+/// between the currencies of an account held at the service (a balance in CAD to a balance in EUR) are paired as
+/// movements. A transfer service is one of <see cref="Services"/>, or any bank of the person holding money in several
+/// currencies when the wording of an operation names it.</item>
 /// </list>
 /// </remarks>
 public static class TransferMatcher
@@ -36,7 +37,10 @@ public static class TransferMatcher
     /// </summary>
     public const decimal CurrencyTolerance = 0.04m;
 
-    /// <summary>The transfer services recognised by name: in the wording of an operation, or as the bank of an account.</summary>
+    /// <summary>
+    /// The transfer services known by name, recognised even when the person has no account there (in the wording of an
+    /// operation, or as the bank of an account); any other bank holding several currencies is one too (see the remarks).
+    /// </summary>
     public static readonly (string Name, string[] Words)[] Services =
     [
         ("Wise", ["WISE", "TRANSFERWISE"]),
@@ -57,11 +61,28 @@ public static class TransferMatcher
     {
         var accounts = db.Accounts().ToDictionary(a => a.Id);
         var changed = CardSpendingWithoutCard(db, accounts);
-        db.ClearLinks();
-        if (accounts.Count < 2) return changed;
+        if (accounts.Count < 2)
+        {
+            WriteLinks(db, []);
+            return changed;
+        }
         var bankNames = db.Banks().ToDictionary(b => b.Id, b => b.Name);
-        string? ServiceOf(Transaction t) => Service(t.RawLabel + " " + t.Brand)
-            ?? (accounts.GetValueOrDefault(t.AccountId) is { BankId: { } b } && bankNames.GetValueOrDefault(b) is { } n ? Service(n) : null);
+        // The person's banks holding money in several currencies are transfer services too, whatever their name, when a
+        // wording names them (an ordinary bank with a second currency is not one for every operation of its accounts).
+        var known = Known.ToList();
+        foreach (var b in accounts.Values.Where(a => a.BankId is not null).GroupBy(a => a.BankId!.Value))
+            if (b.Select(a => a.Currency).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1 && bankNames.GetValueOrDefault(b.Key) is { } name
+                && Words(name) is { Length: > 2 } padded && Service(name, known) is null)
+                known.Add((name, [padded]));
+        // The same wordings come back on many operations, and every operation of an account has its bank: each one is
+        // looked up once.
+        var seen = new Dictionary<(string, string), string?>();
+        var held = accounts.Values.ToDictionary(a => a.Id, a => a.BankId is { } b && bankNames.GetValueOrDefault(b) is { } n ? Service(n, Known) : null);
+        string? ServiceOf(Transaction t)
+        {
+            if (!seen.TryGetValue((t.RawLabel, t.Brand), out var s)) seen[(t.RawLabel, t.Brand)] = s = Service(t.RawLabel + " " + t.Brand, known);
+            return s ?? held.GetValueOrDefault(t.AccountId);
+        }
         // A movement the person marked by hand still pairs with its other half (to show where the money went);
         // anything else they categorised by hand stays out of the pairing.
         var txs = db.AllTransactions().Where(t => t.CategorySource != ValueSource.User || IsMovement(t)).ToList();
@@ -111,6 +132,7 @@ public static class TransferMatcher
         db.InTransaction(() =>
         {
             foreach (var (o, i) in pairs) Pair(o, i);
+            WriteLinks(db, pairs);
         });
         return changed;
 
@@ -121,7 +143,6 @@ public static class TransferMatcher
             var category = cardInvolved ? Categories.CardPayments
                 : o.CategoryId == Categories.Investments || best.CategoryId == Categories.Investments ? Categories.Investments
                 : Categories.Transfers;
-            db.SetLink(o.Id, best.Id);
             foreach (var t in new[] { o, best })
             {
                 if (t.CategorySource == ValueSource.User) continue;
@@ -181,14 +202,26 @@ public static class TransferMatcher
     }
 
     /// <summary>The transfer service an operation names (or whose name a bank has), or null.</summary>
-    public static string? Service(string text)
+    public static string? Service(string text) => Service(text, Known);
+
+    private static string? Service(string text, IEnumerable<(string Name, string[] Padded)> services)
     {
-        var words = new StringBuilder(" ");
-        foreach (var c in text.ToUpperInvariant()) words.Append(char.IsAsciiLetterOrDigit(c) ? c : ' ');
-        var padded = words.Append(' ').ToString();
-        foreach (var (name, keys) in Services)
-            if (keys.Any(k => padded.Contains(" " + k + " ", StringComparison.Ordinal))) return name;
+        var padded = Words(text);
+        foreach (var (name, keys) in services)
+            foreach (var k in keys)
+                if (padded.Contains(k, StringComparison.Ordinal)) return name;
         return null;
+    }
+
+    /// <summary>The known services, each word between spaces (as <see cref="Words"/> writes a text).</summary>
+    private static readonly (string Name, string[] Padded)[] Known = [.. Services.Select(s => (s.Name, s.Words.Select(w => " " + w + " ").ToArray()))];
+
+    /// <summary>A text in capitals, every sign a space, with a space at both ends: words are found whole.</summary>
+    private static string Words(string text)
+    {
+        var words = new StringBuilder(text.Length + 2).Append(' ');
+        foreach (var c in text) words.Append(char.IsLetterOrDigit(c) ? char.ToUpperInvariant(c) : ' ');
+        return words.Append(' ').ToString();
     }
 
     /// <summary>
@@ -234,6 +267,21 @@ public static class TransferMatcher
 
     /// <summary>Recognised spending or income (a shop, a salary...), as opposed to an unknown "other" line.</summary>
     private static bool IsSpendingOrIncome(Transaction t) => t.CategoryId is not (Categories.OtherExpense or Categories.OtherIncome) && !IsMovement(t);
+
+    /// <summary>The pairings found replace the previous ones: only the operations whose other half changed are written.</summary>
+    private static void WriteLinks(Database db, List<(Transaction Out, Transaction In)> pairs)
+    {
+        var other = new Dictionary<long, long>(pairs.Count * 2);
+        foreach (var (o, i) in pairs) { other[o.Id] = i.Id; other[i.Id] = o.Id; }
+        db.InTransaction(() =>
+        {
+            foreach (var t in db.AllTransactions())
+            {
+                long? now = other.TryGetValue(t.Id, out var x) ? x : null;
+                if (t.LinkedId != now) db.SetLinkOf(t.Id, now);
+            }
+        });
+    }
 
     /// <summary>
     /// With no credit card account imported, paying the card from chequing is the only trace of what was bought with

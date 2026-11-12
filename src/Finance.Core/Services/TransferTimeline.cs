@@ -7,7 +7,18 @@ namespace ProductivityApp.Finance.Services;
 /// <see cref="Title"/> being its full name) or, last, everything outside the app. What came in, what went out and the
 /// difference, over the period.
 /// </summary>
-public sealed record TimelineLane(string Id, string Name, string Type, string? Bank, bool Outside, decimal In, decimal Out, decimal Net, string? Title = null);
+public sealed record TimelineLane(string Id, string Name, string Type, string? Bank, bool Outside, decimal In, decimal Out, decimal Net, string? Title = null)
+{
+    /// <summary>
+    /// The money of the line moved by transfers: <see cref="Start"/> at the start of the period, then after each step
+    /// (<see cref="Levels"/>, one per step) what came in added and what went out taken away. It starts at what the line
+    /// needs to give everything it gives before receiving more (never below nothing), so a line is as wide as the
+    /// money that goes through it.
+    /// </summary>
+    public decimal Start { get; init; }
+
+    public List<decimal> Levels { get; init; } = [];
+}
 
 /// <summary>A bank: the lines of its accounts, one after the other, from <see cref="First"/>.</summary>
 public sealed record TimelineBank(string Name, int First, int Count);
@@ -95,13 +106,27 @@ public sealed record TransferTimeline(string Unit, List<string> Slots, List<Time
             .OrderBy(e => e.Slot).ThenBy(e => e.From).ThenBy(e => e.To)
             .ToList();
 
-        var lanes = order.Select(k =>
+        // What each line gains and gives at each step: the amount sent leaves it, what arrives (less what the banks kept)
+        // comes in.
+        var step = new decimal[order.Count, slots.Count];
+        foreach (var e in events)
+        {
+            if (e.From == e.To) continue;
+            step[e.From, e.Slot] -= e.Amount;
+            step[e.To, e.Slot] += Arrived(e);
+        }
+        var lanes = order.Select((k, li) =>
         {
             var (name, type, bank, outside) = keys[k];
             var inn = moves.Where(x => x.To == k && x.From != k).Sum(x => x.M.Amount);
             var out_ = moves.Where(x => x.From == k && x.To != k).Sum(x => x.M.Amount);
             var shown = outside ? name : Short(name, bank);
-            return new TimelineLane(k, shown, type, bank, outside, inn, out_, inn - out_, shown == name ? null : name);
+            decimal level = 0, lowest = 0;
+            for (var s = 0; s < slots.Count; s++) lowest = Math.Min(lowest, level += step[li, s]);
+            var levels = new List<decimal>(slots.Count);
+            level = -lowest;
+            for (var s = 0; s < slots.Count; s++) levels.Add(level += step[li, s]);
+            return new TimelineLane(k, shown, type, bank, outside, inn, out_, inn - out_, shown == name ? null : name) { Start = -lowest, Levels = levels };
         }).ToList();
 
         var banks = new List<TimelineBank>();
@@ -118,6 +143,9 @@ public sealed record TransferTimeline(string Unit, List<string> Slots, List<Time
             Total("inside"), Total("between"), Total("outside", x => keys[x.To].Outside), Total("outside", x => keys[x.From].Outside && !keys[x.To].Outside),
             movements.Any(m => m.Lost is not null) ? movements.Sum(m => m.Lost ?? 0) : null);
     }
+
+    /// <summary>What reaches the other line of an event: the amount sent less what the banks kept on the way.</summary>
+    public static decimal Arrived(TimelineEvent e) => Math.Max(0, e.Amount - (e.Lost ?? 0));
 
     /// <summary>The step of time: short enough to tell the days of a month apart, long enough for years to fit.</summary>
     public static string UnitOf(DateOnly from, DateOnly to)

@@ -18,6 +18,17 @@ public class GeneralityTests
     [InlineData("PLN 7.00", 7.00)]
     [InlineData("$12.34", 12.34)]
     [InlineData("12,34 €", 12.34)]
+    [InlineData("₹1,234.56", 1234.56)]
+    [InlineData("¥ 980.00", 980.00)]
+    [InlineData("-₩15,000.00", -15000.00)]
+    [InlineData("KES 1,200.00", 1200.00)]
+    [InlineData("250.00 MXN", 250.00)]
+    [InlineData("₺99,90", 99.90)]
+    [InlineData("JPY 1,200", 1200)]
+    [InlineData("1 200 JPY", 1200)]
+    [InlineData("₩15,000", 15000)]
+    [InlineData("KWD 12.500", 12.500)]
+    [InlineData("-1.250,750 BHD", -1250.750)]
     public void Amounts_are_read_in_any_currency(string text, double expected)
     {
         Assert.True(AmountParser.TryParse(text, out var a), text);
@@ -29,7 +40,35 @@ public class GeneralityTests
     [InlineData("ATM 12.50")]
     [InlineData("12.50 NYC")]
     [InlineData("REF 2026.01")]
+    [InlineData("1,200")]
+    [InlineData("$1,200")]
+    [InlineData("1,234")]
+    [InlineData("12.500 EUR")]
+    [InlineData("¥1,200")]
     public void A_word_that_is_not_a_currency_does_not_make_an_amount(string text) => Assert.False(AmountParser.TryParse(text, out _), text);
+
+    [Theory]
+    [InlineData("¥")]
+    [InlineData("₹")]
+    [InlineData("₽")]
+    [InlineData("NGN")]
+    [InlineData("VND")]
+    public void Any_currency_sign_or_code_beside_an_amount_is_a_marker(string text) => Assert.True(AmountParser.IsDetachedMarker(text), text);
+
+    [Theory]
+    [InlineData("Credit Mutuel export 2026", false, false)]
+    [InlineData("Caisse d'Epargne compte courant", false, false)]
+    [InlineData("Caisse d'Epargne Livret A", false, true)]
+    [InlineData("Credit Agricole Visa", true, false)]
+    [InlineData("American Express Gold", true, false)]
+    public void The_name_of_a_bank_never_decides_the_kind_of_account(string fileName, bool card, bool savings)
+    {
+        // An export without any column or line that tells: only the file's name can.
+        var csv = "Date,Description,Amount,Balance\n2026-02-03,Shop Example,-10.00,90.00\n2026-02-05,Shop Example,-5.00,85.00\n";
+        var p = CsvStatementReader.Parse(Encoding.UTF8.GetBytes(csv), fileName + ".csv", "EUR");
+        Assert.Equal(card, p.Kind == ProductivityApp.Finance.Model.AccountKind.CreditCard);
+        Assert.Equal(savings, p.Kind == ProductivityApp.Finance.Model.AccountKind.Savings);
+    }
 
     [Fact]
     public void An_export_in_a_currency_the_examples_never_use_is_read_and_balanced()

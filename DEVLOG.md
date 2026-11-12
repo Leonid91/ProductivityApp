@@ -740,3 +740,42 @@ real app with `tools/e2e/perf.mjs`.
 ### Fixed
 - A column heading of two words was read backwards when its second word sat a little higher ("in Money"), so the
   column was not recognised.
+
+## November 12th, 2026 - Transfers as streams with arrows, a smaller and faster app, any currency's decimals - Commit 33
+
+### Changed
+- Transfers over time is drawn as streams of money: each account is a stream as thick as the money transfers put in
+  it so far, widening when money comes in and narrowing when it leaves; every transfer is a band as thick as its
+  amount that leaves the stream of its account and ends with an arrow in the stream it reaches (thinner on arrival by
+  what the banks kept). One scale for every stream and transfer. Days, weeks or months with transfers get the room,
+  the others are narrowed. Labels are tied to their arrow by a dashed line. Banks, the outside, totals, net moved and
+  hover are kept.
+- General and Transfers sit on a line of their own under the Analytics button, and only while Analytics is chosen.
+- A smaller app: the .NET libraries are trimmed to what the app and its libraries use (the window, WebView2 and the
+  packages are kept whole), and files the app never uses are left out (the debugger's, the PDF library's PDF
+  merger). ProductivityApp.exe: 63.9 MB → 35.1 MB.
+- Faster changes on large data (41,520 operations, engine benchmark, runs per second before → after): pairing movements between
+  accounts 36 → 89, reclassifying everything 23 → 49, changing one operation's category 23 → 40, a whole brand's 11 → 19,
+  renaming a brand 12 → 18; importing 13,100 → 15,800 operations per second.
+  Database statements are compiled once and kept; pairing movements writes only the operations whose other half
+  changed; reclassifying writes an operation once, after the pairing, and only when it ends up different; the
+  transfer service named by each wording is looked up once.
+- In the real app (`tools/e2e/perf.mjs`, ten years of fictitious operations): reports per second, month 95 → 141, year 12.9 → 14.1, ten
+  years 1.8 → 2.0; periods index 119 → 172; All time shown in 0.81 s (0.90 s); scrolling years at 172 fps (159); memory
+  of the app at the end 863 MB → 826 MB (its engine 343 MB → 310 MB); start-up unchanged (0.35 s).
+- Reading is not tied to a list of examples: amounts with any of the 146 currency codes in use and with any currency
+  sign (¥, ₹, ₩, ₽, ₺...); no decimals for the currencies without (yen, won...) and three for the dinars, when their code
+  or own sign is beside the amount; a bare "$" is the person's own currency whenever its sign has one (34 currencies,
+  it was 7); the name of a bank never decides the kind of account (it was only stripped for one bank); a file named
+  "American Express" is a card; any bank of the person holding several currencies is a transfer service when a
+  wording names it (it was Wise and Revolut only).
+
+### Added
+- Unit tests: the streams on written cases and on the 300 invented periods (never below nothing, changed by what came
+  in less what went out, the same money all along less what the banks kept); amounts in more currencies and decimals;
+  bank names in file names.
+- End-to-end checks: an arrow on every transfer, streams and transfers as thick as their money on one scale, General
+  and Transfers under the Analytics button and only there.
+
+### Removed
+- The database's two link writes replaced by one that writes a single operation's link.

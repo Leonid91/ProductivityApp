@@ -223,10 +223,14 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
 
     public int ReapplyRules()
     {
-        var before = db.AllTransactions().ToDictionary(t => t.Id, t => (t.Brand, t.CategoryId));
+        var before = db.AllTransactions().ToDictionary(t => t.Id, t => (t.Brand, t.BrandSource, t.CategoryId, t.CategorySource));
         var classifiers = new Dictionary<BankingSystem, Classifier>();
         var accounts = db.Accounts().ToDictionary(a => a.Id);
-        db.InTransaction(() =>
+        // The new brands and categories are set on the operations kept in memory (what the linking reads) and written
+        // once the movements are linked again, only where they end up different: a paired half the dictionary reads
+        // as something else, then linked again, is not written twice for nothing.
+        var changed = new List<Transaction>();
+        try
         {
             foreach (var t in db.AllTransactions())
             {
@@ -238,10 +242,19 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
                 var dirty = false;
                 if (t.BrandSource != ValueSource.User && t.RawLabel.Length > 0 && c.Brand != t.Brand) { t.Brand = c.Brand; t.BrandSource = c.BrandSource; dirty = true; }
                 if (t.CategorySource != ValueSource.User && (c.CategoryId != t.CategoryId || t.CategorySource == ValueSource.Linked)) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; dirty = true; }
-                if (dirty) db.UpdateTransaction(t);
+                if (dirty) changed.Add(t);
             }
-        });
-        TransferMatcher.Link(db, Convert);
+            TransferMatcher.Link(db, Convert);
+        }
+        finally
+        {
+            db.InTransaction(() =>
+            {
+                foreach (var t in changed)
+                    if (before.TryGetValue(t.Id, out var b) && (b.Brand, b.BrandSource, b.CategoryId, b.CategorySource) != (t.Brand, t.BrandSource, t.CategoryId, t.CategorySource))
+                        db.UpdateTransaction(t);
+            });
+        }
         return db.AllTransactions().Count(t => before.TryGetValue(t.Id, out var b) && (b.Brand != t.Brand || b.CategoryId != t.CategoryId));
     }
 }

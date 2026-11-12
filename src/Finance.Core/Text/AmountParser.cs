@@ -22,12 +22,43 @@ public readonly record struct PrintedAmount(decimal Magnitude, SignMarker Marker
 public static partial class AmountParser
 {
     /// <summary>The currencies an amount can be written in, by their code ("CHF 12.50", "12,50 GBP"), besides the signs $ € £.</summary>
-    public const string CurrencyCodes = "EUR|USD|CAD|GBP|CHF|AUD|NZD|JPY|CNY|HKD|SGD|SEK|NOK|DKK|PLN|CZK|HUF|RON|BGN|ISK|TRY|ILS|AED|SAR|QAR|ZAR|MAD|TND|EGP|INR|THB|MYR|IDR|PHP|KRW|MXN|BRL|ARS|CLP|COP";
+    /// <summary>
+    /// The ISO 4217 codes of every currency in use (as Windows lists them for every country), less the six that are
+    /// also common words a statement prints beside numbers (ALL, CUP, MOP, PEN, SOS, TOP).
+    /// </summary>
+    public const string CurrencyCodes = "AED|AFN|AMD|ANG|AOA|ARS|AUD|AWG|AZN|BAM|BBD|BDT|BGN|BHD|BIF|BMD|BND|BOB|BRL|BSD|BTN|BWP|BYN|BZD|CAD|CDF|CHF|CLP|CNY|COP|CRC|CVE|CZK|DJF|DKK|DOP|DZD|EGP|ERN|ETB|EUR|FJD|FKP|GBP|GEL|GHS|GIP|GMD|GNF|GTQ|GYD|HKD|HNL|HTG|HUF|IDR|ILS|INR|IQD|IRR|ISK|JMD|JOD|JPY|KES|KGS|KHR|KMF|KPW|KRW|KWD|KYD|KZT|LAK|LBP|LKR|LRD|LYD|MAD|MDL|MGA|MKD|MMK|MNT|MRU|MUR|MVR|MWK|MXN|MYR|MZN|NAD|NGN|NIO|NOK|NPR|NZD|OMR|PAB|PGK|PHP|PKR|PLN|PYG|QAR|RON|RSD|RUB|RWF|SAR|SBD|SCR|SDG|SEK|SGD|SHP|SLE|SRD|SSP|STN|SYP|SZL|THB|TJS|TMT|TND|TRY|TTD|TWD|TZS|UAH|UGX|USD|UYU|UZS|VES|VND|VUV|WST|XAF|XCD|XOF|XPF|YER|ZAR|ZMW";
 
     public static readonly HashSet<string> Currencies = [.. CurrencyCodes.Split('|')];
 
+    /// <summary>
+    /// The currencies counted without decimals, and with three (ISO 4217), by their code and by their own sign when no
+    /// other currency uses it (from the data of every country Windows knows).
+    /// </summary>
+    private static readonly HashSet<string> NoDecimals = Minor(["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"]),
+        ThreeDecimals = Minor(["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]);
+
+    private static HashSet<string> Minor(string[] codes)
+    {
+        var set = new HashSet<string>(codes, StringComparer.Ordinal);
+        // A sign shared by currencies with other decimals ("$" of the Chilean peso and of the dollar, "¥" of the yen
+        // and of the yuan) does not tell: only the code does then.
+        var signs = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var c in CultureInfo.GetCultures(CultureTypes.SpecificCultures))
+        {
+            RegionInfo r;
+            try { r = new RegionInfo(c.Name); } catch (ArgumentException) { continue; }
+            if (!Currencies.Contains(r.ISOCurrencySymbol)) continue;
+            var same = codes.Contains(r.ISOCurrencySymbol);
+            // A single sign of money (₩, ₫), not letters shared with words.
+            if (r.CurrencySymbol.Length == 1 && char.GetUnicodeCategory(r.CurrencySymbol[0]) == UnicodeCategory.CurrencySymbol)
+                signs[r.CurrencySymbol] = signs.GetValueOrDefault(r.CurrencySymbol, true) && same;
+        }
+        foreach (var (sign, only) in signs) if (only) set.Add(sign);
+        return set;
+    }
+
     [GeneratedRegex(
-        @"^(?<lead>[-+(]|-\s*\(|\(\s*-)?\s*(?:CA\$|C\$|US\$|" + CurrencyCodes + @"|\$|€|£)?\s*(?<lead2>[-+])?\s*(?<num>\d{1,3}(?:[ .,']\d{3})+|\d+)(?<dec>[.,]\d{2})\s*(?:\$\s*CA|\$\s*US|CA\$|" + CurrencyCodes + @"|\$|€|£)?\s*(?<trail>-|\)|CR|DR|DB|CRE|CREDIT|DEBIT)?\.?$",
+        @"^(?<lead>[-+(]|-\s*\(|\(\s*-)?\s*(?<cur1>CA\$|C\$|US\$|" + CurrencyCodes + @"|\p{Sc})?\s*(?<lead2>[-+])?\s*(?<num>\d{1,3}(?:[ .,']\d{3})+|\d+)(?<dec>[.,]\d{2,3})?\s*(?<cur2>\$\s*CA|\$\s*US|CA\$|" + CurrencyCodes + @"|\p{Sc})?\s*(?<trail>-|\)|CR|DR|DB|CRE|CREDIT|DEBIT)?\.?$",
         RegexOptions.CultureInvariant)]
     private static partial Regex AmountRegex();
 
@@ -42,15 +73,21 @@ public static partial class AmountParser
 
         var num = m.Groups["num"].Value;
         var dec = m.Groups["dec"].Value;
-        var decSep = dec[0];
+        // Two decimals, or the decimals of the currency written beside the amount: none for the yen or the won
+        // ("¥1,200"), three for the dinars ("KWD 12.500"). Without a currency, two decimals only ("1,200" and "1,234"
+        // are not amounts).
+        var currency = (m.Groups["cur1"].Value + m.Groups["cur2"].Value).Trim();
+        // "12.500" beside a currency of three decimals is twelve and a half, not twelve thousand five hundred.
+        if (dec.Length == 0 && ThreeDecimals.Contains(currency) && num.Length > 4 && num[^4] is '.' or ',') (num, dec) = (num[..^4], num[^4..]);
+        if (dec.Length != 3 && !(dec.Length == 0 && NoDecimals.Contains(currency)) && !(dec.Length == 4 && ThreeDecimals.Contains(currency))) return false;
         // A group separator equal to the decimal separator is not a valid amount ("1,234,56").
-        if (num.Length > 3 && num.Contains(decSep)) return false;
+        if (dec.Length > 0 && num.Length > 3 && num.Contains(dec[0])) return false;
         var digits = new string(num.Where(char.IsDigit).ToArray());
         if (digits.Length == 0) return false;
         // Leading zeros in a long group ("0012.50") are reference numbers, not money.
         if (digits.Length > 1 && digits[0] == '0' && num.Length == digits.Length) return false;
 
-        var magnitude = decimal.Parse(digits + "." + dec[1..], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture);
+        var magnitude = decimal.Parse(dec.Length == 0 ? digits : digits + "." + dec[1..], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture);
 
         var lead = m.Groups["lead"].Value + m.Groups["lead2"].Value;
         var trail = m.Groups["trail"].Value;
@@ -83,7 +120,8 @@ public static partial class AmountParser
     public static bool IsDetachedMarker(string text)
     {
         var t = TextNorm.Fold(text).Trim();
-        return t is "$" or "€" or "£" or "CA$" or "US$" or "CR" or "DR" or "DB" or "-" or "+" or "$CA" or "$US" || Currencies.Contains(t);
+        // Any currency sign ($, €, £, ¥, ₹, ₩, ₽, ₺...), alone or with its country.
+        return t is "CA$" or "US$" or "CR" or "DR" or "DB" or "-" or "+" or "$CA" or "$US" || (t.Length == 1 && char.GetUnicodeCategory(t[0]) == UnicodeCategory.CurrencySymbol) || Currencies.Contains(t);
     }
 
     /// <summary>Formats with invariant culture, two decimals, for storage.</summary>

@@ -115,7 +115,9 @@ export interface DiagramBank { name: string; x: number; y: number; w: number; h:
 export interface FlowDiagram { width: number; height: number; nodes: DiagramNode[]; arrows: DiagramArrow[]; banks: DiagramBank[] }
 
 /** A line of the transfers timeline: an account (title: its full name when shortened inside its bank) or the outside, with what came in and went out. */
-export interface TimelineLane { id: string; name: string; type: string; bank: string | null; outside: boolean; in: number; out: number; net: number; title?: string | null }
+export interface TimelineLane { id: string; name: string; type: string; bank: string | null; outside: boolean; in: number; out: number; net: number; title?: string | null
+  /** The money transfers put in the line: at the start of the period, then after each step (one per slot). */
+  start: number; levels: number[] }
 /** A bank of the timeline: the lines of its accounts, from first. */
 export interface TimelineBank { name: string; first: number; count: number }
 /** Money moved from one line to another in one step of time; kind: inside a bank, between two banks, to or from the outside. */

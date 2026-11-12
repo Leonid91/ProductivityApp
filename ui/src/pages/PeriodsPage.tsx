@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Box, Button, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -26,6 +26,10 @@ export function PeriodsPage() {
   const [view, setView] = useState<'summary' | 'statements' | 'analytics'>('statements')
   // Analytics in two parts: the charts of the spending and income (General), the money moved between accounts (Transfers).
   const [analytics, setAnalytics] = useState<'general' | 'transfers'>('general')
+  // The parts of the analytics sit under the Analytics button, on a line of their own.
+  const analyticsButton = useRef<HTMLButtonElement>(null)
+  const [analyticsLeft, setAnalyticsLeft] = useState(0)
+  useLayoutEffect(() => { if (view === 'analytics' && analyticsButton.current) setAnalyticsLeft(analyticsButton.current.offsetLeft) }, [view])
   const shown: PeriodView = view === 'analytics' && analytics === 'transfers' ? 'transfers' : view
   // Custom period: any two days, picked on the calendar or typed.
   const [customFrom, setCustomFrom] = useState<Dayjs | null>(null)
@@ -158,13 +162,15 @@ export function PeriodsPage() {
           <ToggleButtonGroup data-period-view exclusive size="small" value={view} onChange={(_, v) => v && setView(v)}>
             <ToggleButton value="summary">Summary</ToggleButton>
             <ToggleButton value="statements">Statements</ToggleButton>
-            <ToggleButton value="analytics">Analytics</ToggleButton>
+            <ToggleButton ref={analyticsButton} value="analytics">Analytics</ToggleButton>
           </ToggleButtonGroup>
           {view === 'analytics' && (
-            <ToggleButtonGroup data-analytics-view exclusive size="small" value={analytics} onChange={(_, v) => v && setAnalytics(v)} sx={{ ml: 1.5 }}>
-              <ToggleButton value="general">General</ToggleButton>
-              <ToggleButton value="transfers">Transfers</ToggleButton>
-            </ToggleButtonGroup>
+            <Box sx={{ mt: 1, pl: `${analyticsLeft}px` }}>
+              <ToggleButtonGroup data-analytics-view exclusive size="small" value={analytics} onChange={(_, v) => v && setAnalytics(v)}>
+                <ToggleButton value="general">General</ToggleButton>
+                <ToggleButton value="transfers">Transfers</ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
           )}
         </Box>
       </Box>

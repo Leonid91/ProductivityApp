@@ -39,11 +39,20 @@ const timelineChecks = async (p, sec, t, label) => {
     && drawn.nets.length === t.lanes.filter((l) => !l.outside).length && t.lanes.filter((l) => !l.outside).every((l, i) => drawn.nets[i].includes(cad(Math.abs(l.net)))), JSON.stringify({ totals: drawn?.totals, nets: drawn?.nets }))
   check(`${label}: amounts written beside their movements without covering one another, inside the drawing, time labelled`, !!drawn && drawn.labels > 0 && drawn.over === 0 && drawn.labelsInside && drawn.ticks > 0 && drawn.width > 300 && drawn.page, JSON.stringify(drawn))
   // Pointing at a movement writes it, even one without a label of its own; the others fade.
-  const at = await p.eval(`(() => { const c = document.querySelector('${sec} [data-transfer-timeline]'); const es = [...c.querySelectorAll('[data-timeline-event]')]; const labelled = new Set([...c.querySelectorAll('[data-timeline-label]')].map(e => e.dataset.timelineLabel)); const e = es.find((_, i) => !labelled.has(String(i))) ?? es[es.length - 1]; e.scrollIntoView({ block: 'center' }); const r = e.querySelector('circle:last-of-type').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, title: e.querySelector('title').textContent, labels: labelled.size, events: es.length } })()`)
+  const at = await p.eval(`(() => { const c = document.querySelector('${sec} [data-transfer-timeline]'); const es = [...c.querySelectorAll('[data-timeline-event]')]; const labelled = new Set([...c.querySelectorAll('[data-timeline-label]')].map(e => e.dataset.timelineLabel)); const e = es.find((_, i) => !labelled.has(String(i))) ?? es[es.length - 1]; e.scrollIntoView({ block: 'center' }); const r = e.querySelector('[data-timeline-arrow]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, title: e.querySelector('title').textContent, labels: labelled.size, events: es.length } })()`)
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
   await sleep(400)
   const hovered = await p.eval(`(() => { const c = document.querySelector('${sec} [data-transfer-timeline]'); const es = [...c.querySelectorAll('[data-timeline-event]')]; return { faded: es.filter(e => e.style.opacity === '0.2').length, labels: [...c.querySelectorAll('[data-timeline-label]')].filter(e => e.style.opacity !== '0.2').map(e => e.textContent) } })()`)
   check(`${label}: a movement pointed at is written, the others fade`, hovered.faded === at.events - 1 && hovered.labels.length === 1 && hovered.labels[0].includes('→') && at.title.includes('→'), JSON.stringify({ at, hovered }))
+  // Every transfer ends with an arrow in the stream it reaches; one scale for all: each stream at its widest and each
+  // transfer as thick as its money (the smallest are kept a pixel thick).
+  const sizes = await p.eval(`(() => { const c = document.querySelector('${sec} [data-transfer-timeline]'); const svg = c.querySelector('svg'); const scale = +svg.dataset.timelineScale; return { scale, arrows: c.querySelectorAll('[data-timeline-event] [data-timeline-arrow]').length, events: c.querySelectorAll('[data-timeline-event]').length,
+    lanes: [...c.querySelectorAll('[data-timeline-lane]')].map(l => [+l.dataset.timelineMost, +l.dataset.timelineThick, l.querySelector('[data-timeline-stream]') ? Math.max(0, ...[...l.querySelectorAll('[data-timeline-stream] rect, [data-timeline-stream] path')].map(r => r.getBBox().height)) : 0]),
+    moves: [...c.querySelectorAll('[data-timeline-event]')].map(e => [+e.dataset.timelineAmount, +e.dataset.timelineSent]) } })()`)
+  const close = (a, b) => Math.abs(a - b) <= Math.max(0.6, 0.01 * Math.abs(b))
+  check(`${label}: an arrow on every transfer, streams and transfers as thick as their money`, sizes.scale > 0 && sizes.arrows === sizes.events && sizes.events > 0
+    && sizes.lanes.every(([most, thick, drawn]) => close(thick, most * sizes.scale) && drawn <= thick + 0.6) && sizes.lanes.some(([most, thick, drawn]) => most > 0 && close(drawn, thick))
+    && sizes.moves.every(([amount, sent]) => close(sent, amount * sizes.scale)), JSON.stringify(sizes))
   return drawn
 }
 
@@ -308,6 +317,7 @@ try {
   await sleep(800)
   check('analytics, General: pies, bars and category lines, no tables, no money moved', await p.eval(`(() => { const s = document.querySelector('${sec}'); return s.querySelectorAll('[data-pie]').length >= 2 && !!s.querySelector('[data-bars]') && !!s.querySelector('[data-category-lines]') && !s.querySelector('table:not([data-conversions])') && !!s.querySelector('[data-totals]') && !s.querySelector('[data-flowchart]') && !s.querySelector('[data-transfer-timeline]') })()`))
   check('Analytics in two parts, General first', await p.eval(`[...document.querySelectorAll('[data-analytics-view] button')].map(b => b.innerText + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join()`) === 'General*,Transfers')
+  check('the two parts under the Analytics button, on a line of their own', await p.eval(`(() => { const a = [...document.querySelectorAll('[data-period-view] button')].find(b => b.innerText === 'Analytics').getBoundingClientRect(); const g = document.querySelector('[data-analytics-view]').getBoundingClientRect(); return g.top >= a.bottom && Math.abs(g.left - a.left) <= 1 })()`))
   // Transfers: the money moved over time, then in total; none of the charts of General.
   await analyticsPart(p, 'Transfers')
   await p.waitFor(`document.querySelector('${sec} [data-flowchart]') !== null && document.querySelector('${sec} [data-transfer-timeline] svg') !== null`, 20000, 'transfers view')
@@ -385,6 +395,7 @@ try {
   check('pie shares with two decimals', shares.length > 0 && shares.every((x) => /^\d+\.\d\d%$/.test(x)) && !shares.includes('0.00%'), shares.slice(-3).join(' '))
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(600)
+  check('the parts of Analytics only shown in Analytics', await p.eval(`document.querySelector('[data-analytics-view]') === null`))
 
   // date format menu
   await p.scrollMain(0)

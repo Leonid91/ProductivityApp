@@ -130,7 +130,7 @@ public static partial class CsvStatementReader
         return Col.None;
     }
 
-    [GeneratedRegex(@"^\(?[-+−]?\s*(?:[$€£]|" + AmountParser.CurrencyCodes + @")?\s*[-+−]?\d[\d\s  .,']*\)?\s*(?:[$€£]|" + AmountParser.CurrencyCodes + @")?\s*(?:-|CR|DR)?$")]
+    [GeneratedRegex(@"^\(?[-+−]?\s*(?:\p{Sc}|" + AmountParser.CurrencyCodes + @")?\s*[-+−]?\d[\d\s  .,']*\)?\s*(?:\p{Sc}|" + AmountParser.CurrencyCodes + @")?\s*(?:-|CR|DR)?$")]
     private static partial Regex Numberish();
 
     /// <summary>Lenient number reading for exports: "12.34", "7.0", "1 234,56", "-12", "(3.50)", "12.00 CR".</summary>
@@ -314,12 +314,13 @@ public static partial class CsvStatementReader
             : monthFirst < dayFirst ? DateOrder.MonthDay
             : french ? DateOrder.DayMonth : DateOrder.MonthDay;
 
-        var name = TextNorm.Fold(Path.GetFileNameWithoutExtension(fileName)).Replace("CAISSE D'EPARGNE", "").Replace("CAISSE D EPARGNE", "").Replace("CAISSE DEPARGNE", "");
+        // The name of a bank says nothing of the account ("Caisse d'Épargne", "Crédit Mutuel"): left out.
+        var name = Keywords.WithoutBankNames(TextNorm.Fold(Path.GetFileNameWithoutExtension(fileName)));
         // Lines above the table: "Numéro de compte : ...", "Nom du compte : LIVRET A", "Devise : EUR", and balance lines
         // ("Solde en fin de période;;;;+1 996,33") above or below it.
         var about = Metadata(table, headerIndex, decimalSep);
         name += " " + about.AccountName;
-        var hasCard = cols.ContainsKey(Col.Card) || Regex.IsMatch(name, @"(VISA|MASTERCARD|CREDIT|CARTE|CARD|AMEX)");
+        var hasCard = cols.ContainsKey(Col.Card) || Regex.IsMatch(name, @"(VISA|MASTERCARD|CREDIT|CARTE|CARD|AMEX|AMERICAN EXPRESS)");
         var savings = Regex.IsMatch(name, @"(EPARGNE|SAVINGS|HIGHINV|HISA|CELI|TFSA|REER|RRSP|LIVRET)");
 
         var rows = new List<ParsedRow>();

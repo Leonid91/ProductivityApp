@@ -49,7 +49,7 @@ internal sealed partial class DocumentContext
             Language = DetectLanguage(folded),
             LooksLikeCard = Keywords.ContainsAny(headerFolded, Keywords.Card) || MaskedCard().IsMatch(headerFolded)
                             || (Keywords.ContainsAny(headerFolded, ["MASTERCARD", "VISA", "AMERICAN EXPRESS"]) && !Keywords.ContainsAny(headerFolded, ["COMPTE", "ACCOUNT"])),
-            LooksLikeSavings = Keywords.ContainsAny(headerFolded.Replace("CAISSE D'EPARGNE", "").Replace("CAISSE D EPARGNE", ""), Keywords.Savings),
+            LooksLikeSavings = Keywords.ContainsAny(Keywords.WithoutBankNames(headerFolded), Keywords.Savings),
             Profile = profile,
             Currency = DetectCurrency(folded, defaultCurrency),
             Bank = profile == "bnc" ? KnownBanks.National : DetectBank(headerFolded) ?? InstitutionHeading(headerBlocks),
@@ -147,9 +147,16 @@ internal sealed partial class DocumentContext
         if (said.Success && AmountParser.Currencies.Contains(said.Groups["c"].Value)) return said.Groups["c"].Value;
         var best = scores.OrderByDescending(kv => kv.Value).First();
         if (best.Value > 0) return best.Key;
-        // A bare "$": the person's own dollar when their currency is one, the Canadian dollar otherwise.
-        return folded.Contains('$') ? (fallback is "CAD" or "USD" or "AUD" or "NZD" or "HKD" or "SGD" or "MXN" ? fallback : "CAD") : fallback;
+        // A bare "$": the person's own currency when its sign has a "$" (dollars, pesos, reais...), the Canadian dollar otherwise.
+        return folded.Contains('$') ? (DollarSigns.Contains(fallback) ? fallback : "CAD") : fallback;
     }
+
+    /// <summary>The currencies written with a "$" sign (as Windows lists them for every country).</summary>
+    private static readonly HashSet<string> DollarSigns =
+    [
+        "ARS", "AUD", "BBD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "CUP", "DOP", "FJD", "GYD", "HKD", "JMD", "KYD", "LRD",
+        "MOP", "MXN", "NAD", "NIO", "NZD", "SBD", "SGD", "SRD", "TOP", "TTD", "TWD", "USD", "UYU", "WST", "XCD",
+    ];
 
     private static readonly string[] InstitutionWords =
     [
