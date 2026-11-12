@@ -414,14 +414,6 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         return (Serialize(points), "USD");
     }
 
-    public static Dictionary<string, string> ParseZip(byte[] zip) => Parse(zip).Series;
-
-    /// <summary>The European Central Bank's table (rates per euro); see <see cref="ParseTable"/>.</summary>
-    public static Dictionary<string, string> ParseCsv(string csv) => ParseTable(csv).Series;
-
-    /// <summary>The Bank of Canada's Valet JSON (rates per Canadian dollar); see <see cref="ParseValet"/>.</summary>
-    public static Dictionary<string, string> ParseBankOfCanada(byte[] json) => ParseValet(json).Series;
-
     /// <summary>
     /// The European Central Bank's layout: "Date,USD,JPY,...", then one line per working day, "N/A" where a currency had
     /// no rate, every rate in units per euro (the euro is the one currency without a column). Gives, per currency,

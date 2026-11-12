@@ -702,3 +702,41 @@ real app with `tools/e2e/perf.mjs`.
   and 150 invented ones are checked for readability; four banks in three currencies with Wise between them imported
   from their statements (every transfer one movement, totals, what the banks kept, the diagram).
 - The sample statements hold the four banks with Wise (October 2026), imported and looked at in the end-to-end check.
+
+## November 11th, 2026 - Transfers over time, Revolut statements, any currency - Commit 32
+
+### Added
+- Analytics in two parts, chosen beside Summary / Statements / Analytics: General (the charts of spending and income)
+  and Transfers (the money moved between accounts).
+- Transfers over time, first in Transfers: one coloured line per account, the accounts of a bank together in the box
+  of their bank, everything outside the app last, in orange; time from left to right, in steps of a day (up to 45
+  days), a week, a month or a year by the length of the period. Each movement leaves the line of its account on its
+  day, in the colour of that account, as thick as its amount, and ends with a dot on the line it reached: inside a
+  bank it stays in the bank's box, between two banks it goes from one box to the other. The largest amounts are
+  written beside their dot (day, amount, from and to) where they cover no other label; pointing at any movement
+  writes it and fades the others. On the right, what each account gained or gave; above, the totals inside a bank,
+  between banks, sent outside, received from outside and lost to exchange and fees. Accounts moving money together
+  are put side by side (every order is tried). Money moved follows it, as before.
+- Revolut statements: the PDF of a currency (the "Money out" and "Money in" columns, the currency named in the title,
+  the table of reverted operations left out, the fee printed under an operation as a line of its own) and the export
+  of the app in English and in French (dates with their time, the fee column, pending, declined and reverted lines
+  left out, one account per currency and per product from the one file), and the export of a business account (the
+  amount paid, not the one before conversion). Exchanges, top-ups and pockets are transfers.
+- Unit tests: the timeline on written cases and 300 invented periods; Revolut PDF and exports read to the cent, saved
+  and categorised; amounts in currencies no example uses, exports with columns never seen, date order, fee columns,
+  several accounts in one file. `SampleStatements revolut <folder>` writes the fictitious Revolut files.
+
+### Changed
+- Reading is not tied to the examples: amounts and amount columns in any currency code (CHF, GBP, SEK... they were
+  read only in CAD, USD and EUR); a file whose numeric dates do not say which is the day is read in the order under
+  which it covers the shorter time (it was month first unless its headings were French); any export with a fee
+  column, a state column, dates with a time or several accounts is read by the same rules as Revolut's.
+- A period reads the list of banks once (it was read again for each bank).
+
+### Removed
+- Code nothing used: three readers of exchange-rate files kept beside the ones in use, a month-name lookup, a brand
+  rule deletion, two colours of the PDF, three window constants, one flag of the interface.
+
+### Fixed
+- A column heading of two words was read backwards when its second word sat a little higher ("in Money"), so the
+  column was not recognised.

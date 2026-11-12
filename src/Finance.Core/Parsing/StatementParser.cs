@@ -197,7 +197,11 @@ public static partial class StatementParser
         }
         return groups.Select(g =>
         {
-            var folded = TextNorm.Fold(string.Join(' ', g.OrderBy(x => x.Top).ThenBy(x => x.Left).Select(x => x.Text)));
+            // Line by line, then left to right: on one line a short word ("in") can sit a little higher than its
+            // neighbour ("Money") without being above it.
+            var top = g.Min(x => x.CenterY);
+            var step = Math.Max(1, g.Average(x => x.Height) * 0.6);
+            var folded = TextNorm.Fold(string.Join(' ', g.OrderBy(x => (int)((x.CenterY - top) / step)).ThenBy(x => x.Left).Select(x => x.Text)));
             return new HeaderCell(folded, g.Min(x => x.Left), g.Max(x => x.Right), ClassifyHeader(folded));
         }).ToList();
     }
@@ -215,6 +219,9 @@ public static partial class StatementParser
         if (HasWord(f, "CATEGORIE", "CATEGORIES", "CATEGORY", "CATEGORY")) return ColumnRole.Category;
         if (HasWord(f, "DATE", "JOUR", "DATES"))
             return HasWord(f, "VALEUR", "VALUE", "POST", "POSTED", "POSTING", "INSCRIPTION", "COMPTABILISATION", "COMPTABLE") ? ColumnRole.ValueDate : ColumnRole.Date;
+        // "Money out" / "Money in", "Paid out" / "Paid in": the two words together name the column.
+        if (f is "MONEY OUT" or "PAID OUT" or "ARGENT SORTANT" or "SORTIES D'ARGENT") return ColumnRole.Debit;
+        if (f is "MONEY IN" or "PAID IN" or "ARGENT ENTRANT" or "ENTREES D'ARGENT") return ColumnRole.Credit;
         if (HasWord(f, "DEBIT", "DEBITS", "RETRAIT", "RETRAITS", "WITHDRAW", "WITHDRAWAL", "WITHDRAWALS", "SORTIE", "SORTIES", "CHEQUES", "PAIEMENTS", "CHARGES", "DEPENSES")) return ColumnRole.Debit;
         if (HasWord(f, "CREDIT", "CREDITS", "DEPOT", "DEPOTS", "DEPOSIT", "DEPOSITS", "ENTREE", "ENTREES", "VERSEMENTS", "RECETTES")) return ColumnRole.Credit;
         if (HasWord(f, "MONTANT", "AMOUNT", "SOMME", "MONTANTS", "AMOUNTS")) return ColumnRole.Amount;
@@ -486,11 +493,44 @@ public static partial class StatementParser
     private static bool SameBlock(TextLine? previous, TextLine line) =>
         previous is not null && previous.Page == line.Page && line.Top - previous.Bottom < Math.Max(line.Height, previous.Height) * 1.3;
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(REVERTED|PENDING|DECLINED|UPCOMING|EN ATTENTE|ANNULEE?S?|REFUSEE?S?|(OPERATIONS?|TRANSACTIONS?|PAIEMENTS?|PAYMENTS?) (EN ATTENTE|A VENIR|ANNULEE?S?|REFUSEE?S?|PENDING|REVERTED|DECLINED))\b")]
+    private static partial System.Text.RegularExpressions.Regex NotMovedTitle();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(ACCOUNT TRANSACTIONS|COMPLETED|(TRANSACTIONS|OPERATIONS|MOUVEMENTS) (FROM|DU|DE|EFFECTUEE?S))\b")]
+    private static partial System.Text.RegularExpressions.Regex MovedTitle();
+
+    /// <summary>
+    /// The lines of the tables listing operations that never moved money (or not yet): a table of its own, under a title
+    /// saying so ("Reverted from 1 January to 31 January", "Pending", "Opérations en attente") followed by its own
+    /// column headings, until the title of a table of completed operations or the end of the statement.
+    /// </summary>
+    private static HashSet<TextLine> NotMoved(List<TextLine> lines)
+    {
+        var skipped = new HashSet<TextLine>();
+        var skipping = false;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var folded = TextNorm.Fold(lines[i].Text).Trim();
+            if (!skipping && NotMovedTitle().IsMatch(folded))
+            {
+                // A title, not a line of an operation: the headings of a table come right under it.
+                var under = lines.Skip(i + 1).Take(3).Where(l => l.Page == lines[i].Page).ToList();
+                skipping = FindHeader(under) is not null;
+            }
+            else if (skipping && MovedTitle().IsMatch(folded)) skipping = false;
+            if (skipping) skipped.Add(lines[i]);
+        }
+        return skipped;
+    }
+
     private static (List<RawRow> Rows, List<RowCells> Cells, PrintedAmount? FirstBalanceOnly) Assemble(DocumentContext ctx, Layout layout)
     {
         var allCells = new List<RowCells>();
-        foreach (var line in ctx.Lines.OrderBy(l => l.Page).ThenBy(l => l.Top))
+        var ordered = ctx.Lines.OrderBy(l => l.Page).ThenBy(l => l.Top).ToList();
+        var notMoved = NotMoved(ordered);
+        foreach (var line in ordered)
         {
+            if (notMoved.Contains(line)) continue;
             var pl = layout.ForPage(line.Page);
             if (pl is null) continue;
             var c = Cells(line, pl, ctx);
@@ -565,6 +605,40 @@ public static partial class StatementParser
         rows.RemoveAll(r => !r.HasMovement);
         foreach (var r in rows) r.Label = TextNorm.CollapseSpaces(r.Label);
         return (rows, allCells, firstBalanceOnly);
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*\b(?<name>FEES?|FRAIS)\s?:\s?(?<fee>[^\sA-Za-z]{0,3}\d[\d.,]*(?:\s?[€$£])?)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex FeeDetail();
+
+    /// <summary>
+    /// A fee written under its operation ("Fee: €4.00") and counted in its amount becomes a line of its own after the
+    /// operation, as the bank's own exports list it: the operation without its fee (its balance before the fee), then
+    /// the fee. When the whole amount is the fee, the line stays one. Totals and balances are unchanged.
+    /// </summary>
+    private static List<ParsedRow> SplitFees(List<ParsedRow> rows)
+    {
+        if (!rows.Any(r => FeeDetail().IsMatch(r.Label))) return rows;
+        var result = new List<ParsedRow>(rows.Count + 4);
+        foreach (var r in rows)
+        {
+            var m = FeeDetail().Match(r.Label);
+            if (!m.Success || r.Amount >= 0 || !AmountParser.TryParse(m.Groups["fee"].Value.Trim(), out var printed) || printed.Magnitude <= 0 || printed.Magnitude > -r.Amount)
+            {
+                result.Add(r);
+                continue;
+            }
+            var fee = printed.Magnitude;
+            var label = TextNorm.CollapseSpaces(r.Label.Remove(m.Index, m.Length));
+            if (label.Length == 0) { result.Add(r); continue; }
+            r.Label = label;
+            if (fee == -r.Amount) { result.Add(r); continue; }
+            var after = r.Balance;
+            r.Amount += fee;
+            r.Balance = after + fee;
+            result.Add(r);
+            result.Add(new ParsedRow { Date = r.Date, Label = $"{m.Groups["name"].Value}: {label}", Amount = -fee, Balance = after, BankCategory = m.Groups["name"].Value, Page = r.Page, Top = r.Top });
+        }
+        return result;
     }
 
     // ---------------------------------------------------------------- interpretation
@@ -658,6 +732,8 @@ public static partial class StatementParser
         // Zero lines are left out but their dates still belong to the period the balances cover.
         var allDates = parsed.Select(r => r.Date).ToList();
         parsed = parsed.Where(r => r.Amount != 0).ToList();
+
+        if (kind != AccountKind.CreditCard) parsed = SplitFees(parsed);
 
         var result = new StatementParse
         {

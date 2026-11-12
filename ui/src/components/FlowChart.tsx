@@ -93,7 +93,7 @@ function fit(name: string, w: number) {
 }
 
 /** One figure of the legend: with the arrow of its colour when it names arrows of the drawing. */
-function Legend({ color, label, value, ...rest }: { color?: string; label: string; value: string; 'data-lost'?: boolean }) {
+export function Legend({ color, label, value, ...rest }: { color?: string; label: string; value: string; 'data-lost'?: boolean; 'data-total'?: string }) {
   return (
     <Box {...rest} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
       {color && <Box component="span" sx={{ color, fontWeight: 800, fontSize: 16, lineHeight: 1 }}>→</Box>}

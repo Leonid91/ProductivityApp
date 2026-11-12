@@ -783,8 +783,6 @@ public sealed class Database : IDisposable
         ON CONFLICT(merchant_key, brand) WHERE merchant_key = '' DO UPDATE SET category_id = excluded.category_id, updated_at = excluded.updated_at
         """, ("$b", brand), ("$c", categoryId), ("$t", T(DateTime.UtcNow)));
 
-    public void DeleteBrandRule(long id) => Exec("DELETE FROM brand_rules WHERE id = $id", ("$id", id));
-
     /// <summary>Forgets everything learned for a brand: its wordings and its category.</summary>
     public void DeleteBrandRules(string brand) => Exec("DELETE FROM brand_rules WHERE brand = $b COLLATE NOCASE", ("$b", brand));
 

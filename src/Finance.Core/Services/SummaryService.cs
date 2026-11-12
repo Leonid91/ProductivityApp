@@ -72,6 +72,8 @@ public sealed class PeriodSummary
     public required List<Flow> Flows { get; init; }
     /// <summary>The money-moved diagram, laid out (same drawing on screen and in the PDF).</summary>
     public required FlowDiagram Diagram { get; init; }
+    /// <summary>The transfers over time, account by account (drawn once, for every bank together, like the diagram).</summary>
+    public TransferTimeline Timeline { get; init; } = TransferTimeline.Empty;
     /// <summary>Recurring payments without housing (rent, mortgage): the subscription burden.</summary>
     public required decimal RecurringWithoutHousing { get; init; }
     /// <summary><see cref="RecurringWithoutHousing"/> as a share of earnings; null without earnings.</summary>
@@ -204,6 +206,8 @@ public sealed class SummaryService(Database db)
         var all = db.Transactions(from, to);
         var accounts = db.Accounts().ToDictionary(a => a.Id);
         var banks = db.Banks().ToDictionary(b => b.Id);
+        // Read once for the whole report (each bank's part and every bank together name their accounts' banks).
+        var bankNames = banks.ToDictionary(b => b.Key, b => b.Value.Name);
         // Banks in the order of Bank Configuration: the one whose accounts came first, first; cash and manual entries last.
         var firstAccount = accounts.Values.Where(a => a.BankId is not null).GroupBy(a => a.BankId!.Value).ToDictionary(x => x.Key, x => x.Min(a => a.Id));
         var groups = all.GroupBy(t => accounts.TryGetValue(t.AccountId, out var a) && a.BankId is { } b && banks.ContainsKey(b) ? b : (long?)null)
@@ -226,14 +230,14 @@ public sealed class SummaryService(Database db)
             lines.AddRange(globalLines);
             var left = txs.Where(t => t.Currency != global && !toGlobal.ContainsKey(t.Id)).ToList();
             parts.Add(new BankPart(group.Key is { } k ? k.ToString(CultureInfo.InvariantCulture) : "other", name, global, bank?.Currency ?? global, bank?.System,
-                Build(converted, from, to, g, global, toGlobal, accounts, unconverted: left, diagram: false, rates: rates)));
+                Build(converted, from, to, g, global, toGlobal, accounts, unconverted: left, diagram: false, rates: rates, bankNames: bankNames)));
             everything.AddRange(converted);
             foreach (var (txId, c) in toGlobal) everyConversion[txId] = c;
         }
         everything.Sort((a, b) => a.Date != b.Date ? a.Date.CompareTo(b.Date) : a.Id.CompareTo(b.Id));
         var status = rates.Status(source);
         // The operations are in the banks' parts already: not listed again.
-        var globalSummary = Build(everything, from, to, g, global, everyConversion, accounts, listOperations: false, rates: rates);
+        var globalSummary = Build(everything, from, to, g, global, everyConversion, accounts, listOperations: false, rates: rates, bankNames: bankNames);
         return new PeriodReport
         {
             From = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
@@ -323,11 +327,11 @@ public sealed class SummaryService(Database db)
 
     private PeriodSummary Build(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g, string currency,
         Dictionary<long, (Transaction Original, Converted Rate)>? converted, Dictionary<long, Account> accounts, bool listOperations = true,
-        List<Transaction>? unconverted = null, bool diagram = true, ExchangeRates? rates = null)
+        List<Transaction>? unconverted = null, bool diagram = true, ExchangeRates? rates = null, IReadOnlyDictionary<long, string>? bankNames = null)
     {
         var (recurring, byId) = History();
         var tags = db.TagIndex();
-        var movements = Movements.Build(txs, byId, accounts, db.Banks().ToDictionary(b => b.Id, b => b.Name));
+        var movements = Movements.Build(txs, byId, accounts, bankNames ?? db.Banks().ToDictionary(b => b.Id, b => b.Name));
         // An international transfer: what the banks kept, the amount sent at the rate of its day less the amount received.
         if (rates is not null) movements = [.. movements.Select(m => m.Sent is { } s && m.SentCurrency is { } sc && m.Received is { } r && m.ReceivedCurrency is { } rc
             && DateOnly.TryParse(m.Date, CultureInfo.InvariantCulture, out var day)
@@ -435,6 +439,7 @@ public sealed class SummaryService(Database db)
             Flows = Movements.Flows(movements),
             // A bank's part has none: the diagram is drawn once for every bank (see PeriodReport.Global).
             Diagram = diagram ? FlowDiagram.Build(movements) : new FlowDiagram(0, 0, [], [], []),
+            Timeline = diagram ? TransferTimeline.Build(movements, from, to) : TransferTimeline.Empty,
             RecurringWithoutHousing = burden,
             RecurringWithoutHousingShare = earnings > 0 ? (double)(burden / earnings) : null,
             ExpensesShare = earnings > 0 ? (double)(expenses / earnings) : null,

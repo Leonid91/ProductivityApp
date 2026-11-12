@@ -61,12 +61,6 @@ public static partial class DateParser
         return d;
     }
 
-    public static int? MonthFromName(string token)
-    {
-        var t = TextNorm.Fold(token).Trim('.', ',');
-        return Months.TryGetValue(t, out var m) ? m : null;
-    }
-
     [GeneratedRegex(@"^(?<y>(?:19|20)\d{2})[-/.](?<m>\d{1,2})[-/.](?<d>\d{1,2})$")]
     private static partial Regex Iso();
 

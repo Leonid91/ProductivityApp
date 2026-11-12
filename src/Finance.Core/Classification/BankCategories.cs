@@ -11,7 +11,7 @@ public static class BankCategories
     private static readonly (string Category, int Sign, string[] Names)[] Table =
     [
         ("cardpayments", 0, ["PAIEMENT CARTE DE CREDIT", "CREDIT CARD PAYMENT", "CREDIT CARD PAYMENTS"]),
-        ("transfers", 0, ["TRANSFERT", "TRANSFERTS", "TRANSFER", "TRANSFERS", "VIREMENT ENTRE COMPTES", "VIREMENTS"]),
+        ("transfers", 0, ["TRANSFERT", "TRANSFERTS", "TRANSFER", "TRANSFERS", "VIREMENT ENTRE COMPTES", "VIREMENTS", "EXCHANGE", "TOPUP", "TOP UP"]),
         ("investments", 0, ["INVESTISSEMENTS", "INVESTISSEMENT", "INVESTMENTS", "INVESTMENT", "PLACEMENTS", "PLACEMENT", "EPARGNE", "SAVINGS", "REER", "CELI", "RRSP", "TFSA"]),
         ("salary", 1, ["SALAIRE", "PAIE", "PAYROLL", "SALARY", "PAYCHECK"]),
         ("otherincome", 1, ["REVENUS", "REVENU", "INCOME", "REVENU D'INTERETS", "REVENU D INTERETS", "INTEREST INCOME", "INTERETS", "INTEREST", "DIVIDENDES", "DIVIDENDS", "REMBOURSEMENT D'IMPOT", "TAX REFUND"]),
@@ -35,7 +35,7 @@ public static class BankCategories
         ("travel", -1, ["VOYAGE", "VOYAGES", "TRAVEL", "HEBERGEMENT", "HOTEL", "HOTELS", "AVIATION", "COMPAGNIES AERIENNES", "AIRLINES"]),
         ("education", -1, ["EDUCATION", "ETUDES", "FRAIS DE SCOLARITE", "TUITION", "LIVRES"]),
         ("gifts", -1, ["DONS", "DONS ET CHARITE", "CHARITY", "GIFTS", "CADEAUX", "GIFTS & DONATIONS"]),
-        ("fees", -1, ["FRAIS", "FRAIS BANCAIRES", "BANK FEES", "FEES", "FEES & CHARGES", "PROTECTION ANTIFRAUDE", "INTERETS PAYES", "INTEREST CHARGES", "SERVICE CHARGES"]),
+        ("fees", -1, ["FEE", "FRAIS", "FRAIS BANCAIRES", "BANK FEES", "FEES", "FEES & CHARGES", "PROTECTION ANTIFRAUDE", "INTERETS PAYES", "INTEREST CHARGES", "SERVICE CHARGES"]),
         ("insurance", -1, ["FINANCES ET ASSURANCES"]),
         ("taxes", -1, ["IMPOTS", "IMPOT", "TAXES", "TAX"]),
         ("cash", -1, ["RETRAIT", "RETRAITS", "RETRAIT D'ARGENT", "ATM", "CASH", "ATM WITHDRAWAL", "ESPECES"]),

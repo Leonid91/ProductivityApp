@@ -5,16 +5,14 @@ namespace ProductivityApp.Host;
 internal static partial class Native
 {
     public const int WM_NCCALCSIZE = 0x0083;
-    public const int WM_NCHITTEST = 0x0084;
     public const int WM_NCACTIVATE = 0x0086;
     public const int WM_NCLBUTTONDOWN = 0x00A1;
     public const int WM_NCRBUTTONUP = 0x00A5;
     public const int WM_SYSCOMMAND = 0x0112;
-    public const int WM_GETMINMAXINFO = 0x0024;
     public const int SC_KEYMENU = 0xF100;
     public const int SC_MOUSEMENU = 0xF090;
 
-    public const int HTCLIENT = 1, HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
+    public const int HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
         HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
 
     public const int WS_EX_TOOLWINDOW = 0x00000080;

@@ -141,9 +141,14 @@ internal sealed partial class DocumentContext
             ["CHF"] = Count("CHF"),
             ["CAD"] = Count("CAD", "CA$", "$ CA", "$CA"),
         };
+        // A statement that says its currency ("USD Statement", "Relevé en EUR", "Currency: GBP", "Devise : CHF") is in it,
+        // whatever other currencies its operations mention (an exchange from euros on a statement in dollars).
+        var said = Regex.Match(folded, @"(?<![A-Z])(?:(?<c>[A-Z]{3}) (?:STATEMENT|ACCOUNT STATEMENT)|(?:STATEMENT|RELEVE(?: DE COMPTE)?) (?:IN |EN )(?<c>[A-Z]{3})|(?:CURRENCY|DEVISE) ?:? ?(?<c>[A-Z]{3}))(?![A-Z])");
+        if (said.Success && AmountParser.Currencies.Contains(said.Groups["c"].Value)) return said.Groups["c"].Value;
         var best = scores.OrderByDescending(kv => kv.Value).First();
         if (best.Value > 0) return best.Key;
-        return folded.Contains('$') ? (fallback is "CAD" or "USD" ? fallback : "CAD") : fallback;
+        // A bare "$": the person's own dollar when their currency is one, the Canadian dollar otherwise.
+        return folded.Contains('$') ? (fallback is "CAD" or "USD" or "AUD" or "NZD" or "HKD" or "SGD" or "MXN" ? fallback : "CAD") : fallback;
     }
 
     private static readonly string[] InstitutionWords =

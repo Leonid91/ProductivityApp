@@ -92,15 +92,19 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         {
             if (TableFiles.Kind(bytes, fileName) is null && MoneyFiles.Kind(bytes, fileName) is null && !CsvStatementReader.LooksLikeCsv(bytes, fileName))
                 throw new InvalidDataException("This file is not a statement the app can read: PDF, picture, CSV, Excel, OpenDocument, Word, OFX, QFX, QBO or QIF.");
-            var file = new ImportDraft
+            // One export of several accounts (one per currency, or per product named on each line): one draft per
+            // account, each holding its own lines as a file of its own.
+            var table = TableFiles.Kind(bytes, fileName) is not null ? TableFiles.Read(bytes, fileName)
+                : MoneyFiles.Kind(bytes, fileName) is null ? CsvStatementReader.Table(bytes) : null;
+            var accounts = table is null ? [] : CsvStatementReader.Accounts(table, defaultCurrency());
+            if (accounts.Count > 1)
             {
-                FileName = fileName, FileHash = hash, Bytes = bytes, Pages = [],
-                Parse = ReadFile(bytes, fileName, null),
-                AlreadyImported = db.HasStatementHash(hash),
-            };
-            Fill(file);
-            _drafts[file.Id] = file;
-            return file;
+                // Named after its file, then its account, the extension last ("export · Savings · EUR.csv").
+                var parts = accounts.Select((a, i) => FileDraft($"{Path.GetFileNameWithoutExtension(fileName)} · {a.Title}{Path.GetExtension(fileName)}", $"{hash}#{i + 1}", CsvStatementReader.Write(a.Table))).ToList();
+                parts[0].Others.AddRange(parts.Skip(1));
+                return parts[0];
+            }
+            return FileDraft(fileName, hash, bytes);
         }
         var pages = await PdfReader.ReadAsync(bytes, ct).ConfigureAwait(false);
         // One statement of several accounts (current account and savings books): one draft per account.
@@ -112,6 +116,19 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             return drafts[0];
         }
         return PdfDraft(fileName, hash, bytes, pages);
+    }
+
+    private ImportDraft FileDraft(string fileName, string hash, byte[] bytes)
+    {
+        var file = new ImportDraft
+        {
+            FileName = fileName, FileHash = hash, Bytes = bytes, Pages = [],
+            Parse = ReadFile(bytes, fileName, null),
+            AlreadyImported = db.HasStatementHash(hash),
+        };
+        Fill(file);
+        _drafts[file.Id] = file;
+        return file;
     }
 
     private ImportDraft PdfDraft(string fileName, string hash, byte[] bytes, IReadOnlyList<PageWords> pages, AccountSections.Section? section = null)

@@ -20,8 +20,6 @@ public static class Palette
     public const string PositiveSoft = "#f1f8f1";
     public const string NegativeStrong = "#f6d9d6";
     public const string PositiveStrong = "#d5ead5";
-    public const string WarningSoft = "#fdf4e3";
-    public const string WarningInk = "#8a5a00";
 
     /// <summary>Colour of slice <paramref name="index"/>: the eight series colours, then evenly spread hues (same as the interface).</summary>
     public static string Series(int index)

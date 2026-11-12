@@ -26,6 +26,7 @@ function useCharts(wanted: boolean): ChartsModule | null {
 }
 import { ExportDialog } from './ExportDialog'
 import { FlowChart } from './FlowChart'
+import { TransferTimelineChart } from './TransferTimeline'
 import { MovementsTable } from './MovementsTable'
 import { TransactionTable } from './TransactionTable'
 import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
@@ -104,9 +105,10 @@ function Section({ icon, title, total, note, children, id, tint }: { icon: React
 /**
  * What a period shows: its summary (only the balance, all banks together: a month or a year alone, other periods month
  * by month, or year by year beyond a year), its statements (the tables) or its analytics (the charts), bank by bank,
- * each with its totals, then every bank together in the global display currency.
+ * each with its totals, then every bank together in the global display currency; or its transfers (the second part
+ * of Analytics): the money moved between the accounts of every bank, over time and in total.
  */
-export type PeriodView = 'summary' | 'statements' | 'analytics'
+export type PeriodView = 'summary' | 'statements' | 'analytics' | 'transfers'
 
 /** Height of a bank's heading: it stays at the top of the screen while the bank's tables scroll, their headers just under it. */
 const PART_HEAD = 52
@@ -503,6 +505,14 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
               )}
               <Stat label="Balance" value={money(global.balance, currency, { sign: true })} color={tone(global.balance).color} bg={tone(global.balance).bg} />
             </Box>
+          ) : shown === 'transfers' ? (
+            // Money moved between the accounts of every bank, in the display currency: over time, then in total.
+            <Box data-transfers sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2.5, mt: 2.5 }}>
+              <TransferTimelineChart timeline={report.global.timeline} currency={report.currency} />
+              <Box data-flow-card>
+                <FlowChart diagram={report.global.diagram} flows={report.global.flows} currency={report.currency} />
+              </Box>
+            </Box>
           ) : (
             <>
               {report.banks.map((b) => (
@@ -515,14 +525,10 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
                   <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} />
                   <ConversionPanel conversion={report.conversion} />
                 </Part>
-              )}
-              {shown === 'analytics' && (
-                // Money moved between the accounts of every bank, in one card of its own, in the display currency.
-                <Box data-flow-card sx={{ mt: 2.5 }}>
-                  <FlowChart diagram={report.global.diagram} flows={report.global.flows} currency={report.currency} />
-                </Box>
-              )}
-
+              )}            </>
+          )}
+          {shown !== 'summary' && (
+            <>
               <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2.5 }}>
                 <Button variant="outlined" startIcon={<PictureAsPdf />} onClick={() => setExporting(true)}>Export to PDF</Button>
               </Box>

@@ -51,5 +51,3 @@ export function on<T>(event: string, listener: (data: T) => void): () => void {
   set.add(l)
   return () => set.delete(l)
 }
-
-export const hasHost = host !== undefined

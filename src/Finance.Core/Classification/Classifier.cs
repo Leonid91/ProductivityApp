@@ -202,10 +202,12 @@ public sealed class Classifier
         "VIREMENT INTERNE", "VERSEMENT LIVRET", "VIR LIVRET", "VIREMENT LIVRET", "VIR COMPTE EPARGNE", "INTERNAL TRANSFER",
         // French savings books (Livret A, LDDS, LEP, Livret Jeune): a buffer of the person's own money, not an investment.
         "LIVRET A", "LIVRET JEUNE", "LDDS", "LEP",
+        // Accounts holding several currencies and pockets of savings: money changed or put aside stays the person's.
+        "EXCHANGED TO", "EXCHANGED FROM", "CURRENCY EXCHANGE", "TO POCKET", "FROM POCKET", "TO VAULT", "FROM VAULT",
     ];
     private static readonly string[] MoneyTransferWords =
     [
-        "VIREMENT INTERAC", "INTERAC E TRANSFER", "E TRANSFER", "ETRANSFER", "VIREMENT", "VIR", "VIRT", "TRANSFER", "TRANSFERT", "TFR", "VIR SEPA", "VIR INST",
+        "TOP UP", "TOPUP", "VIREMENT INTERAC", "INTERAC E TRANSFER", "E TRANSFER", "ETRANSFER", "VIREMENT", "VIR", "VIRT", "TRANSFER", "TRANSFERT", "TFR", "VIR SEPA", "VIR INST",
         "EMAIL MONEY TRF", "EMAIL MONEY TRANSFER", "E MAIL MONEY TRANSFER", "E MAIL MONEY TRF", "INTERAC E TRF", "SEND E TFR", "E TFR", "WIRE PAYMENT", "WIRE TRANSFER",
         "MONEY TRF", "TRF",
     ];

@@ -74,6 +74,22 @@ if (args.Length == 2 && args[0] == "scotia")
     Console.WriteLine($"card previous={card.Previous} new={card.New} credits={card.Credits} debits={card.Debits} lines={card.Lines.Count}");
     return 0;
 }
+if (args.Length == 2 && args[0] == "revolut")
+{
+    // revolut <folder>: fictitious statements in Revolut layouts (the PDF of each currency, the export of every
+    // currency and product in English and in French, the export of a business account)
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    var accounts = RevolutGenerator.Sample();
+    foreach (var a in accounts.Where(a => a.Product == "Current"))
+    {
+        Write(Path.Combine(dir, $"Revolut {a.Currency} 2026-01.pdf"), RevolutGenerator.Pdf(a));
+        Console.WriteLine($"{a.Currency} open={a.Opening} close={a.Closing} out={a.MoneyOut} in={a.MoneyIn} lines={a.Done.Count}");
+    }
+    Write(Path.Combine(dir, "Revolut export 2026-01.csv"), RevolutGenerator.Csv(accounts));
+    Write(Path.Combine(dir, "Revolut export 2026-01 fr.csv"), RevolutGenerator.Csv(accounts, french: true));
+    Write(Path.Combine(dir, "Revolut business 2026-01.csv"), RevolutGenerator.BusinessCsv(accounts[0]));
+    return 0;
+}
 if (args.Length == 2 && args[0] == "twobanks")
 {
     // twobanks <folder>: a Canadian bank and a French bank over the same months (fictitious): Banque Nationale-style

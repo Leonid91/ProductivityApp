@@ -55,6 +55,5 @@ public static class Formatting
         };
     }
 
-    public static DateOnly MonthStart(int year, int month) => new(year, month, 1);
     public static DateOnly MonthEnd(int year, int month) => new(year, month, DateTime.DaysInMonth(year, month));
 }

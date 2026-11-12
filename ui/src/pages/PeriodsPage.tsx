@@ -23,7 +23,10 @@ export function PeriodsPage() {
   const [index, setIndex] = useState<PeriodIndex | null>(null)
   const [mode, setMode] = useState<'month' | 'year' | 'all' | 'custom'>('month')
   // Second layer, the same for every kind of period: its summary (balances), statements (tables) or analytics (charts).
-  const [view, setView] = useState<PeriodView>('statements')
+  const [view, setView] = useState<'summary' | 'statements' | 'analytics'>('statements')
+  // Analytics in two parts: the charts of the spending and income (General), the money moved between accounts (Transfers).
+  const [analytics, setAnalytics] = useState<'general' | 'transfers'>('general')
+  const shown: PeriodView = view === 'analytics' && analytics === 'transfers' ? 'transfers' : view
   // Custom period: any two days, picked on the calendar or typed.
   const [customFrom, setCustomFrom] = useState<Dayjs | null>(null)
   const [customTo, setCustomTo] = useState<Dayjs | null>(null)
@@ -157,6 +160,12 @@ export function PeriodsPage() {
             <ToggleButton value="statements">Statements</ToggleButton>
             <ToggleButton value="analytics">Analytics</ToggleButton>
           </ToggleButtonGroup>
+          {view === 'analytics' && (
+            <ToggleButtonGroup data-analytics-view exclusive size="small" value={analytics} onChange={(_, v) => v && setAnalytics(v)} sx={{ ml: 1.5 }}>
+              <ToggleButton value="general">General</ToggleButton>
+              <ToggleButton value="transfers">Transfers</ToggleButton>
+            </ToggleButtonGroup>
+          )}
         </Box>
       </Box>
 
@@ -175,7 +184,7 @@ export function PeriodsPage() {
               to={p.to}
               granularity={mode === 'month' || mode === 'year' ? mode : 'range'}
               currency={currency}
-              view={view}
+              view={shown}
               onEdit={onEdit}
             />
           ))}

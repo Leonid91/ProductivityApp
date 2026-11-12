@@ -98,7 +98,7 @@ public static partial class CsvStatementReader
         }
     }
 
-    private enum Col { None, Date, ValueDate, Description, Description2, Category, SubCategory, Debit, Credit, Amount, Balance, Card, Account, Currency, Type }
+    private enum Col { None, Date, ValueDate, Description, Description2, Category, SubCategory, Debit, Credit, Amount, Balance, Card, Account, Currency, Type, Fee, State }
 
     private static Col Classify(string header)
     {
@@ -107,6 +107,8 @@ public static partial class CsvStatementReader
         // "Name : value" cells above the table (bank, branch, account, currency of the export) are not column names.
         if (header.Contains(" : ", StringComparison.Ordinal) || header.TrimEnd().EndsWith(" :", StringComparison.Ordinal)) return Col.None;
         if (Has("POINTAGE", "RAPPROCHEMENT")) return Col.None;
+        // What an operation was before the bank converted it (its amount and currency abroad) is not what moved on the account.
+        if (Has("ORIG", "ORIGINAL", "ORIGINALE", "ORIGINE")) return Col.None;
         if (Has("NUMERO", "NUMBER", "NO", "REF", "REFERENCE") && Has("OPERATION", "TRANSACTION", "CHEQUE")) return Col.None;
         if (Has("SOLDE", "BALANCE")) return Col.Balance;
         if (Has("SOUS") && Has("CATEGORIE", "CATEGORY")) return Col.SubCategory;
@@ -114,19 +116,21 @@ public static partial class CsvStatementReader
         if (Has("CARTE", "CARD")) return Has("DATE") ? Col.Date : Col.Card;
         if (Has("DATE", "POSTED", "POSTE", "JOUR"))
             return Has("VALEUR", "VALUE", "POSTED", "POSTING", "INSCRIPTION", "COMPTABILISATION", "POSTE") && !Has("TRANSACTION", "OPERATION", "ACHAT") ? Col.ValueDate : Col.Date;
-        if (Has("DEVISE", "CURRENCY", "MONNAIE")) return Col.Currency;
+        if (Has("DEVISE", "CURRENCY", "MONNAIE")) return Has("FEE", "FEES", "FRAIS") ? Col.None : Col.Currency;
+        if (Has("FEE", "FEES", "FRAIS", "COMMISSION")) return Col.Fee;
+        if (Has("STATE", "STATUS", "ETAT", "STATUT")) return Col.State;
         if (Has("DEBIT", "DEBITS", "RETRAIT", "RETRAITS", "WITHDRAWAL", "WITHDRAWALS", "SORTIE", "SORTIES", "OUT", "CHARGES", "PAID")) return Col.Debit;
         if (Has("CREDIT", "CREDITS", "DEPOT", "DEPOTS", "DEPOSIT", "DEPOSITS", "ENTREE", "ENTREES", "IN", "RECEIVED")) return Col.Credit;
-        if (Has("MONTANT", "AMOUNT", "VALUE", "VALEUR", "SOMME", "CAD", "USD", "EUR")) return Col.Amount;
+        if (Has("MONTANT", "AMOUNT", "VALUE", "VALEUR", "SOMME") || f.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(AmountParser.Currencies.Contains)) return Col.Amount;
         if (Has("TYPE")) return Col.Type;
-        if (Has("COMPTE", "ACCOUNT", "NUMERO", "NUMBER")) return Col.Account;
+        if (Has("COMPTE", "ACCOUNT", "NUMERO", "NUMBER", "PRODUCT", "PRODUIT", "POCKET", "VAULT")) return Col.Account;
         if (Has("DESCRIPTION", "LIBELLE", "DETAILS", "DETAIL", "MERCHANT", "COMMERCANT", "PAYEE", "BENEFICIAIRE", "NAME", "NOM", "MEMO",
                 "TRANSACTION", "OPERATION", "NARRATIVE", "REFERENCE", "LABEL", "INFORMATIONS"))
             return Has("2") || Has("MEMO") || Has("SIMPLIFIE", "SIMPLIFIED", "SHORT") ? Col.Description2 : Col.Description;
         return Col.None;
     }
 
-    [GeneratedRegex(@"^\(?[-+−]?\s*[$€£]?\s*[-+−]?\d[\d\s  .,']*\)?\s*(?:[$€£]|CAD|USD|EUR)?\s*(?:-|CR|DR)?$")]
+    [GeneratedRegex(@"^\(?[-+−]?\s*(?:[$€£]|" + AmountParser.CurrencyCodes + @")?\s*[-+−]?\d[\d\s  .,']*\)?\s*(?:[$€£]|" + AmountParser.CurrencyCodes + @")?\s*(?:-|CR|DR)?$")]
     private static partial Regex Numberish();
 
     /// <summary>Lenient number reading for exports: "12.34", "7.0", "1 234,56", "-12", "(3.50)", "12.00 CR".</summary>
@@ -161,6 +165,85 @@ public static partial class CsvStatementReader
         return comma > dot ? ',' : '.';
     }
 
+    [GeneratedRegex(@"^(?<day>.*?\d)(?:T|\s+)\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?\s*(?:AM|PM)?\s*(?:Z|UTC|GMT|[+-]\d{2}:?\d{2})?$", RegexOptions.IgnoreCase)]
+    private static partial Regex Timed();
+
+    /// <summary>The day of a cell that also gives the time ("2026-01-05 10:23:45", "05/01/2026 10:23", "2026-01-05T10:23:45Z").</summary>
+    private static string Day(string cell) => Timed().Match(cell.Trim()) is { Success: true } m ? m.Groups["day"].Value : cell;
+
+    private static bool TryDate(string cell, out PrintedDate date) => DateParser.TryParse(Day(cell), out date);
+
+    /// <summary>Words a bank writes for an operation that never moved money on the account, or has not yet.</summary>
+    private static readonly HashSet<string> NotDone = new(StringComparer.Ordinal)
+    {
+        "PENDING", "REVERTED", "DECLINED", "FAILED", "CANCELLED", "CANCELED", "REJECTED", "REFUSED", "VOIDED", "VOID",
+        "EN ATTENTE", "EN COURS", "ANNULE", "ANNULEE", "REFUSE", "REFUSEE", "ECHOUE", "ECHOUEE", "ECHEC", "REJETE", "REJETEE",
+    };
+
+    /// <summary>
+    /// A file holding several accounts cut into one table per account: one per currency (two currencies are never one
+    /// account), and one per account or product named on each line when the balances of the file only follow each
+    /// other account by account. A file of one account comes back alone, untouched.
+    /// </summary>
+    /// <returns>Each account: what tells it apart ("EUR", "Savings · EUR") and its table, the lines above the first operation kept.</returns>
+    public static List<(string Title, List<List<string>> Table)> Accounts(List<List<string>> table, string defaultCurrency)
+    {
+        var whole = new List<(string, List<List<string>>)> { ("", table) };
+        var headerIndex = HeaderIndex(table);
+        if (headerIndex < 0) return whole;
+        var h = table[headerIndex];
+        int Find(Col c) => Enumerable.Range(0, h.Count).Where(i => Classify(h[i]) == c).DefaultIfEmpty(-1).First();
+        var (currency, account) = (Find(Col.Currency), Find(Col.Account));
+        if (currency < 0 && account < 0) return whole;
+        var data = table.Skip(headerIndex + 1).ToList();
+        string At(List<string> r, int i) => i >= 0 && i < r.Count ? r[i].Trim() : "";
+        bool Money(List<string> r) => At(r, currency) is { Length: 3 } c && c.All(char.IsAsciiLetter);
+
+        List<(string, List<List<string>>)> Cut(Func<List<string>, string> key)
+        {
+            var groups = data.Where(r => r.Any(c => c.Length > 0)).GroupBy(key).Where(g => g.Key.Length > 0).ToList();
+            return groups.Count < 2 ? whole : [.. groups.Select(g => (g.Key, (List<List<string>>)[.. table.Take(headerIndex + 1), .. g]))];
+        }
+        // Two currencies: always two accounts.
+        var byCurrency = currency >= 0 && data.Where(Money).Select(r => At(r, currency).ToUpperInvariant()).Distinct().Count() > 1;
+        // Several accounts named line by line: apart when the balances prove it (the file does not balance as one
+        // account, each account does), or when currencies already cut the file and their balances are not enough.
+        if (account >= 0 && data.Select(r => At(r, account)).Where(a => a.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+        {
+            string Both(List<string> r) => At(r, account).Length == 0 ? "" : byCurrency ? Money(r) ? $"{At(r, account)} · {At(r, currency).ToUpperInvariant()}" : "" : At(r, account);
+            var cut = Cut(Both);
+            bool Balanced(List<List<string>> t) => ParseTable(t, "", defaultCurrency, null, "CSV").Status is VerificationStatus.Verified;
+            var before = byCurrency ? Cut(r => Money(r) ? At(r, currency).ToUpperInvariant() : "") : whole;
+            if (cut.Count > 1 && !before.All(p => Balanced(p.Item2)) && cut.All(p => ParseTable(p.Item2, "", defaultCurrency, null, "CSV").Status is VerificationStatus.Verified or VerificationStatus.NoTransactions)
+                && cut.Any(p => Balanced(p.Item2)))
+                return [.. cut.Where(p => ParseTable(p.Item2, "", defaultCurrency, null, "CSV").Rows.Count > 0)];
+        }
+        return byCurrency ? Cut(r => Money(r) ? At(r, currency).ToUpperInvariant() : "") : whole;
+    }
+
+    /// <summary>A table written back as a CSV file (semicolons, every cell quoted), read again like any export.</summary>
+    public static byte[] Write(List<List<string>> table) =>
+        Encoding.UTF8.GetBytes(string.Join("\n", table.Select(r => string.Join(';', r.Select(c => '"' + c.Replace("\"", "\"\"") + '"')))));
+
+    /// <summary>The cells of a CSV file, line by line.</summary>
+    public static List<List<string>> Table(byte[] bytes)
+    {
+        var text = Decode(bytes);
+        return Rows(text, DetectDelimiter(text)).ToList();
+    }
+
+    /// <summary>The first row whose cells are column names rather than data, or -1.</summary>
+    private static int HeaderIndex(List<List<string>> table)
+    {
+        for (var i = 0; i < Math.Min(table.Count, 15); i++)
+        {
+            var named = table[i].Count(c => Classify(c) != Col.None && !c.Contains(" : ", StringComparison.Ordinal));
+            var dated = table[i].Count(c => TryDate(c, out _));
+            if (named >= 2 && dated == 0) return i;
+        }
+        return -1;
+    }
+
     /// <param name="forcedKind">Account type chosen by the person; when null the file is only read, not typed.</param>
     public static StatementParse Parse(byte[] bytes, string fileName, string defaultCurrency, AccountKind? forcedKind = null)
     {
@@ -180,13 +263,7 @@ public static partial class CsvStatementReader
         var width = table.GroupBy(r => r.Count).OrderByDescending(g => g.Count()).First().Key;
 
         // Header: the first row whose cells are column names rather than data.
-        var headerIndex = -1;
-        for (var i = 0; i < Math.Min(table.Count, 15); i++)
-        {
-            var named = table[i].Count(c => Classify(c) != Col.None && !c.Contains(" : ", StringComparison.Ordinal));
-            var dated = table[i].Count(c => DateParser.TryParse(c, out _));
-            if (named >= 2 && dated == 0) { headerIndex = i; break; }
-        }
+        var headerIndex = HeaderIndex(table);
         var data = table.Skip(headerIndex + 1).Where(r => r.Count >= Math.Min(width, 3) && r.Any(c => c.Length > 0)).ToList();
         if (data.Count == 0) return Empty(method, defaultCurrency);
         var decimalSep = decimalSeparator ?? DecimalSeparator(data.SelectMany(r => r));
@@ -217,14 +294,25 @@ public static partial class CsvStatementReader
         string Cell(List<string> r, Col c) => cols.TryGetValue(c, out var i) && i < r.Count ? r[i] : "";
 
         // Dates and their order (day/month or month/day) across the whole file.
-        var printed = data.Select(r => DateParser.TryParse(Cell(r, Col.Date), out var d) ? d : (PrintedDate?)null).ToList();
+        var printed = data.Select(r => TryDate(Cell(r, Col.Date), out var d) ? d : (PrintedDate?)null).ToList();
         var numeric = printed.Where(d => d is { MonthKnown: false, IsoOrder: false }).Select(d => d!.Value).ToList();
         var headerFolded = headerIndex >= 0 ? TextNorm.Fold(string.Join(' ', table[headerIndex])) : "";
         var french = Regex.IsMatch(headerFolded, @"\b(LIBELLE|MONTANT|SOLDE|CATEGORIE|DEBIT|DEVISE|OPERATION)\b");
+        var year = DateTime.Today.Year;
+        // No date says which is the day (none above 12): a file covers days that follow each other, so the order under
+        // which its dates span the shorter time is the right one ("03.02, 05.02, 09.02" is a week of February, not
+        // March to September); when that tells nothing, the language of its headings.
+        int Span(DateOrder o)
+        {
+            var days = numeric.Select(d => d.ToDate(o, d.Year ?? year)).Where(d => d is not null).Select(d => d!.Value.DayNumber).ToList();
+            return days.Count < numeric.Count || days.Count == 0 ? int.MaxValue : days.Max() - days.Min();
+        }
+        var (dayFirst, monthFirst) = (Span(DateOrder.DayMonth), Span(DateOrder.MonthDay));
         var order = numeric.Any(d => d.A > 12) ? DateOrder.DayMonth
             : numeric.Any(d => d.B > 12) ? DateOrder.MonthDay
+            : dayFirst < monthFirst ? DateOrder.DayMonth
+            : monthFirst < dayFirst ? DateOrder.MonthDay
             : french ? DateOrder.DayMonth : DateOrder.MonthDay;
-        var year = DateTime.Today.Year;
 
         var name = TextNorm.Fold(Path.GetFileNameWithoutExtension(fileName)).Replace("CAISSE D'EPARGNE", "").Replace("CAISSE D EPARGNE", "").Replace("CAISSE DEPARGNE", "");
         // Lines above the table: "Numéro de compte : ...", "Nom du compte : LIVRET A", "Devise : EUR", and balance lines
@@ -236,10 +324,15 @@ public static partial class CsvStatementReader
 
         var rows = new List<ParsedRow>();
         var skippedZero = 0;
+        // What the bank took on an operation, written in a column of its own: a line of its own, after the operation.
+        var fees = new Dictionary<ParsedRow, decimal>();
+        var feeName = cols.TryGetValue(Col.Fee, out var feeColumn) && headerIndex >= 0 && feeColumn < table[headerIndex].Count ? table[headerIndex][feeColumn].Trim() : "Fee";
         for (var i = 0; i < data.Count; i++)
         {
             var r = data[i];
             if (printed[i] is not { } pd) continue;
+            // An operation still pending, declined or reverted never moved the money.
+            if (NotDone.Contains(TextNorm.Fold(Cell(r, Col.State)).Trim())) continue;
             var date = pd.ToDate(order, pd.Year ?? year);
             if (date is null) continue;
             decimal amount;
@@ -258,10 +351,15 @@ public static partial class CsvStatementReader
 
             decimal? balance = TryNumber(Cell(r, Col.Balance), decimalSep, out var b) ? b : null;
             var label = Label(labelIndexes.Select(x => x < r.Count ? r[x] : ""));
-            if (amount == 0) { skippedZero++; if (balance is null) continue; }
+            var fee = TryNumber(Cell(r, Col.Fee), decimalSep, out var f) ? Math.Abs(f) : 0;
+            if (amount == 0 && fee == 0) { skippedZero++; if (balance is null) continue; }
             // The bank's sub-category says more ("Revenus" / "Salaire") when the app knows it.
             var bankCategory = Cell(r, Col.SubCategory) is { Length: > 0 } sub && BankCategories.Map(sub, amount) is not null ? sub : Cell(r, Col.Category);
-            rows.Add(new ParsedRow { Date = date.Value, Label = label, Amount = amount, Balance = balance, BankCategory = bankCategory, Page = 0, Top = i });
+            // Without a category, the kind of operation the bank names ("TRANSFER", "ATM") stands for it.
+            if (bankCategory.Length == 0 && !cols.ContainsKey(Col.Category) && type.Length > 0) bankCategory = Cell(r, Col.Type).Replace('_', ' ');
+            var row = new ParsedRow { Date = date.Value, Label = label, Amount = amount, Balance = balance, BankCategory = bankCategory, Page = 0, Top = i };
+            rows.Add(row);
+            if (fee != 0) fees[row] = fee;
         }
 
         // Newest first (most online exports): put the lines in time order, keeping the order of a same day reversed too.
@@ -274,6 +372,19 @@ public static partial class CsvStatementReader
         }
         var newestFirst = earlier > later;
         if (newestFirst) rows.Reverse();
+        // The balance printed on a line is the one after its fee: the operation first (balance before the fee), then the fee.
+        if (fees.Count > 0)
+        {
+            var withFees = new List<ParsedRow>(rows.Count + fees.Count);
+            foreach (var x in rows)
+            {
+                if (!fees.TryGetValue(x, out var fee)) { withFees.Add(x); continue; }
+                var after = x.Balance;
+                if (x.Amount != 0 || after is null) { x.Balance = after + fee; withFees.Add(x); }
+                withFees.Add(new ParsedRow { Date = x.Date, Label = $"{feeName}: {x.Label}", Amount = -fee, Balance = after, BankCategory = feeName, Page = 0, Top = x.Top });
+            }
+            rows = withFees;
+        }
 
         var kind = forcedKind ?? (hasCard ? AccountKind.CreditCard : savings ? AccountKind.Savings : AccountKind.Bank);
         // A card export with one signed amount column: purchases may be written as positive numbers.
@@ -423,11 +534,11 @@ public static partial class CsvStatementReader
         if (!cols.ContainsKey(Col.Date))
         {
             for (var i = 0; i < width; i++)
-                if (!used.Contains(i) && Share(i, c => DateParser.TryParse(c, out _)) > 0.8) { cols[Col.Date] = i; used.Add(i); break; }
+                if (!used.Contains(i) && Share(i, c => TryDate(c, out _)) > 0.8) { cols[Col.Date] = i; used.Add(i); break; }
         }
         if (!cols.ContainsKey(Col.Amount) && !cols.ContainsKey(Col.Debit) && !cols.ContainsKey(Col.Credit))
         {
-            var money = Enumerable.Range(0, width).Where(i => !used.Contains(i) && Share(i, c => TryNumber(c, decimalSep, out _) && !DateParser.TryParse(c, out _)) > 0.9).ToList();
+            var money = Enumerable.Range(0, width).Where(i => !used.Contains(i) && Share(i, c => TryNumber(c, decimalSep, out _) && !TryDate(c, out _)) > 0.9).ToList();
             // Typical layouts: amount | amount, balance | debit, credit | debit, credit, balance.
             if (money.Count >= 3) { cols[Col.Debit] = money[^3]; cols[Col.Credit] = money[^2]; cols[Col.Balance] = money[^1]; }
             else if (money.Count == 2)

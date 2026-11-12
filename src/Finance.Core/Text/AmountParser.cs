@@ -21,8 +21,13 @@ public readonly record struct PrintedAmount(decimal Magnitude, SignMarker Marker
 /// </summary>
 public static partial class AmountParser
 {
+    /// <summary>The currencies an amount can be written in, by their code ("CHF 12.50", "12,50 GBP"), besides the signs $ € £.</summary>
+    public const string CurrencyCodes = "EUR|USD|CAD|GBP|CHF|AUD|NZD|JPY|CNY|HKD|SGD|SEK|NOK|DKK|PLN|CZK|HUF|RON|BGN|ISK|TRY|ILS|AED|SAR|QAR|ZAR|MAD|TND|EGP|INR|THB|MYR|IDR|PHP|KRW|MXN|BRL|ARS|CLP|COP";
+
+    public static readonly HashSet<string> Currencies = [.. CurrencyCodes.Split('|')];
+
     [GeneratedRegex(
-        @"^(?<lead>[-+(]|-\s*\(|\(\s*-)?\s*(?:CA\$|C\$|US\$|CAD|USD|EUR|\$|€|£)?\s*(?<lead2>[-+])?\s*(?<num>\d{1,3}(?:[ .,']\d{3})+|\d+)(?<dec>[.,]\d{2})\s*(?:\$\s*CA|\$\s*US|CA\$|CAD|USD|EUR|\$|€|£)?\s*(?<trail>-|\)|CR|DR|DB|CRE|CREDIT|DEBIT)?\.?$",
+        @"^(?<lead>[-+(]|-\s*\(|\(\s*-)?\s*(?:CA\$|C\$|US\$|" + CurrencyCodes + @"|\$|€|£)?\s*(?<lead2>[-+])?\s*(?<num>\d{1,3}(?:[ .,']\d{3})+|\d+)(?<dec>[.,]\d{2})\s*(?:\$\s*CA|\$\s*US|CA\$|" + CurrencyCodes + @"|\$|€|£)?\s*(?<trail>-|\)|CR|DR|DB|CRE|CREDIT|DEBIT)?\.?$",
         RegexOptions.CultureInvariant)]
     private static partial Regex AmountRegex();
 
@@ -78,7 +83,7 @@ public static partial class AmountParser
     public static bool IsDetachedMarker(string text)
     {
         var t = TextNorm.Fold(text).Trim();
-        return t is "$" or "€" or "£" or "CAD" or "USD" or "EUR" or "CA$" or "US$" or "CR" or "DR" or "DB" or "-" or "+" or "$CA" or "$US";
+        return t is "$" or "€" or "£" or "CA$" or "US$" or "CR" or "DR" or "DB" or "-" or "+" or "$CA" or "$US" || Currencies.Contains(t);
     }
 
     /// <summary>Formats with invariant culture, two decimals, for storage.</summary>
