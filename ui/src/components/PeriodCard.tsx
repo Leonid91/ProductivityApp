@@ -490,7 +490,19 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
               {report.businessDays != null && <> · <span data-business-days>{plural(report.businessDays, 'business day')}</span></>}
             </Typography>
+            <Button data-export variant="outlined" size="small" startIcon={<PictureAsPdf />} onClick={() => setExporting(true)} sx={{ alignSelf: 'center' }}>Export</Button>
           </Box>
+          <ExportDialog
+            open={exporting}
+            onClose={() => setExporting(false)}
+            from={from}
+            to={to}
+            granularity={granularity}
+            currency={currency}
+            title={report.title}
+            timeline={report.global.timeline}
+            timelineCurrency={report.currency}
+          />
           {shown === 'analytics' && report.salary && (
             // The net salary of the period per hour worked and per year, every bank together, in the display currency.
             <Typography data-salary className="tnum" sx={{ mt: 1, mb: 2.5, fontSize: 15.5 }}
@@ -532,22 +544,6 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
                   <ConversionPanel conversion={report.conversion} />
                 </Part>
               )}            </>
-          )}
-          {shown !== 'summary' && (
-            <>
-              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2.5 }}>
-                <Button variant="outlined" startIcon={<PictureAsPdf />} onClick={() => setExporting(true)}>Export to PDF</Button>
-              </Box>
-              <ExportDialog
-                open={exporting}
-                onClose={() => setExporting(false)}
-                from={from}
-                to={to}
-                granularity={granularity}
-                currency={currency}
-                title={report.title}
-              />
-            </>
           )}
         </>
       )}

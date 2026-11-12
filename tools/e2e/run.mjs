@@ -321,7 +321,7 @@ try {
   // Transfers: the money moved over time, then in total; none of the charts of General.
   await analyticsPart(p, 'Transfers')
   await p.waitFor(`document.querySelector('${sec} [data-flowchart]') !== null && document.querySelector('${sec} [data-transfer-timeline] svg') !== null`, 20000, 'transfers view')
-  check('analytics, Transfers: the timeline then money moved, no pies, the PDF export kept', await p.eval(`(() => { const s = document.querySelector('${sec}'); const t = s.querySelector('[data-transfer-timeline]'); const f = s.querySelector('[data-flowchart]'); return !s.querySelector('[data-pie]') && !s.querySelector('[data-bars]') && !!(t.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) && [...s.querySelectorAll('button')].some(b => b.innerText === 'Export to PDF') })()`))
+  check('analytics, Transfers: the timeline then money moved, no pies, the export at the top of the period', await p.eval(`(() => { const s = document.querySelector('${sec}'); const t = s.querySelector('[data-transfer-timeline]'); const f = s.querySelector('[data-flowchart]'); return !s.querySelector('[data-pie]') && !s.querySelector('[data-bars]') && !!(t.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) && !!s.querySelector('[data-export]') })()`))
   await p.eval(`(() => { const f = document.querySelector('${sec} [data-transfer-timeline]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
   await sleep(700)
   await shot(p, '09c-transfers-timeline.png')
@@ -1310,11 +1310,23 @@ try {
   await p.clickText('Month', { selector: 'button' })
   await sleep(800)
 
-  // export the first month to PDF
-  await p.clickText('Export to PDF', { selector: 'section button', index: 0 })
+  // export the first month to PDF: one Export at the top of each period, in every view; the parts to export ticked
+  check('one Export at the top of each period, none at the bottom', await p.eval(`(() => { const s = [...document.querySelectorAll('main section[data-period]')].filter(x => x.querySelector('h2')); return s.length > 0 && s.every(x => { const b = x.querySelector('[data-export]'); return !!b && b.getBoundingClientRect().top < x.querySelector('h2').getBoundingClientRect().bottom }) && ![...document.querySelectorAll('main button')].some(b => b.innerText === 'Export to PDF') })()`))
+  await p.clickText('Summary', { selector: '[data-period-view] button' })
+  await sleep(600)
+  check('Export in the Summary view too', await p.eval(`!!document.querySelector('main section[data-period] [data-export]')`))
+  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await sleep(600)
+  await p.clickText('Export', { selector: 'section button[data-export]', index: 0 })
   await p.waitFor(`document.querySelector('[role=dialog]')?.innerText.includes('File name')`, 10000, 'export dialog')
   await sleep(300)
   await shot(p, '15-export-dialog.png')
+  const ticked = await p.eval(`Object.fromEntries([...document.querySelectorAll('[role=dialog] [data-export-part]')].map(c => [c.dataset.exportPart, c.querySelector('input')?.checked ?? c.checked]))`)
+  check('the parts to export: everything but the summary at first', JSON.stringify(ticked) === JSON.stringify({ summary: false, statements: true, analytics: true, transfers: true }), JSON.stringify(ticked))
+  // Nothing ticked: nothing to export.
+  for (const part of ['statements', 'analytics', 'transfers']) await p.mouseClick(`[role=dialog] [data-export-part="${part}"] input`)
+  check('nothing ticked, nothing to export', await p.eval(`[...document.querySelectorAll('[role=dialog] button')].find(b => b.innerText === 'Export').disabled`))
+  for (const part of ['summary', 'statements', 'analytics', 'transfers']) await p.mouseClick(`[role=dialog] [data-export-part="${part}"] input`)
   await p.clickText('Export', { selector: '[role=dialog] button' })
   await p.waitFor(`document.body.innerText.includes('Report saved')`, 30000, 'report saved')
   const pdfs = readdirSync(reports).filter((f) => f.endsWith('.pdf'))

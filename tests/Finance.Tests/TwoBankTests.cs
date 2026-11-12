@@ -379,6 +379,33 @@ public class TwoBankTests
         var text = string.Join(' ', (await ProductivityApp.Finance.Pdf.PdfReader.ReadAsync(pdf)).SelectMany(p => p.Words).Select(w => w.Text));
         Assert.Contains("All banks", text, StringComparison.Ordinal);
         Assert.Contains("converted", text, StringComparison.Ordinal);
+
+        // The views chosen at export, and only those: by default all but the summary.
+        async Task<string> Pdf(ReportBuilder.Parts? parts, string? svg = null) => string.Join(' ',
+            (await ProductivityApp.Finance.Pdf.PdfReader.ReadAsync(ReportBuilder.Build(r, "dd MMMM yyyy", new DateTime(2025, 11, 1), new ReportBuilder.Options(), parts, svg)))
+                .SelectMany(p => p.Words).Select(w => w.Text));
+        bool Has(string text, string phrase) => text.Contains(phrase, StringComparison.Ordinal);
+        var all = await Pdf(null);
+        Assert.True(Has(all, "Brand Name") && Has(all, "Expenses per category") && Has(all, "Transfers over time") && !Has(all, "Summary"), all[..200]);
+        var summary = await Pdf(new ReportBuilder.Parts(Summary: true, Statements: false, Analytics: false, Transfers: false));
+        Assert.True(Has(summary, "Summary") && Has(summary, "Balance") && !Has(summary, "Brand Name") && !Has(summary, "Expenses per category") && !Has(summary, "Transfers over time"), summary);
+        var statements = await Pdf(new ReportBuilder.Parts(Summary: false, Statements: true, Analytics: false, Transfers: false));
+        Assert.True(Has(statements, "Brand Name") && Has(statements, "All banks") && !Has(statements, "Expenses per category") && !Has(statements, "Transfers over time"));
+        var analytics = await Pdf(new ReportBuilder.Parts(Summary: false, Statements: false, Analytics: true, Transfers: false));
+        Assert.True(Has(analytics, "Expenses per category") && !Has(analytics, "Brand Name") && !Has(analytics, "Transfers over time"));
+        // The transfers over time: drawn as the screen draws it (the drawing given), with the totals of each kind.
+        var transfers = await Pdf(new ReportBuilder.Parts(Summary: false, Statements: false, Analytics: false, Transfers: true),
+            """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 200" width="1000" height="200" font-family="Inter"><text x="20" y="40" font-size="14">Drawn Lane Example</text><rect x="200" y="80" width="600" height="20" fill="#2468c0"/></svg>""");
+        Assert.True(Has(transfers, "Transfers over time") && Has(transfers, "Inside a bank") && !Has(transfers, "Brand Name") && !Has(transfers, "Expenses per category"), transfers);
+        // The drawing given is in the PDF (as a picture: its words are not text), as wide as the page.
+        const string drawing = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 437.5" font-family="Inter"><rect x="10" y="10" width="980" height="400" fill="#2468c0"/><text x="20" y="40">Lane</text></svg>""";
+        Assert.Equal((1000d, 437.5d), ReportBuilder.ViewBox(drawing));
+        var parts = new ReportBuilder.Parts(Summary: false, Statements: false, Analytics: false, Transfers: true);
+        var plain = ReportBuilder.Build(r, "dd MMMM yyyy", new DateTime(2025, 11, 1), new ReportBuilder.Options(), parts);
+        var drawn = ReportBuilder.Build(r, "dd MMMM yyyy", new DateTime(2025, 11, 1), new ReportBuilder.Options(), parts, drawing);
+        if (r.Global.Timeline.Lanes.Count > 0) Assert.True(drawn.Length > plain.Length + 200, $"{plain.Length} then {drawn.Length} bytes");
+        // Nothing chosen: nothing made.
+        await Assert.ThrowsAsync<ArgumentException>(() => Pdf(new ReportBuilder.Parts(false, false, false, false)));
     }
 
     [Fact]

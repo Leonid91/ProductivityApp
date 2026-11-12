@@ -44,40 +44,139 @@ public static class ReportBuilder
     /// <param name="TopLevelCategories">Charts by first-level category (nested categories counted in theirs), or by the categories themselves.</param>
     public sealed record Options(bool PieShowAll = true, string Transfers = "separate", bool TopLevelCategories = true);
 
+    /// <summary>
+    /// The views of the period a report holds, as chosen when exporting: the summary (the balance, by month or by year),
+    /// the statements (the totals and tables of each bank), the analytics (totals and charts of each bank and of every
+    /// bank together) and the transfers (over time, then in total). All but the summary by default.
+    /// </summary>
+    public sealed record Parts(bool Summary = false, bool Statements = true, bool Analytics = true, bool Transfers = true)
+    {
+        public bool Any => Summary || Statements || Analytics || Transfers;
+    }
+
     /// <summary>A period in one currency (one bank, or a single-currency summary).</summary>
     public static byte[] Build(PeriodSummary s, string dateFormat, DateTime generatedAt, Options? options = null) =>
         Document(s.Title, $"{s.Transactions.Count} operation{(s.Transactions.Count == 1 ? "" : "s")} · amounts in {s.Currency}", generatedAt,
             col =>
             {
-                Part(col, s, options ?? new Options(), dateFormat, tables: true);
+                Part(col, s, options ?? new Options(), dateFormat, tables: true, charts: true);
                 if (s.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, s));
             });
 
     /// <summary>
-    /// A period bank by bank (statements, totals and charts in the bank's currency), then every bank together in the
-    /// global currency (totals and charts), with how each amount was converted.
+    /// A period, with the views chosen (<paramref name="parts"/>): its summary; bank by bank its statements (totals and
+    /// tables) and analytics (totals and charts) in the bank's currency, then every bank together in the global currency
+    /// with how each amount was converted; its transfers, over time (<paramref name="timelineSvg"/>: the drawing of the
+    /// screen) then in total.
     /// </summary>
-    public static byte[] Build(PeriodReport r, string dateFormat, DateTime generatedAt, Options? options = null)
+    public static byte[] Build(PeriodReport r, string dateFormat, DateTime generatedAt, Options? options = null, Parts? parts = null, string? timelineSvg = null)
     {
         var o = options ?? new Options();
+        var p = parts ?? new Parts();
+        if (!p.Any) throw new ArgumentException("Choose at least one part of the period to export.");
         var count = r.Banks.Sum(b => b.Summary.Transactions.Count);
         return Document(r.Title, $"{count} operation{(count == 1 ? "" : "s")} · {r.Banks.Count} bank{(r.Banks.Count == 1 ? "" : "s")} · amounts in {r.Currency}", generatedAt, col =>
         {
-            foreach (var bank in r.Banks)
+            var started = false;
+            void Start(bool newPage)
             {
-                col.Item().PaddingTop(4).Text(bank.Native == bank.Currency ? $"{bank.Name} · {bank.Currency}" : $"{bank.Name} · {bank.Native} → {bank.Currency}").FontSize(14).SemiBold();
-                Part(col, bank.Summary, o, dateFormat, tables: true);
+                if (started && newPage) col.Item().PageBreak();
+                started = true;
             }
-            if (ShowsGlobal(r))
+            if (p.Summary)
             {
-                col.Item().PageBreak();
-                col.Item().Text($"All banks · {r.Currency}").FontSize(14).SemiBold();
-                Part(col, r.Global, o, dateFormat, tables: false);
-                col.Item().ShowEntire().Element(c => ConversionBlock(c, r.Conversion, dateFormat));
+                Start(false);
+                col.Item().ShowEntire().Element(c => SummaryBlock(c, r));
             }
-            // Money moved between the accounts of every bank: once, in its own part, in the display currency.
-            if (r.Global.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, r.Global));
+            if (p.Statements || p.Analytics)
+            {
+                Start(true);
+                if (p.Analytics && r.Salary is { } pay)
+                    col.Item().Text($"Your net salary per hour is {Formatting.Money(pay.PerHour, r.Currency)} and per year is {Formatting.Money(pay.PerYear, r.Currency)}.").FontSize(10);
+                foreach (var bank in r.Banks)
+                {
+                    col.Item().PaddingTop(4).Text(bank.Native == bank.Currency ? $"{bank.Name} · {bank.Currency}" : $"{bank.Name} · {bank.Native} → {bank.Currency}").FontSize(14).SemiBold();
+                    Part(col, bank.Summary, o, dateFormat, tables: p.Statements, charts: p.Analytics);
+                }
+                if (ShowsGlobal(r))
+                {
+                    col.Item().PageBreak();
+                    col.Item().Text($"All banks · {r.Currency}").FontSize(14).SemiBold();
+                    Part(col, r.Global, o, dateFormat, tables: false, charts: p.Analytics);
+                    col.Item().ShowEntire().Element(c => ConversionBlock(c, r.Conversion, dateFormat));
+                }
+            }
+            if (p.Transfers)
+            {
+                // Money moved between the accounts of every bank, in the display currency: over time, then in total.
+                Start(true);
+                col.Item().Text($"Transfers · {r.Currency}").FontSize(14).SemiBold();
+                col.Item().ShowEntire().Element(c => TimelineBlock(c, r.Global.Timeline, r.Currency, timelineSvg));
+                if (r.Global.Diagram.Nodes.Count > 0) col.Item().ShowEntire().Element(c => FlowBlock(c, r.Global));
+            }
         });
+    }
+
+    /// <summary>The balance of the period, every bank together in the global currency: by month (or by year beyond a year), then in all.</summary>
+    private static void SummaryBlock(IContainer container, PeriodReport r)
+    {
+        var s = r.Global;
+        container.Column(col =>
+        {
+            col.Spacing(8);
+            col.Item().Text($"Summary · {r.Currency}").FontSize(14).SemiBold();
+            col.Item().Table(table =>
+            {
+                table.ColumnsDefinition(d => { d.RelativeColumn(3); d.RelativeColumn(2); d.RelativeColumn(2); d.RelativeColumn(2); });
+                foreach (var (h, right) in new[] { ("Period", false), ("Expenses", true), ("Earnings", true), ("Balance", true) })
+                {
+                    var cell = table.Cell().BorderBottom(0.6f).BorderColor(Palette.Hairline).PaddingBottom(4);
+                    (right ? cell.AlignRight() : cell).Text(h).FontSize(7.5f).SemiBold().FontColor(Palette.InkSecondary);
+                }
+                void Line(string title, decimal expenses, decimal earnings, decimal balance, bool total)
+                {
+                    IContainer Cell() => table.Cell().BorderBottom(total ? 0 : 0.4f).BorderColor(Palette.Hairline).PaddingVertical(4);
+                    var t = Cell().Text(title);
+                    if (total) t.SemiBold();
+                    Cell().AlignRight().Text(Formatting.Money(expenses, r.Currency));
+                    Cell().AlignRight().Text(Formatting.Money(earnings, r.Currency));
+                    var b = Cell().AlignRight().Text(Formatting.Money(balance, r.Currency, sign: true)).FontColor(balance > 0 ? Palette.Positive : balance < 0 ? Palette.Negative : Palette.Ink);
+                    if (total) b.SemiBold();
+                }
+                if (s.Breakdown.Count > 1)
+                    foreach (var b in s.Breakdown) Line(b.Title, b.Expenses, b.Earnings, b.Balance, false);
+                Line("Balance", s.Expenses, s.Earnings, s.Balance, true);
+            });
+        });
+    }
+
+    /// <summary>The transfers over time: the totals of each kind, then the drawing of the screen (when given).</summary>
+    private static void TimelineBlock(IContainer container, TransferTimeline t, string currency, string? svg)
+    {
+        container.Border(0.6f).BorderColor(Palette.Hairline).CornerRadius(8).Padding(12).Column(col =>
+        {
+            col.Spacing(6);
+            col.Item().Text("Transfers over time").SemiBold().FontSize(10);
+            col.Item().Text(x =>
+            {
+                x.DefaultTextStyle(s => s.FontSize(8).FontColor(Palette.InkSecondary));
+                x.Span($"Inside a bank {Formatting.Money(t.Inside, currency)} · between banks {Formatting.Money(t.Between, currency)} · sent outside the app {Formatting.Money(t.SentOutside, currency)} · received from outside the app {Formatting.Money(t.ReceivedOutside, currency)}");
+                if (t.Lost is { } lost) x.Span($" · lost to exchange and fees {Formatting.Money(lost, currency)}");
+            });
+            if (t.Lanes.Count == 0) col.Item().Text("No transfers in this period.").FontSize(8.5f).FontColor(Palette.InkSecondary);
+            else if (svg is not null && ViewBox(svg) is { } box)
+                // Drawn as on the screen, as wide as the page, as tall as its proportions ask.
+                col.Item().PaddingTop(4).Height((float)(box.Height * 508 / box.Width)).Svg(svg);
+        });
+    }
+
+    /// <summary>The width and height of a drawing's viewBox, or null.</summary>
+    internal static (double Width, double Height)? ViewBox(string svg)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(svg, @"viewBox=""[-\d.]+[ ,]+[-\d.]+[ ,]+([\d.]+)[ ,]+([\d.]+)""");
+        if (!m.Success) return null;
+        var (w, h) = (double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture));
+        return w > 0 && h > 0 ? (w, h) : null;
     }
 
     /// <summary>The global part is shown when there is more than one bank, or anything converted.</summary>
@@ -127,8 +226,8 @@ public static class ReportBuilder
         return doc.GeneratePdf();
     }
 
-    /// <summary>One currency's statements (when asked), totals and charts.</summary>
-    private static void Part(ColumnDescriptor col, PeriodSummary s, Options o, string dateFormat, bool tables)
+    /// <summary>One currency's totals, then its statements and its charts (each when asked).</summary>
+    private static void Part(ColumnDescriptor col, PeriodSummary s, Options o, string dateFormat, bool tables, bool charts)
     {
         bool IsMove(TransactionView t) => Categories.Get(t.CategoryId).Kind == CategoryKind.Transfer;
         // Same split as the screen: every income in its own table (the earned part of an investment coming back
@@ -138,6 +237,12 @@ public static class ReportBuilder
             .OrderBy(t => t.Date).ToList();
         var main = s.Transactions.Where(t => t.Recurring is null && !(t.Amount > 0 && !IsMove(t)) && (o.Transfers == "inline" || !IsMove(t))).ToList();
         var recurringOut = s.Transactions.Where(t => t.Recurring is not null && t.Amount < 0).ToList();
+        col.Item().ShowEntire().Column(t =>
+        {
+            t.Spacing(8);
+            t.Item().Element(c => Totals(c, s));
+            t.Item().Element(c => Ratios(c, s));
+        });
         if (tables)
         {
                 col.Item().Element(c => OperationsTable(c, main, s, dateFormat, "No other operations in this period."));
@@ -151,12 +256,7 @@ public static class ReportBuilder
                     col.Item().Element(c => Section(c, "Transfers, card payments & investments", s.Movements.Sum(m => m.Amount), s, Palette.Surface,
                         x => MovementsTable(x, s.Movements, s, dateFormat)));
         }
-                col.Item().ShowEntire().Column(t =>
-                {
-                    t.Spacing(8);
-                    t.Item().Element(c => Totals(c, s));
-                    t.Item().Element(c => Ratios(c, s));
-                });
+        if (!charts) return;
                 var byCategory = o.TopLevelCategories ? s.ByTopCategory : s.ByCategory;
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per category", o.PieShowAll ? byCategory : SummaryService.FoldPie(byCategory), s.Currency));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", o.PieShowAll ? s.ByBrand : s.BrandPie, s.Currency));

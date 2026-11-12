@@ -795,9 +795,26 @@ real app with `tools/e2e/perf.mjs`.
   → 10 MB).
 - The last reports made are kept until the operations, the settings, the rates, the holidays or the day change: going
   back to a period shows it at once (at most 8 reports and 60,000 operations kept).
-- Time from the click to the periods on screen drawn (ten years of fictitious operations, median of 3 runs, commit 32
-  → now): Month 0.25 s → 0.14 s, Year 0.42 s → 0.30 s, All time 1.34 s → 0.74 s, Custom 0.24 s → 0.14 s. The
-  engine alone, for ten years: the report made in 0.19 s → 0.15 s, written for the interface in 0.11 s → 0.09 s.
+- How many times per second a view can be shown, from the click to the periods on screen drawn (fps; ten years of
+  fictitious operations, median of 3 runs, commit 32 → now): Month 4.0 → 7.1, Year 2.4 → 3.3, All time 0.75 → 1.35,
+  Custom 4.2 → 7.1. The engine alone, for ten years: reports made 5.3 → 6.5 per second, written for the interface
+  8.8 → 10.8 per second.
 
 ### Added
 - Unit test: a report is kept until something it depends on changes.
+
+## November 12th, 2026 - One export per period, with the views to export chosen - Commit 35
+
+### Changed
+- One Export button at the top of each period, in every view (the Export to PDF button at the bottom of the
+  statements, analytics and transfers is gone). Its dialog ticks the views to put in the PDF: Summary, Statements,
+  Analytics and Transfers, all but the summary at first; nothing ticked, nothing to export.
+- The PDF holds the views ticked, in that order: the summary (the balance by month, or by year beyond a year, then in
+  all, every bank together); the statements (each bank's totals and tables); the analytics (totals and charts of each
+  bank, then of every bank together, the salary per hour and per year, how amounts were converted); the transfers
+  (the totals of each kind, the transfers over time drawn exactly as on the screen, on white, then money moved).
+
+### Added
+- Unit tests: a PDF holds the views chosen and only those; the drawing of the transfers over time is in it.
+- End-to-end checks: one Export at the top of each period in every view, none at the bottom; everything but the
+  summary ticked at first; nothing ticked, nothing to export; the PDF written.

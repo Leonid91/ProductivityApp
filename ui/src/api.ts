@@ -458,7 +458,13 @@ export const api = {
   report: {
     defaults: (from: string, to: string, granularity: Granularity, currency: string) =>
       invoke<{ folder: string; fileName: string }>('report.defaults', { from, to, granularity, currency }),
-    export: (p: { from: string; to: string; granularity: Granularity; currency: string; folder: string; fileName: string }) =>
+    export: (p: {
+      from: string; to: string; granularity: Granularity; currency: string; folder: string; fileName: string
+      /** The views of the period the PDF holds. */
+      parts: { summary: boolean; statements: boolean; analytics: boolean; transfers: boolean }
+      /** The transfers over time as drawn on the screen (SVG). */
+      timelineSvg?: string
+    }) =>
       invoke<{ path: string }>('report.export', p),
   },
   eraseAll: () => invoke<null>('data.eraseAll'),

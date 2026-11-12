@@ -352,7 +352,8 @@ internal static class Api
             if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new ArgumentException("The file name contains characters Windows does not allow.");
             if (!name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) name += ".pdf";
             var path = Path.Combine(folder, name);
-            var pdf = ReportBuilder.Build(report, s.Setting("dateFormat"), DateTime.Now, ReportOptions(s));
+            var pdf = ReportBuilder.Build(report, s.Setting("dateFormat"), DateTime.Now, ReportOptions(s),
+                p.Opt<ReportBuilder.Parts>("parts"), p.Opt<string>("timelineSvg"));
             File.WriteAllBytes(path, pdf);
             s.Db.SetSetting("reportsFolder", folder);
             return Task.FromResult<object?>(new { path });
