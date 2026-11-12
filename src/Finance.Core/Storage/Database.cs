@@ -319,7 +319,9 @@ public sealed class Database : IDisposable
         // memory: they are read again on next use. Settings, rules, categories, banks and templates leave them alone.
         // Settings and exchange rates are bookkeeping: writing them (the window's place, a row order, a download of
         // rates) changes no operation, so what is kept in memory about the operations stays valid.
-        if (!sql.AsSpan().TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) && !IsBookkeeping(sql))
+        var write = !sql.AsSpan().TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase);
+        if (write && IsBookkeeping(sql)) BookkeepingVersion++;
+        else if (write)
         {
             Version++;
             if (!_patching && (sql.Contains("transactions", StringComparison.OrdinalIgnoreCase) || sql.Contains("DELETE", StringComparison.OrdinalIgnoreCase)
@@ -374,6 +376,9 @@ public sealed class Database : IDisposable
 
     /// <summary>Goes up with every write: lets the services keep results that only depend on the stored data.</summary>
     public long Version { get; private set; }
+
+    /// <summary>Goes up with every write of settings, exchange rates or holidays (see <see cref="IsBookkeeping"/>).</summary>
+    public long BookkeepingVersion { get; private set; }
 
     /// <summary>The same texts (currencies, categories, brands, wordings) repeat across operations: kept once in memory.</summary>
     private readonly Dictionary<string, string> _strings = new(StringComparer.Ordinal);

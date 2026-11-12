@@ -52,8 +52,6 @@ export interface TransactionView {
   currency: string
   brand: string
   categoryId: string
-  categorySource: string
-  brandSource: string
   rawLabel: string
   note: string
   accountId: number

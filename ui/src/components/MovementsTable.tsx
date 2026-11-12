@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Box, Menu, Pagination, Table, TableBody, TableCell, TableHead, TableRow, Typography, useTheme } from '@mui/material'
+import { plainRows } from './common'
 import East from '@mui/icons-material/EastRounded'
 import { api, type MovementView, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
@@ -80,7 +81,7 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
 
   return (
     <Box>
-      <Table size="small" data-movements sx={{ tableLayout: 'fixed', '& td, & th': { px: 1.25 }, '& tr > *:first-of-type': { pl: 0.5 } }}>
+      <Table size="small" data-movements sx={{ tableLayout: 'fixed', '& td, & th': { px: 1.25 }, '& tr > *:first-of-type': { pl: 0.5 }, ...plainRows(theme) }}>
         <colgroup>
           <col style={{ width: '14%' }} />
           <col style={{ width: 196 }} />
@@ -109,10 +110,10 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
           {visible.map((m) => {
             const tx = byId.get(m.editId)
             return (
-              <TableRow key={m.editId} hover sx={{ '& td': { py: 0.9 } }}>
-                <TableCell className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(m.date, settings.dateFormat)}</TableCell>
-                <TableCell><CategoryPill id={m.categoryId} onChange={(id) => void setCategory(m, id)} /></TableCell>
-                <TableCell>
+              <tr key={m.editId} className="row">
+                <td className="tnum" style={{ color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}>{formatDate(m.date, settings.dateFormat)}</td>
+                <td><CategoryPill id={m.categoryId} onChange={(id) => void setCategory(m, id)} /></td>
+                <td>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                     <Typography variant="body2" noWrap title={tx?.rawLabel ?? m.label}>{m.label}</Typography>
                   </Box>
@@ -123,16 +124,16 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
                       {m.lost != null && <>, {money(m.lost, currency)} lost to exchange and fees</>}
                     </Typography>
                   )}
-                </TableCell>
-                <TableCell>{place(m.from, m.fromOutside, m.fromType)}</TableCell>
-                <TableCell padding="none"><East sx={{ fontSize: 16, color: 'text.disabled', display: 'block' }} /></TableCell>
-                <TableCell>{place(m.to, m.toOutside, m.toType)}</TableCell>
-                <TableCell>{tx && <TagCell operationId={tx.id} own={tx.ownTags} all={tagsOf(m)} categoryName={category(tx.categoryId).name} />}</TableCell>
-                <TableCell align="right" className="tnum" sx={{ fontWeight: 560, whiteSpace: 'nowrap' }}>{money(m.amount, currency)}</TableCell>
-                <TableCell padding="none" align="right" sx={{ pr: '4px !important' }}>
+                </td>
+                <td>{place(m.from, m.fromOutside, m.fromType)}</td>
+                <td><East sx={{ fontSize: 16, color: 'text.disabled', display: 'block' }} /></td>
+                <td>{place(m.to, m.toOutside, m.toType)}</td>
+                <td>{tx && <TagCell operationId={tx.id} own={tx.ownTags} all={tagsOf(m)} categoryName={category(tx.categoryId).name} />}</td>
+                <td className="tnum" style={{ textAlign: 'right', fontWeight: 560, whiteSpace: 'nowrap' }}>{money(m.amount, currency)}</td>
+                <td style={{ textAlign: 'right', paddingRight: 4 }}>
                   {tx && <RowActions onEdit={() => onEdit(tx)} />}
-                </TableCell>
-              </TableRow>
+                </td>
+              </tr>
             )
           })}
           {visible.length === 0 && (

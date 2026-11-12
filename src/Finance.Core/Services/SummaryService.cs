@@ -13,8 +13,8 @@ public sealed record Bar(string Key, string Label, decimal Expenses, decimal Ear
 /// <param name="Recurring">How often it comes back ("monthly", "twice a month", "yearly"), or null when it is not recurring.</param>
 /// <remarks>Empty fields are left out of what the interface receives (a period of ten years holds tens of thousands of operations).</remarks>
 public sealed record TransactionView(
-    long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, string CategorySource,
-    string BrandSource, string RawLabel, string Note, long AccountId, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? StatementId,
+    long Id, string Date, decimal Amount, string Currency, string Brand, string CategoryId, [property: JsonIgnore] string CategorySource,
+    [property: JsonIgnore] string BrandSource, string RawLabel, string Note, long AccountId, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? StatementId,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Recurring = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? LinkedId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? Earned = null, long[]? OwnTags = null, long[]? Tags = null,
@@ -200,7 +200,48 @@ public sealed class SummaryService(Database db)
     /// with every conversion shown. An operation without a rate for its day is listed in its own currency and left
     /// out of the totals.
     /// </summary>
+    /// <summary>
+    /// The last reports made, kept while nothing they depend on changed (the operations, the settings, the rates, the
+    /// holidays, the day): going back to a period, or scrolling back to it, shows it at once.
+    /// </summary>
+    private readonly LinkedList<(ReportKey Key, PeriodReport Report)> _reports = new();
+    private sealed record ReportKey(DateOnly From, DateOnly To, Granularity G, string Global, ExchangeRates Rates, string Source, Holidays? Holidays, string Weekend, long Version, long Bookkeeping, DateOnly Today);
+
+    /// <summary>At most this many reports are kept, holding at most <see cref="KeptOperations"/> operations together.</summary>
+    private const int KeptReports = 8, KeptOperations = 60_000;
+
+    /// <summary>Forgets the reports kept (to measure how long a report takes to make).</summary>
+    public void ForgetReports() { lock (_reports) _reports.Clear(); }
+
+    /// <remarks>The report returned is shared with the next callers asking for the same period: it is never changed.</remarks>
     public PeriodReport Report(DateOnly from, DateOnly to, Granularity g, string global, ExchangeRates rates, Holidays? holidays = null)
+    {
+        // The source of rates and the weekend days chosen are read as the report would read them.
+        var key = new ReportKey(from, to, g, global, rates, rates.Source.Id, holidays, holidays is null ? "" : string.Join(',', holidays.Weekend().Order()),
+            db.Version, db.BookkeepingVersion, DateOnly.FromDateTime(DateTime.Today));
+        lock (_reports)
+        {
+            for (var n = _reports.First; n is not null; n = n.Next)
+                if (n.Value.Key == key)
+                {
+                    _reports.Remove(n);
+                    _reports.AddFirst(n);
+                    return n.Value.Report;
+                }
+        }
+        var report = Make(from, to, g, global, rates, holidays);
+        // Read again after: a write while it was made leaves it out of the kept ones.
+        if (db.Version != key.Version || db.BookkeepingVersion != key.Bookkeeping) return report;
+        lock (_reports)
+        {
+            _reports.AddFirst((key, report));
+            static int Size(PeriodReport r) => r.Banks.Sum(b => b.Summary.Transactions.Count) + r.Global.Transactions.Count;
+            while (_reports.Count > KeptReports || (_reports.Count > 1 && _reports.Sum(x => Size(x.Report)) > KeptOperations)) _reports.RemoveLast();
+        }
+        return report;
+    }
+
+    private PeriodReport Make(DateOnly from, DateOnly to, Granularity g, string global, ExchangeRates rates, Holidays? holidays)
     {
         if (to < from) throw new ArgumentException("The period ends before it starts.");
         var all = db.Transactions(from, to);
@@ -415,7 +456,7 @@ public sealed class SummaryService(Database db)
             TransfersOut = transfersOut,
             TransfersIn = transfersIn,
             // Operations without a rate for their day are listed too, in their own currency (outside every total).
-            Transactions = !listOperations ? [] : txs.Concat(unconverted ?? []).OrderBy(t => t.Date).ThenBy(t => t.Id).Select(t => converted is not null && converted.TryGetValue(t.Id, out var c)
+            Transactions = !listOperations ? [] : InOrder(txs, unconverted).Select(t => converted is not null && converted.TryGetValue(t.Id, out var c)
                 ? View(t, recurring.GetValueOrDefault(t.Id), tags) with
                 {
                     Original = c.Original.Amount, OriginalCurrency = c.Original.Currency, Rate = c.Rate.Rate,
@@ -475,13 +516,20 @@ public sealed class SummaryService(Database db)
         // A year is shown as the year alone; any other period month by month, or year by year beyond a year.
         var years = g == Granularity.Year || to.DayNumber - from.DayNumber + 1 > 366;
         var parts = new List<PeriodBalance>();
+        // Each operation of the period goes once to its part.
+        int PartOf(DateOnly d) => years ? d.Year - from.Year : (d.Year - from.Year) * 12 + d.Month - from.Month;
+        var count = to < from ? 0 : PartOf(to) + 1;
+        var byPart = new List<Transaction>[count];
+        for (var i = 0; i < count; i++) byPart[i] = [];
+        foreach (var t in txs)
+            if (t.Date >= from && t.Date <= to) byPart[PartOf(t.Date)].Add(t);
         var start = from;
         while (start <= to)
         {
             var end = years ? new DateOnly(start.Year, 12, 31) : new DateOnly(start.Year, start.Month, DateTime.DaysInMonth(start.Year, start.Month));
             if (end > to) end = to;
             var (a, b) = (start, end);
-            var (expenses, earnings) = Totals(txs.Where(t => t.Date >= a && t.Date <= b));
+            var (expenses, earnings) = Totals(byPart[PartOf(a)]);
             var title = Formatting.PeriodTitle(a, b, years ? Granularity.Year : Granularity.Month);
             parts.Add(new PeriodBalance(a.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), b.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 title, expenses, earnings, earnings - expenses));
@@ -504,47 +552,65 @@ public sealed class SummaryService(Database db)
         return head;
     }
 
-    /// <summary>The larger of what left and what arrived: a movement seen on both of its accounts counts once.</summary>
-    private static decimal Moved(IEnumerable<Transaction> t) =>
-        Math.Max(-t.Where(x => x.Amount < 0).Sum(x => x.Amount), t.Where(x => x.Amount > 0).Sum(x => x.Amount));
+    /// <summary>The operations by date then id (sorted only when they are not already, as when read from the database).</summary>
+    private static IEnumerable<Transaction> InOrder(List<Transaction> txs, List<Transaction>? more)
+    {
+        var all = more is { Count: > 0 } ? [.. txs, .. more] : txs;
+        for (var i = 1; i < all.Count; i++)
+            if (all[i - 1].Date > all[i].Date || (all[i - 1].Date == all[i].Date && all[i - 1].Id > all[i].Id))
+                return all.OrderBy(t => t.Date).ThenBy(t => t.Id);
+        return all;
+    }
 
     private static (List<Bar>, string) Series(List<Transaction> txs, DateOnly from, DateOnly to, Granularity g)
     {
-        var counted = txs.Where(t => Categories.Get(t.CategoryId).Kind != CategoryKind.Transfer).ToList();
+        // Each operation goes once to its bar (its day, month or year), however long the period.
         var days = to.DayNumber - from.DayNumber + 1;
-        if (g == Granularity.Month || days <= 62)
+        var unit = g == Granularity.Month || days <= 62 ? "day" : g == Granularity.Year || days <= 366 * 3 ? "month" : "year";
+        var first = new DateOnly(from.Year, unit == "year" ? 1 : from.Month, 1);
+        int BarOf(DateOnly d) => unit == "day" ? (d >= from && d <= to ? d.DayNumber - from.DayNumber : -1)
+            : unit == "month" ? (d.Year - first.Year) * 12 + d.Month - first.Month : d.Year - first.Year;
+        var count = unit == "day" ? days : unit == "month" ? (to.Year - first.Year) * 12 + to.Month - first.Month + 1 : to.Year - first.Year + 1;
+        var spent = new decimal[count];
+        var earned = new decimal[count];
+        // Movements between own accounts, by bar: other, card payments, investments (money out, money in).
+        var moved = new (decimal Out, decimal In)[count, 3];
+        foreach (var t in txs)
         {
-            var bars = new List<Bar>();
-            for (var d = from; d <= to; d = d.AddDays(1))
+            var i = BarOf(t.Date);
+            if (i < 0 || i >= count) continue;
+            if (Categories.Get(t.CategoryId).Kind != CategoryKind.Transfer)
             {
-                var day = counted.Where(t => t.Date == d).ToList();
-                var moves = txs.Where(t => t.Date == d && Categories.IsTransfer(t.CategoryId)).ToList();
-                bars.Add(new Bar(d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), d.Day.ToString(CultureInfo.InvariantCulture),
-                    -day.Where(t => t.Amount < 0).Sum(t => t.Amount), day.Where(t => t.Amount > 0).Sum(t => t.Amount),
-                    Moved(moves.Where(t => t.CategoryId is not (Categories.CardPayments or Categories.Investments))),
-                    Moved(moves.Where(t => t.CategoryId == Categories.CardPayments)), Moved(moves.Where(t => t.CategoryId == Categories.Investments))));
+                if (t.Amount < 0) spent[i] -= t.Amount; else if (t.Amount > 0) earned[i] += t.Amount;
             }
-            return (bars, "day");
-        }
-        if (g == Granularity.Year || days <= 366 * 3)
-        {
-            var bars = new List<Bar>();
-            for (var m = new DateOnly(from.Year, from.Month, 1); m <= to; m = m.AddMonths(1))
+            else if (unit == "day")
             {
-                var month = counted.Where(t => t.Date.Year == m.Year && t.Date.Month == m.Month).ToList();
+                var k = t.CategoryId == Categories.CardPayments ? 1 : t.CategoryId == Categories.Investments ? 2 : 0;
+                if (t.Amount < 0) moved[i, k].Out -= t.Amount; else if (t.Amount > 0) moved[i, k].In += t.Amount;
+            }
+        }
+        // A movement seen on both of its accounts counts once: the larger of what left and what arrived.
+        decimal MovedAt(int i, int k) => Math.Max(moved[i, k].Out, moved[i, k].In);
+        var bars = new List<Bar>(count);
+        for (var i = 0; i < count; i++)
+        {
+            if (unit == "day")
+            {
+                var d = from.AddDays(i);
+                bars.Add(new Bar(d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), d.Day.ToString(CultureInfo.InvariantCulture), spent[i], earned[i], MovedAt(i, 0), MovedAt(i, 1), MovedAt(i, 2)));
+            }
+            else if (unit == "month")
+            {
+                var m = first.AddMonths(i);
                 var label = g == Granularity.Year ? m.ToString("MMM", Formatting.English) : m.ToString("MMM yy", Formatting.English);
-                bars.Add(new Bar(m.ToString("yyyy-MM", CultureInfo.InvariantCulture), label,
-                    -month.Where(t => t.Amount < 0).Sum(t => t.Amount), month.Where(t => t.Amount > 0).Sum(t => t.Amount)));
+                bars.Add(new Bar(m.ToString("yyyy-MM", CultureInfo.InvariantCulture), label, spent[i], earned[i]));
             }
-            return (bars, "month");
+            else
+            {
+                var y = (first.Year + i).ToString(CultureInfo.InvariantCulture);
+                bars.Add(new Bar(y, y, spent[i], earned[i]));
+            }
         }
-        var years = new List<Bar>();
-        for (var y = from.Year; y <= to.Year; y++)
-        {
-            var year = counted.Where(t => t.Date.Year == y).ToList();
-            years.Add(new Bar(y.ToString(CultureInfo.InvariantCulture), y.ToString(CultureInfo.InvariantCulture),
-                -year.Where(t => t.Amount < 0).Sum(t => t.Amount), year.Where(t => t.Amount > 0).Sum(t => t.Amount)));
-        }
-        return (years, "year");
+        return (bars, unit);
     }
 }

@@ -1,4 +1,5 @@
-import { Box, IconButton, Tooltip } from '@mui/material'
+import { Box, IconButton } from '@mui/material'
+import { LazyTooltip } from './common'
 import EditOutlined from '@mui/icons-material/EditOutlined'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 
@@ -44,20 +45,20 @@ export function RowActions({ onEdit, editLabel = 'Edit', onDelete, deleteLabel =
       {only ? (
         <IconButton size="small" aria-hidden tabIndex={-1} sx={{ ...quietEdit, visibility: 'hidden' }}><EditOutlined sx={{ fontSize: 18 }} /></IconButton>
       ) : (
-        <Tooltip title={editLabel} enterDelay={600}>
+        <LazyTooltip title={editLabel} enterDelay={600}>
           <IconButton size="small" disableRipple aria-label={editLabel} data-row-edit onClick={onEdit} sx={quietEdit}>
             <EditOutlined sx={{ fontSize: 18 }} />
           </IconButton>
-        </Tooltip>
+        </LazyTooltip>
       )}
       {(onDelete || only) && (
         <Box sx={{ width: 34, display: 'flex', justifyContent: 'center' }}>
           {!only && canDelete && (
-            <Tooltip title={deleteLabel} enterDelay={600}>
+            <LazyTooltip title={deleteLabel} enterDelay={600}>
               <IconButton size="small" disableRipple aria-label={deleteLabel} data-row-delete onClick={onDelete} sx={quietDelete}>
                 {deleteIcon ?? <DeleteOutline fontSize="small" />}
               </IconButton>
-            </Tooltip>
+            </LazyTooltip>
           )}
         </Box>
       )}

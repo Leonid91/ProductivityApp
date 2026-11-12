@@ -449,8 +449,14 @@ export function PeriodCard({ from, to, granularity, currency, view, onEdit, onLo
   useEffect(() => {
     if (!visible) { setReport(null); return }
     let live = true
-    // Drawn in the background, a little at a time, so scrolling stays smooth while periods come in.
-    api.periods.report(from, to, granularity).then((r) => { if (live) startTransition(() => { setReport(r); onLoaded?.(r) }) }, fail)
+    // A period on the screen is drawn at once; the others in the background, a little at a time, so scrolling stays smooth
+    // while periods come in (and periods arriving together never hold back the one on the screen).
+    api.periods.report(from, to, granularity).then((r) => {
+      if (!live) return
+      const show = () => { setReport(r); onLoaded?.(r) }
+      if (ref.current && distance(ref.current) === 0) show()
+      else startTransition(show)
+    }, fail)
     return () => { live = false }
   }, [visible, from, to, granularity, currency, dataVersion, fail, onLoaded])
 

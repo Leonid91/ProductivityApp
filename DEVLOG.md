@@ -779,3 +779,25 @@ real app with `tools/e2e/perf.mjs`.
 
 ### Removed
 - The database's two link writes replaced by one that writes a single operation's link.
+
+## November 12th, 2026 - Faster years, all time and custom periods - Commit 34
+
+### Changed
+- A period on the screen is drawn as soon as it arrives; the others in the background (periods arriving together held
+  back the one on screen: Month was slower since the last change).
+- Periods are drawn faster: the lines of the operations and movements tables are plain cells styled once by their
+  table (they were rebuilt cell by cell by the component library); the tooltips of a line (category path, wording,
+  pencil) are made the moment the mouse first reaches them (a click right after still lands), and the category and tag menus the first time they open. They
+  look and behave as before.
+- Reports are made faster for long periods: the bars and the month or year parts go through the operations once
+  (they went through all of them for every day, month or year); the operations already in order are not sorted again.
+- The interface receives less: two fields of every operation it never read are left out (a period of ten years: 12 MB
+  → 10 MB).
+- The last reports made are kept until the operations, the settings, the rates, the holidays or the day change: going
+  back to a period shows it at once (at most 8 reports and 60,000 operations kept).
+- Time from the click to the periods on screen drawn (ten years of fictitious operations, median of 3 runs, commit 32
+  → now): Month 0.25 s → 0.14 s, Year 0.42 s → 0.30 s, All time 1.34 s → 0.74 s, Custom 0.24 s → 0.14 s. The
+  engine alone, for ten years: the report made in 0.19 s → 0.15 s, written for the interface in 0.11 s → 0.09 s.
+
+### Added
+- Unit test: a report is kept until something it depends on changes.

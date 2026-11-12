@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
   Autocomplete, Box, InputBase, ListItemText, Menu, MenuItem, Pagination, Table, TableBody, TableCell,
-  TableHead, TableRow, Tooltip, Typography,
+  TableHead, TableRow, Typography, useTheme,
 } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
 import Check from '@mui/icons-material/CheckRounded'
@@ -10,7 +10,7 @@ import { api, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample, moneyBeside, plural } from '../format'
 import { CategoryIcon } from './CategoryIcon'
-import { CategoryPill, MenuDivider, Money } from './common'
+import { CategoryPill, LazyTooltip, MenuDivider, Money, plainRows } from './common'
 import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './filters'
 import { TagCell, useTagName } from './tags'
 import { useKept } from '../keep'
@@ -84,14 +84,14 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: strin
   }
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-      <Tooltip title={tx.rawLabel || 'Entered by hand'} placement="top-start">
+      <LazyTooltip title={tx.rawLabel || 'Entered by hand'} placement="top-start">
         <Box
           onClick={() => setEditing(true)}
           sx={{ fontWeight: 520, cursor: 'text', borderRadius: 1.5, px: 1, mx: -1, py: 0.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', '&:hover': { bgcolor: 'action.hover' } }}
         >
           {tx.brand}
         </Box>
-      </Tooltip>
+      </LazyTooltip>
     </Box>
   )
 }
@@ -112,6 +112,7 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
   empty?: string
 }) {
   const { settings, setSetting, info, category, notify, fail, dataChanged, askScope } = useApp()
+  const theme = useTheme()
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
   const [catMenu, setCatMenu] = useState<HTMLElement | null>(null)
   const [brandMenu, setBrandMenu] = useState<HTMLElement | null>(null)
@@ -167,7 +168,7 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
 
   return (
     <Box>
-      <Table size="small" sx={{ tableLayout: 'fixed', '& td, & th': { px: 1.5 }, '& tr > *:first-of-type': { pl: 0.5 } }}>
+      <Table size="small" sx={{ tableLayout: 'fixed', '& td, & th': { px: 1.5 }, '& tr > *:first-of-type': { pl: 0.5 }, ...plainRows(theme) }}>
         <colgroup>
           <col style={{ width: frequency ? '16%' : '18%' }} />
           <col style={{ width: frequency ? '20%' : '22%' }} />
@@ -192,13 +193,13 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
           {visible.map((t) => {
             const transfer = category(t.categoryId).kind === 'transfer'
             return (
-              <TableRow key={t.id} hover sx={{ '& td': { py: 0.9 } }}>
-                <TableCell className="tnum" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{formatDate(t.date, settings.dateFormat)}</TableCell>
-                <TableCell><CategoryPill id={t.categoryId} onChange={(id) => void setCategory(t, id)} /></TableCell>
-                <TableCell><BrandCell tx={t} brands={brands} onSaved={(n, b) => learned(n, b)} /></TableCell>
-                <TableCell><TagCell operationId={t.id} own={t.ownTags} all={t.tags} categoryName={category(t.categoryId).name} /></TableCell>
-                {frequency && <TableCell sx={{ color: 'text.secondary' }}>{t.recurring}</TableCell>}
-                <TableCell align="right" data-amount>
+              <tr key={t.id} className="row">
+                <td className="tnum" style={{ color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}>{formatDate(t.date, settings.dateFormat)}</td>
+                <td><CategoryPill id={t.categoryId} onChange={(id) => void setCategory(t, id)} /></td>
+                <td><BrandCell tx={t} brands={brands} onSaved={(n, b) => learned(n, b)} /></td>
+                <td><TagCell operationId={t.id} own={t.ownTags} all={t.tags} categoryName={category(t.categoryId).name} /></td>
+                {frequency && <td style={{ color: theme.palette.text.secondary }}>{t.recurring}</td>}
+                <td style={{ textAlign: 'right' }} data-amount>
                   {t.currency !== currency ? (
                     // No rate for its day: in its own currency, outside the totals.
                     <Box component="span" title={`No ${t.currency} rate for this day: left out of the totals`} sx={{ color: 'text.secondary' }}>
@@ -211,11 +212,11 @@ export function TransactionTable({ keep, transactions, currency, paged, onEdit, 
                       {moneyBeside(t.original, t.originalCurrency, currency, { sign: true })}
                     </Typography>
                   )}
-                </TableCell>
-                <TableCell padding="none" align="right" sx={{ pr: '4px !important' }}>
+                </td>
+                <td style={{ textAlign: 'right', paddingRight: 4 }}>
                   <RowActions onEdit={() => onEdit(t)} />
-                </TableCell>
-              </TableRow>
+                </td>
+              </tr>
             )
           })}
           {visible.length === 0 && (

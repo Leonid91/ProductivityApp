@@ -38,6 +38,7 @@ export function TagCell({ operationId, own, all, categoryName }: { operationId: 
   // The tags ticked so far, until the operation comes back with them: a second tick builds on the first even when
   // the period has not been read again yet.
   const [ticked, setTicked] = useState<number[] | null>(null)
+  const [menuMade, setMenuMade] = useState(false)
   const ownKey = [...own].sort().join()
   useEffect(() => {
     setTicked((t) => (t && [...t].sort().join() === ownKey ? null : t))
@@ -57,7 +58,7 @@ export function TagCell({ operationId, own, all, categoryName }: { operationId: 
         component="button"
         data-tag-cell={operationId}
         aria-label="Tags"
-        onClick={(e) => setAnchor(e.currentTarget)}
+        onClick={(e) => { setAnchor(e.currentTarget); setMenuMade(true) }}
         sx={{
           display: 'flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center', minHeight: 26, width: '100%', border: 0, background: 'none', p: 0.25, mx: -0.25,
           borderRadius: 1.5, cursor: 'pointer', font: 'inherit', textAlign: 'left', '&:hover': { bgcolor: 'action.hover' },
@@ -67,7 +68,8 @@ export function TagCell({ operationId, own, all, categoryName }: { operationId: 
         {shown.map((t) => <TagChip key={t.id} tag={t} inherited={!ownSet.has(t.id)} />)}
         {shown.length === 0 && <LocalOffer className="tag-add" sx={{ fontSize: 16, color: 'text.disabled', opacity: 0, transition: 'opacity 120ms' }} />}
       </Box>
-      <Menu anchorEl={anchor} open={anchor !== null} onClose={() => setAnchor(null)} slotProps={{ paper: { sx: { minWidth: 240, maxHeight: 420 } } }}>
+      {/* Made the first time it opens (a table holds hundreds of these), kept after so it closes as it always did. */}
+      {menuMade && <Menu anchorEl={anchor} open={anchor !== null} onClose={() => setAnchor(null)} slotProps={{ paper: { sx: { minWidth: 240, maxHeight: 420 } } }}>
         {tags.length === 0 && (
           <MenuItem disabled><ListItemText>No tags yet</ListItemText></MenuItem>
         )}
@@ -84,7 +86,7 @@ export function TagCell({ operationId, own, all, categoryName }: { operationId: 
             </Tooltip>
           )
         })}
-      </Menu>
+      </Menu>}
     </>
   )
 }

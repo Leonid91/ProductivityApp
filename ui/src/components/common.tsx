@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react'
+import { cloneElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import {
   Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
-  TextField, Tooltip, Typography, useTheme, type SxProps, type Theme,
+  TextField, Tooltip, Typography, useTheme, type SxProps, type Theme, type TooltipProps,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import Check from '@mui/icons-material/CheckRounded'
@@ -9,6 +10,40 @@ import type { Category, CategoryKind } from '../api'
 import { useApp } from '../AppContext'
 import { money } from '../format'
 import { CategoryIcon } from './CategoryIcon'
+
+/**
+ * A tooltip made only when the mouse (or the keyboard) first comes to its element: a table of hundreds of lines draws
+ * much faster, and the tooltip shows as before (after its delay, gone when the mouse leaves).
+ */
+export function LazyTooltip({ children, enterDelay = 100, ...props }: Omit<TooltipProps, 'open' | 'onOpen' | 'onClose' | 'children'> & { children: ReactElement<{ onMouseEnter?: () => void; onFocus?: () => void }> }) {
+  const [active, setActive] = useState(false)
+  const [open, setOpen] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  if (!active) {
+    // Made at once, before anything else reaches the element: a click right after the mouse arrives lands on the
+    // element as it will stay (made later, it would be replaced between the press and the release, and the click lost).
+    const wake = () => { flushSync(() => setActive(true)); timer.current = window.setTimeout(() => setOpen(true), enterDelay) }
+    return cloneElement(children, { onMouseEnter: wake, onFocus: wake })
+  }
+  return (
+    <Tooltip {...props} enterDelay={enterDelay} open={open} onOpen={() => setOpen(true)} onClose={() => { window.clearTimeout(timer.current); setOpen(false) }}>
+      {children}
+    </Tooltip>
+  )
+}
+
+/**
+ * The lines of a long table drawn as plain cells (`<tr className="row">`, `<td>`), looking like the table's own: the
+ * look is given once by the table instead of by each of its hundreds of cells.
+ */
+export const plainRows = (theme: Theme) => ({
+  '& tbody tr.row:hover': { backgroundColor: theme.palette.mode === 'dark' ? alpha('#ffffff', 0.035) : alpha('#000000', 0.022) },
+  '& tbody tr.row > td': {
+    ...theme.typography.body2, fontSize: 13.5, display: 'table-cell', verticalAlign: 'inherit', textAlign: 'left',
+    color: theme.palette.text.primary, borderBottom: `1px solid ${theme.palette.divider}`, paddingTop: theme.spacing(0.9), paddingBottom: theme.spacing(0.9),
+  },
+})
 
 export function Money({ value, currency, sign, sx, muted }: { value: number; currency: string; sign?: boolean; sx?: SxProps<Theme>; muted?: boolean }) {
   const theme = useTheme()
@@ -120,18 +155,19 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
   const { category } = useApp()
   const theme = useTheme()
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
+  const [menuMade, setMenuMade] = useState(false)
   const c = category(id)
   const dark = theme.palette.mode === 'dark'
   const color = useCategoryColor()(c)
   const path = useCategoryPath()
   return (
     <>
-      <Tooltip title={path(c)} placement="top-start" enterDelay={400}>
+      <LazyTooltip title={path(c)} placement="top-start" enterDelay={400}>
         <Box component="span" data-path={path(c)} sx={{ display: 'inline-flex', maxWidth: '100%' }}>
           <Box
             component="button"
             disabled={disabled || !onChange}
-            onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget) }}
+            onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); setMenuMade(true) }}
             sx={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -157,8 +193,9 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
             <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</Box>
           </Box>
         </Box>
-      </Tooltip>
-      {onChange && <CategoryMenu anchor={anchor} value={id} onClose={() => setAnchor(null)} onPick={onChange} />}
+      </LazyTooltip>
+      {/* Made the first time it opens (a table holds hundreds of these), kept after so it closes as it always did. */}
+      {onChange && menuMade && <CategoryMenu anchor={anchor} value={id} onClose={() => setAnchor(null)} onPick={onChange} />}
     </>
   )
 }
