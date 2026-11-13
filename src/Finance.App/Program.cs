@@ -29,6 +29,7 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         using var services = new AppServices(options.DataDir);
+        _ = Task.Run(services.Warm);
         Application.ThreadException += (_, e) => services.Log(e.Exception, "ui");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (e.ExceptionObject is Exception ex) services.Log(ex, "fatal"); };
         TaskScheduler.UnobservedTaskException += (_, e) => { services.Log(e.Exception, "task"); e.SetObserved(); };

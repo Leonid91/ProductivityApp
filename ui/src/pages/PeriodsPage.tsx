@@ -10,9 +10,9 @@ import { daysInMonth, iso } from '../format'
 import { holding, loadCharts, PeriodCard, periodId, type PeriodView } from '../components/PeriodCard'
 import { TransactionDialog, pickerFormats } from '../components/TransactionDialog'
 import { EmptyState } from '../components/common'
-import { pace } from '../pace'
+import { pace, useRealHeights } from '../pace'
 
-interface Period { from: string; to: string; key: string }
+interface Period { from: string; to: string; key: string; count?: number }
 interface Item { key: string; p: Period; granularity: 'month' | 'year' | 'range' }
 
 /**
@@ -37,7 +37,7 @@ const PeriodList = memo(function PeriodList({ items, currency, view, onEdit }: {
   // One list (the cards keep their place, nothing is made again when a period starts or stops retiring).
   return [
     ...items.map(({ key, p, granularity }) => (
-      <PeriodCard key={key} from={p.from} to={p.to} granularity={granularity} currency={currency} view={view} onEdit={onEdit} />
+      <PeriodCard key={key} from={p.from} to={p.to} granularity={granularity} currency={currency} view={view} onEdit={onEdit} count={p.count} />
     )),
     ...retiring.map(({ key, p, granularity }) => (
       <PeriodCard key={key} from={p.from} to={p.to} granularity={granularity} currency={currency} view={view} onEdit={onEdit} retiring />
@@ -112,8 +112,8 @@ export function PeriodsPage() {
 
   const periods: Period[] = useMemo(() => {
     if (!index) return []
-    if (listMode === 'month') return index.months.map((m) => ({ from: iso(m.year, m.month, 1), to: iso(m.year, m.month, daysInMonth(m.year, m.month)), key: `${m.year}-${m.month}` }))
-    if (listMode === 'year') return index.years.map((y) => ({ from: iso(y, 1, 1), to: iso(y, 12, 31), key: `${y}` }))
+    if (listMode === 'month') return index.months.map((m) => ({ from: iso(m.year, m.month, 1), to: iso(m.year, m.month, daysInMonth(m.year, m.month)), key: `${m.year}-${m.month}`, count: m.count }))
+    if (listMode === 'year') return index.years.map((y) => ({ from: iso(y, 1, 1), to: iso(y, 12, 31), key: `${y}`, count: index.months.filter((m) => m.year === y).reduce((n, m) => n + m.count, 0) }))
     if (listMode === 'custom') {
       if (!customFrom?.isValid() || !customTo?.isValid() || customTo.isBefore(customFrom, 'day')) return []
       const from = customFrom.format('YYYY-MM-DD')
@@ -152,12 +152,15 @@ export function PeriodsPage() {
   // letting go of their data, the view switched (Summary, Statements, Analytics). Scrolling never jumps back, even
   // at the bottom of the page where the browser itself pulls the page up when it gets shorter.
   const list = useRef<HTMLDivElement>(null)
+  useRealHeights(list, empty)
   useEffect(() => {
     const el = list.current
     const scroller = el?.closest('main')
     if (!el || !scroller) return
     const line = () => scroller.getBoundingClientRect().top + (bar.current?.offsetHeight ?? 0)
-    let anchor: { el: Element; offset: number } | null = null
+    // The element kept in place, and the period it is in (kept in its place when the element goes: another view drawn).
+    // (top: where the page was then: a scroll not yet told when something changes height is the person's, not undone.)
+    let anchor: { el: Element; offset: number; period: Element; periodOffset: number; top: number } | null = null
     let lastHeight = scroller.scrollHeight
     // Where this code itself put the page: the scroll that follows is not the person's.
     let own = -1
@@ -190,12 +193,20 @@ export function PeriodsPage() {
           if (next.getBoundingClientRect().top >= top - 1) break
         }
       }
-      anchor = s && scroller.scrollTop > 0 ? { el: s, offset: s.getBoundingClientRect().top - y } : null
+      const period = s?.closest('section[data-period]') ?? s
+      anchor = s && period && scroller.scrollTop > 0 ? { el: s, offset: s.getBoundingClientRect().top - y, period, periodOffset: period.getBoundingClientRect().top - y, top: scroller.scrollTop } : null
     }
     const ro = new ResizeObserver(() => {
-      if (!anchor?.el.isConnected) return
-      const moved = anchor.el.getBoundingClientRect().top - line() - anchor.offset
-      if (Math.abs(moved) >= 1) { scroller.scrollTop += moved; own = scroller.scrollTop }
+      if (!anchor) return
+      if (!anchor.el.isConnected) {
+        if (!anchor.period.isConnected) return
+        anchor = { ...anchor, el: anchor.period, offset: anchor.periodOffset }
+      }
+      // A page that got shorter at the bottom is pulled up by the browser: not the person's scroll.
+      const pulled = scroller.scrollHeight < lastHeight && scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 1
+      if (pulled) anchor.top = scroller.scrollTop
+      const moved = anchor.el.getBoundingClientRect().top - line() - (anchor.offset - (scroller.scrollTop - anchor.top))
+      if (Math.abs(moved) >= 1) { scroller.scrollTop += moved; anchor.top += moved; own = scroller.scrollTop }
       lastHeight = scroller.scrollHeight
     })
     const watch = () => { for (const c of el.children) ro.observe(c) }

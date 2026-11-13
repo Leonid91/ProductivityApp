@@ -125,7 +125,7 @@ export function ExportDialog({ open, onClose, from, to, granularity, currency, t
       {open && parts.transfers && timeline.lanes.length > 0 && (
         <ThemeProvider theme={paper}>
           <Box ref={drawing} aria-hidden sx={{ position: 'fixed', left: -20000, top: 0, width: 1000, pointerEvents: 'none' }}>
-            <TransferTimelineChart timeline={timeline} currency={timelineCurrency} />
+            <TransferTimelineChart timeline={timeline} currency={timelineCurrency} fit />
           </Box>
         </ThemeProvider>
       )}

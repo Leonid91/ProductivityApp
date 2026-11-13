@@ -24,7 +24,7 @@ function Place({ name, outside, type }: { name: string; outside: boolean; type: 
   const theme = useTheme()
   return (
     <div className="p-place">
-      <p className="p-body2 p-place-name" title={name} style={{ fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : theme.palette.text.primary }}>{name}</p>
+      <p className="p-body2 p-place-name" style={{ fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : theme.palette.text.primary }}>{name}</p>
       {type && <span className="p-caption p-place-type">{type}</span>}
     </div>
   )
@@ -40,7 +40,7 @@ const MoveRow = memo(function MoveRow({ m, tx, currency, act }: { m: MovementVie
       <td><CategoryPill id={m.categoryId} onChange={(id) => act.setCategory(m, id)} /></td>
       <td>
         <div className="p-brand-box">
-          <p className="p-body2 p-nowrap" title={tx?.rawLabel ?? m.label}>{m.label}</p>
+          <p className="p-body2 p-nowrap">{m.label}</p>
         </div>
         {/* An international transfer: each side in its own currency, and what the banks kept. */}
         {m.sent != null && m.sentCurrency && m.received != null && m.receivedCurrency && (

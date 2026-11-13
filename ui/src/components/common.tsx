@@ -27,9 +27,11 @@ export function LazyTooltip({ children, enterDelay = 100, ...props }: Omit<Toolt
     const wake = () => { flushSync(() => setActive(true)); timer.current = window.setTimeout(() => setOpen(true), enterDelay) }
     return cloneElement(children, { onMouseEnter: wake, onFocus: wake })
   }
+  // Gone as soon as the mouse leaves (or the focus), even before it showed: it never opens after the mouse is away.
+  const leave = () => { window.clearTimeout(timer.current); setOpen(false) }
   return (
-    <Tooltip {...props} enterDelay={enterDelay} open={open} onOpen={() => setOpen(true)} onClose={() => { window.clearTimeout(timer.current); setOpen(false) }}>
-      {children}
+    <Tooltip {...props} enterDelay={enterDelay} open={open} onOpen={() => setOpen(true)} onClose={leave}>
+      {cloneElement(children, { onMouseLeave: leave, onBlur: leave } as object)}
     </Tooltip>
   )
 }
@@ -162,19 +164,17 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
   const shownPath = path(c)
   return (
     <>
-      <LazyTooltip title={shownPath} placement="top-start" enterDelay={400}>
-        <span className="p-pill-box" data-path={shownPath}>
-          <button
-            className={`p-pill${color ? ' p-colored' : c.kind === 'transfer' ? ' p-quiet' : ''}${onChange ? ' p-active' : ''}`}
-            disabled={disabled || !onChange}
-            onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); setMenuMade(true) }}
-            style={{ '--pill-bg': bg, '--pill-hover': hover, ...(color ? { color, '--pill-icon': color } : {}) } as CSSProperties}
-          >
-            <Mark icon={categoryIconOf(c.icon)} color={color ?? theme.palette.text.secondary} />
-            <span className="p-nowrap">{c.name}</span>
-          </button>
-        </span>
-      </LazyTooltip>
+      <span className="p-pill-box" data-path={shownPath}>
+        <button
+          className={`p-pill${color ? ' p-colored' : c.kind === 'transfer' ? ' p-quiet' : ''}${onChange ? ' p-active' : ''}`}
+          disabled={disabled || !onChange}
+          onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); setMenuMade(true) }}
+          style={{ '--pill-bg': bg, '--pill-hover': hover, ...(color ? { color, '--pill-icon': color } : {}) } as CSSProperties}
+        >
+          <Mark icon={categoryIconOf(c.icon)} color={color ?? theme.palette.text.secondary} />
+          <span className="p-nowrap">{c.name}</span>
+        </button>
+      </span>
       {/* Made the first time it opens (a table holds hundreds of these), kept after so it closes as it always did. */}
       {onChange && menuMade && <CategoryMenu anchor={anchor} value={id} onClose={() => setAnchor(null)} onPick={onChange} />}
     </>

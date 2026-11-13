@@ -7,8 +7,12 @@ import { flushSync } from 'react-dom'
  * shown, the one nearest to the screen first, only as many as leave the next frame time to be shown on time: however
  * many periods come in together, the screen keeps its frames.
  */
-interface Job { el: HTMLElement | null; run: () => void; off: () => void; idle: boolean }
+interface Job { el: HTMLElement | null; run: () => void; off: () => void; idle: boolean; turn?: string }
 const jobs = new Set<Job>()
+/** Kinds of work done a few at a time (see paceTurn): how many are under way, how many may be. */
+const under = new Map<string, number>()
+const most = new Map<string, number>()
+const full = (kind?: string) => kind !== undefined && (under.get(kind) ?? 0) >= (most.get(kind) ?? 1)
 
 /**
  * Where the elements of the pieces waiting are, as the browser tells it whenever one comes onto the screen or leaves
@@ -64,8 +68,7 @@ function frame(now: number) {
   // The frame was late in being shown, or other work came first: the pieces wait for the next one.
   if (now - frameStart > UNTIL - 1 && waited < 3) { waited++; ask(); return }
   waited = 0
-  // Pieces that can wait (see useRealHeight): only when nothing else waits and the page has not just been scrolled,
-  // one a frame.
+  // Pieces that can wait: only when nothing else waits and the page has not just been scrolled, one a frame.
   const calm = ![...jobs].some((j) => !j.idle) && now - lastScroll > 200
   let idleDone = false
   let work = 0
@@ -73,13 +76,13 @@ function frame(now: number) {
   // before the element's own next piece: a table's lines before the next table, a bank's tables before the next
   // bank). Where each piece is comes from what the browser last told (see places): asking it now would make it lay out
   // the page in the middle of a frame.
-  const order = [...jobs].filter((job) => !job.idle || calm).map((job) => {
+  const order = [...jobs].filter((job) => (!job.idle || calm) && !full(job.turn)).map((job) => {
     if (!job.el?.isConnected) return { job, d: Number.MAX_SAFE_INTEGER }
     return { job, d: places.get(job.el)?.d ?? 0 }
   }).sort((a, b) => a.d - b.d || down(a.job.el, b.job.el))
   for (const { job } of order) {
     // Called off meanwhile (a piece drawn before it took it away).
-    if (!jobs.has(job) || (job.idle && idleDone)) continue
+    if (!jobs.has(job) || (job.idle && idleDone) || full(job.turn)) continue
     if (job.idle) idleDone = true
     job.off()
     const t0 = performance.now()
@@ -103,20 +106,32 @@ function ask() {
  * Draws `run` just after a coming frame is shown, in its turn (nearest to the screen first; `idle`: only once nothing
  * else waits). Returns how to call it off.
  */
-export function pace(el: HTMLElement | null, run: () => void, idle = false): () => void {
+export function pace(el: HTMLElement | null, run: () => void, idle = false, turn?: string): () => void {
   let done = false
   const off = () => { if (done) return; done = true; jobs.delete(job); if (el) unwatch(el) }
-  const job = { el, run, off, idle }
+  const job = { el, run, off, idle, turn }
   jobs.add(job)
   if (el) watch(el)
   ask()
   return off
 }
 
-/** True while pieces inside `el` are still waiting to be drawn. */
+/**
+ * Work of one kind done `atOnce` at a time, in its turn (nearest to the screen first): `run` starts it once fewer of
+ * the kind are under way, and is given how to say it is over (then the next one may start). Returns how to call it
+ * off before it starts.
+ */
+export function paceTurn(el: HTMLElement | null, kind: string, atOnce: number, run: (over: () => void) => void): () => void {
+  most.set(kind, atOnce)
+  let ended = false
+  const over = () => { if (ended) return; ended = true; under.set(kind, (under.get(kind) ?? 1) - 1); ask() }
+  return pace(el, () => { under.set(kind, (under.get(kind) ?? 0) + 1); run(over) }, false, kind)
+}
+
+/** True while pieces inside `el` are still waiting to be drawn (not counting work waiting for its turn). */
 export function pending(el: HTMLElement | null): boolean {
   if (!el) return false
-  for (const j of jobs) if (j.el && el.contains(j.el)) return true
+  for (const j of jobs) if (!j.turn && j.el && el.contains(j.el)) return true
   return false
 }
 
@@ -136,51 +151,91 @@ export function useStepper(n: number, key: unknown, where: React.RefObject<HTMLE
   return Math.min(shown, n)
 }
 
+/** What is drawn only near the screen (content-visibility: auto): a section of a period, the lines of a table. */
+const UNIT = '[data-section], .p-lines'
+
 /**
- * The tables of a bank of a period, drawn only near the screen (content-visibility: auto), are given their real height
- * once all of the bank is there (and again when it changes), in its turn and only while nothing else waits: each table
- * drawn for a frame, then left to the browser again, which keeps that height while it is away. The page has its real
- * length (the scrollbar does not change as one scrolls), and a table drawn for the first time above the screen never
- * moves what is on it.
+ * The real height of everything under `ref` drawn only near the screen (see UNIT), kept while it is away: the page has
+ * its real length at all times, so scrolling never changes it (the scrollbar stays still under the mouse and the
+ * wheel). While what one shows changes (its lines drawn, older operations coming in, a filter, a sort, another width)
+ * the browser lays it out with the rest of the page, a little each frame as it changes; once it stops changing it is
+ * skipped again away from the screen, at the height it was last laid out at.
  */
-export function useRealHeight(ref: React.RefObject<HTMLElement | null>, content: unknown) {
+export function useRealHeights(ref: React.RefObject<HTMLElement | null>, key: unknown) {
   useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const shown: HTMLElement[] = []
-    let stop = () => {}
-    const hide = () => { for (const x of shown.splice(0)) x.style.contentVisibility = '' }
-    // One table at a time (with the sections it is in), drawn for a frame, then left to the browser again, keeping its
-    // height.
-    const show = (units: HTMLElement[][]) => {
-      stop = pace(el, () => {
-        hide()
-        const next = units.shift()
-        if (!next) return
-        for (const x of next) { x.style.contentVisibility = 'visible'; shown.push(x) }
-        show(units)
-      }, true)
+    const root = ref.current
+    if (!root) return
+    // The height (of its content) and width each one was last laid out at.
+    const known = new WeakMap<Element, { h: number; w: number }>()
+    const keep = (x: HTMLElement, h: number, w: number) => {
+      known.set(x, { h, w })
+      x.style.containIntrinsicHeight = `${h}px`
     }
-    let quiet = 0
-    const first = () => {
-      if (!el.isConnected) return
-      // Its tables still coming in: once they are all there (nothing more asked for, frames in a row).
-      quiet = pending(el) ? 0 : quiet + 1
-      if (quiet < 3) { stop = pace(el, first, true); return }
-      // Each table with the sections it is in (within the bank); a section without one, alone.
-      const inner = [...el.querySelectorAll<HTMLElement>('[data-section], .p-lines')]
-      const units = inner.filter((x) => !x.querySelector('[data-section], .p-lines')).map((x) => {
-        const unit = [x]
-        for (let up = x.parentElement; up && up !== el; up = up.parentElement) if (inner.includes(up)) unit.unshift(up)
-        return unit
-      })
-      show(units)
+    // Laid out while it changes: how it was drawn before, the frame it last changed in.
+    const open = new Map<HTMLElement, { before: string; at: number }>()
+    let frames = 0, asked = 0
+    const opened = (x: HTMLElement) => {
+      // It and the ones it is in (whose height holds it).
+      for (let u: HTMLElement | null = x; u && root.contains(u); u = u.parentElement?.closest<HTMLElement>(UNIT) ?? null) {
+        const o = open.get(u)
+        if (o) o.at = frames
+        else { open.set(u, { before: u.style.contentVisibility, at: frames }); u.style.contentVisibility = 'visible' }
+      }
+      if (!asked) asked = requestAnimationFrame(close)
     }
-    stop = pace(el, first, true)
+    // Skipped again once laid out unchanged for a frame (its size told, see ro) and nothing more is coming in it.
+    const close = () => {
+      asked = 0
+      frames++
+      for (const [u, o] of open) {
+        if (!u.isConnected) { open.delete(u); continue }
+        if (frames - o.at < 2 || !known.has(u) || pending(u)) continue
+        u.style.contentVisibility = o.before
+        open.delete(u)
+      }
+      if (open.size > 0) asked = requestAnimationFrame(close)
+    }
+    // Something changed inside one (the innermost).
+    const touched = (n: Node) => {
+      const el = n instanceof Element ? n : n.parentElement
+      const x = el?.closest<HTMLElement>(UNIT)
+      if (x && root.contains(x)) opened(x)
+    }
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        // Its own heights written on them.
+        if (r.type === 'attributes' && (r.attributeName === 'style' && (r.target as Element).matches(UNIT) || r.attributeName?.startsWith('data-e2e'))) continue
+        touched(r.target)
+        for (const n of r.addedNodes) {
+          if (!(n instanceof HTMLElement)) continue
+          if (n.matches(UNIT)) { ro.observe(n); opened(n) }
+          for (const x of n.querySelectorAll<HTMLElement>(UNIT)) { ro.observe(x); opened(x) }
+        }
+      }
+    })
+    // Laid out (being changed, or near the screen): its height as it is. Skipped with a new width: laid out again.
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const x = e.target as HTMLElement
+        // Taken away, or not shown.
+        if (!x.isConnected || e.borderBoxSize[0].inlineSize === 0) continue
+        const k = known.get(x)
+        const h = e.contentRect.height
+        const w = e.borderBoxSize[0].inlineSize
+        if (open.has(x) || (k && Math.abs(h - k.h) > 0.01)) keep(x, h, w)
+        else if (!k || Math.abs(w - k.w) > 0.5) opened(x)
+      }
+    })
+    for (const x of root.querySelectorAll<HTMLElement>(UNIT)) { ro.observe(x); opened(x) }
+    mo.observe(root, { childList: true, subtree: true, characterData: true, attributes: true })
+    // Letters drawn with another font once it is read: every one laid out again.
+    const fonts = () => { for (const x of root.querySelectorAll<HTMLElement>(UNIT)) opened(x) }
+    document.fonts.addEventListener('loadingdone', fonts)
     return () => {
-      stop()
-      for (const x of shown) x.style.contentVisibility = ''
+      mo.disconnect(); ro.disconnect()
+      cancelAnimationFrame(asked)
+      document.fonts.removeEventListener('loadingdone', fonts)
+      for (const [u, o] of open) u.style.contentVisibility = o.before
     }
-    // Measured again when what it shows changes (older operations of a long period coming in).
-  }, [ref, content])
+  }, [ref, key])
 }

@@ -126,6 +126,23 @@ internal sealed class AppServices : IDisposable
 
     public string Setting(string key) => Db.GetSetting(key) ?? DefaultSettings.GetValueOrDefault(key) ?? "";
 
+    /// <summary>
+    /// Makes the latest months as the window shows them first (kept by the report service): done while the window and
+    /// its browser start, so the first periods show as soon as the page asks for them.
+    /// </summary>
+    public void Warm()
+    {
+        try
+        {
+            foreach (var m in Summaries.Index(null).Months.Take(3))
+            {
+                var from = new DateOnly(m.Year, m.Month, 1);
+                Summaries.Report(from, from.AddMonths(1).AddDays(-1), Granularity.Month, Setting("currency"), Rates, Holidays);
+            }
+        }
+        catch (Exception ex) { Log(ex, "warm"); }
+    }
+
     public Dictionary<string, string> Settings()
     {
         var all = new Dictionary<string, string>(DefaultSettings);

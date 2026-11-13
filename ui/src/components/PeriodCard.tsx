@@ -31,7 +31,7 @@ import { MovementsTable } from './MovementsTable'
 import { TransactionTable } from './TransactionTable'
 import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
 import { Glyph } from './plain'
-import { pace, pending, useRealHeight, useStepper } from '../pace'
+import { pace, paceTurn, pending, useStepper } from '../pace'
 
 /** A colour of the theme by its path ("surface.sunken"), or the colour itself. */
 function paint(theme: Theme, c: string): string {
@@ -91,13 +91,11 @@ const PART_HEAD = 52
  * the top of the screen while the block scrolls by; native: the currency of the bank's accounts, shown with the
  * display currency when they differ ("EUR → CAD").
  */
-function Part({ kind, name, currency, native, children, partKey, content }: { kind: 'bank' | 'global'; name: string; currency: string; native?: string; children: ReactNode; partKey: string; content: unknown }) {
+function Part({ kind, name, currency, native, children, partKey }: { kind: 'bank' | 'global'; name: string; currency: string; native?: string; children: ReactNode; partKey: string }) {
   const theme = useTheme()
   const bg = kind === 'global' ? theme.palette.surface.sunken : theme.palette.background.paper
-  const ref = useRef<HTMLDivElement>(null)
-  useRealHeight(ref, content)
   return (
-    <div ref={ref} data-part-block={partKey} className="p-part" style={{ backgroundColor: bg, '--part-head': `${PART_HEAD}px` } as CSSProperties}>
+    <div data-part-block={partKey} className="p-part" style={{ backgroundColor: bg, '--part-head': `${PART_HEAD}px` } as CSSProperties}>
       <div data-part-head className="p-part-head" style={{ height: PART_HEAD, backgroundColor: bg }}>
         <div className="p-part-icon"><Glyph icon={kind === 'global' ? Public : AccountBalance} /></div>
         <h6 data-part-name className="p-h6 p-part-name">{name}</h6>
@@ -168,8 +166,54 @@ export const holding = new Set<string>()
 /** What tells a period from another: its kind, its days, its currency. */
 export const periodId = (granularity: string, from: string, to: string, currency: string) => `${granularity}:${from}:${to}:${currency}`
 
-/** Frames a period waits after its last piece appeared before the browser may skip it again. */
+/** Frames a period waits after its last piece appeared before it counts as drawn. */
 const SETTLE_FRAMES = 8
+
+/**
+ * The height each period had once drawn, by view, with the width of the page and the version of the data it was drawn
+ * with (and how many operations it holds): a period not loaded yet takes it (or failing that the height of the period
+ * of its kind drawn with the nearest number of operations), so the page has its real length before it is reached.
+ * Drawn with other data or at another width, it is drawn again in the background.
+ */
+const drawnHeights = new Map<string, { h: number; w: number; v: number; n?: number }>()
+const pageWidth = () => document.querySelector('main')?.clientWidth ?? 0
+const heightOf = (key: string) => drawnHeights.get(key)?.h
+const upToDate = (key: string, w: number, v: number) => { const k = drawnHeights.get(key); return !!k && k.w === w && k.v === v }
+/** Periods not drawn yet, told when another of their kind is drawn (their guess may be nearer). */
+const usualListeners = new Set<() => void>()
+function usualHeight(kind: string, count?: number): number {
+  let best: number | undefined, far = Infinity
+  for (const [key, k] of drawnHeights) {
+    if (!key.startsWith(kind)) continue
+    const d = count !== undefined && k.n !== undefined ? Math.abs(k.n - count) : 0
+    if (d < far) { far = d; best = k.h }
+  }
+  return best ?? 560
+}
+
+/** How far from the screen a period not drawn yet is drawn in the background to know its height (in pixels). */
+const REACH = 60000
+
+/** The width of the page, once it stops changing (the window resized). */
+const widthListeners = new Set<(w: number) => void>()
+let widthWatch: ResizeObserver | null = null
+let widthTimer = 0
+function usePageWidth(): number {
+  const [w, setW] = useState(pageWidth)
+  useEffect(() => {
+    widthListeners.add(setW)
+    const main = document.querySelector('main')
+    if (!widthWatch && main) {
+      widthWatch = new ResizeObserver(() => {
+        clearTimeout(widthTimer)
+        widthTimer = window.setTimeout(() => { const now = pageWidth(); widthListeners.forEach((l) => l(now)) }, 300)
+      })
+      widthWatch.observe(main)
+    }
+    return () => { widthListeners.delete(setW) }
+  }, [])
+  return w
+}
 
 /** Statements (the tables) or analytics (the charts) of one bank or of all of them, then their totals (drawn again only when they change). */
 const Body = memo(function Body({ summary, view, keep, currency, granularity, onEdit, tables }: {
@@ -419,9 +463,11 @@ const showsGlobal = (r: PeriodReport) => r.banks.length > 1 || r.conversion.line
  * the bank's currency, then every bank together in the global display currency with how it was converted; and the
  * PDF export.
  */
-export const PeriodCard = memo(function PeriodCard({ from, to, granularity, currency, view, onEdit, onLoaded, retiring = false }: {
+export const PeriodCard = memo(function PeriodCard({ from, to, granularity, currency, view, onEdit, onLoaded, retiring = false, count }: {
   from: string
   to: string
+  /** How many operations it holds, when known (a month or a year): its height is guessed from it until drawn. */
+  count?: number
   granularity: Granularity
   /** The global display currency. */
   currency: string
@@ -435,7 +481,13 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   const theme = useTheme()
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
-  const [height, setHeight] = useState(560)
+  // On the screen itself (not only near it); within reach of it (see below).
+  const [onScreen, setOnScreen] = useState(false)
+  const [inReach, setInReach] = useState(false)
+  const id = periodId(granularity, from, to, currency)
+  const [height, setHeight] = useState(() => heightOf(`${granularity}:${view}:${id}`) ?? usualHeight(`${granularity}:${view}:`, count))
+  // Loaded in the background (away from the screen) once, to know its height, then let go of again.
+  const [measuring, setMeasuring] = useState(false)
   const [report, setReport] = useState<PeriodReport | null>(null)
   const [exporting, setExporting] = useState(false)
   const [exportMade, setExportMade] = useState(false)
@@ -460,8 +512,7 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
     }
   }, [shown, global, granularity])
   const sameHeight = shown === 'summary' ? summaryHeights.get(granularity) : undefined
-  // Whenever its content changes (loaded, or another view), the period is drawn in full once, even off screen, so the
-  // browser knows its real height before it is reached (scrolling never skips part of it); then it may skip it again.
+  // Whenever its content changes (loaded, or another view): drawn once no piece of it is waiting any more.
   const [drawn, setDrawn] = useState(false)
   // The parts of a period (each bank, then every bank together) appear one per frame: no frame has to lay out a whole
   // period at once, so the screen never freezes while a long period comes in.
@@ -469,10 +520,11 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   // coming in later do not draw its banks again.
   const parts = report ? report.banks.length + (showsGlobal(report) ? 1 : 0) : 0
   const partsShown = useStepper(parts, `${report ? 'r' : ''}:${shown}`, ref)
+  const hasData = useRef(false)
+  hasData.current = report !== null
   // While a period lets go of its data: how many of its banks are still drawn.
   const [kept, setKept] = useState<number | null>(null)
   // Holding its data (see PeriodList: a period of the kind just left holding none goes at once).
-  const id = periodId(granularity, from, to, currency)
   useEffect(() => {
     if (!report) return
     holding.add(id)
@@ -489,6 +541,41 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
     return () => cancelAnimationFrame(id)
   }, [drawn, report])
 
+  // Its height once drawn, for this view: kept for when it is let go of, and for the next time it is made.
+  const heightKey = `${granularity}:${shown}:${id}`
+  // The end of its turn at being drawn in the background (see below).
+  const turnOver = useRef<(() => void) | null>(null)
+  const endTurn = useCallback(() => { turnOver.current?.(); turnOver.current = null; setMeasuring(false) }, [])
+  useEffect(() => {
+    const el = ref.current
+    if (!drawn || !el || retiring || kept !== null) return
+    const h = el.offsetHeight
+    drawnHeights.set(heightKey, { h, w: pageWidth(), v: dataVersion, n: count })
+    usualListeners.forEach((l) => l())
+    setHeight(h)
+    endTurn()
+  }, [drawn, heightKey, retiring, kept, endTurn]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Another view, not loaded: the height it has in that view (or the usual one, once known).
+  const guess = useCallback(() => {
+    if (hasData.current) return
+    // Moved only when the new guess is notably nearer (the page's length changes as little as it can).
+    const h = heightOf(heightKey) ?? usualHeight(`${granularity}:${shown}:`, count)
+    setHeight((now) => (heightOf(heightKey) !== undefined || Math.abs(h - now) > 0.08 * now ? h : now))
+  }, [heightKey, granularity, shown, count])
+  useLayoutEffect(guess, [guess])
+  useEffect(() => { usualListeners.add(guess); return () => { usualListeners.delete(guess) } }, [guess])
+  // Never drawn in this view, at this width, with this data: drawn once in the background, a few periods at a time,
+  // the nearest first, while within reach of the screen (further ones meanwhile take the usual height).
+  const width = usePageWidth()
+  const known = upToDate(heightKey, width, dataVersion)
+  useEffect(() => {
+    if (known || visible || !inReach || report || measuring || retiring) return
+    return paceTurn(ref.current, 'period-height', 3, (over) => { turnOver.current = over; setMeasuring(true) })
+  }, [known, visible, inReach, report, measuring, retiring])
+  // Let go of before it was drawn: the next one's turn.
+  useEffect(() => { if (retiring) endTurn() }, [retiring, endTurn])
+  useEffect(() => endTurn, [endTurn])
+
   // Load a period only when it comes near the screen: years of history stay fast.
   useEffect(() => {
     const el = ref.current
@@ -497,12 +584,18 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
     // "Near" is measured in the page's scrolling area (measured against the window, the margin would not count).
     const io = new IntersectionObserver((entries) => {
       const near = entries.some((e) => e.isIntersecting)
-      if (!near && el.offsetHeight > 0) setHeight(el.offsetHeight)
+      // Its height as drawn last (not while it is still the outline of one not loaded yet).
+      if (!near && hasData.current && el.offsetHeight > 0) setHeight(el.offsetHeight)
       setVisible(near)
     }, { root: el.closest('main'), rootMargin: '1500px 0px' })
     io.observe(el)
-    return () => io.disconnect()
+    const on = new IntersectionObserver((entries) => setOnScreen(entries.some((e) => e.isIntersecting)), { root: el.closest('main') })
+    on.observe(el)
+    const reach = new IntersectionObserver((entries) => setInReach(entries.some((e) => e.isIntersecting)), { root: el.closest('main'), rootMargin: `${REACH}px 0px` })
+    reach.observe(el)
+    return () => { io.disconnect(); on.disconnect(); reach.disconnect() }
   }, [])
+  const wanted = visible || measuring
 
   // How many banks are drawn (none: no data), for letting go of them.
   const drawnParts = useRef(-1)
@@ -510,7 +603,7 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   useLayoutEffect(() => { drawnParts.current = drawnNow }, [drawnNow])
   useEffect(() => {
     // Far from the screen again: its data let go in the background, a bank at a time (the last first), then the rest.
-    if (!visible) {
+    if (!wanted) {
       if (drawnParts.current < 0) return
       let stop = () => {}
       const next = (n: number) => { stop = pace(ref.current, () => { if (n > 0) { setKept(n - 1); next(n - 1) } else { setReport(null); setKept(null) } }) }
@@ -560,7 +653,7 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
       } else later(() => { setReport(r); onLoaded?.(r); void rest(r).catch(fail) })
     }, fail)
     return () => { live = false; stops.forEach((s) => s()) }
-  }, [visible, from, to, granularity, currency, dataVersion, fail, onLoaded])
+  }, [wanted, from, to, granularity, currency, dataVersion, fail, onLoaded])
 
   // A balance in green above zero, red below, plain at zero.
   const tone = (v: number) => ({
@@ -574,10 +667,19 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
       data-period={retiring ? undefined : from}
       data-retiring={retiring || undefined}
       className="p-period"
-      // Periods away from the screen are not laid out or painted (the browser skips them until they come near), at the
-      // height they had when last drawn.
+      // The tables and sections of a period away from the screen are not laid out or painted (see useRealHeights). One
+      // being drawn away from the screen keeps its height until all of it is there, then takes its new height at once:
+      // the page's length changes once, not with every piece. One being drawn on the screen is at least as tall as it
+      // was before meanwhile; one letting go of its data keeps its height.
       // Only their height is guessed meanwhile: a guessed width would stretch every period wider than the window.
-      style={{ minHeight: report ? undefined : height, ...(!report && sameHeight ? { height: sameHeight, minHeight: 0, overflow: 'hidden' } : {}), contentVisibility: shown === 'summary' || (report && !drawn) ? 'visible' : 'auto', ...(retiring ? { display: 'none' } : {}) }}
+      style={{
+        minHeight: report && kept === null && drawn ? undefined : height,
+        ...(report && !drawn && !onScreen ? { height, overflow: 'clip' } : {}),
+        // Not loaded: its outline is not drawn (nor its pulse) away from the screen, at its height.
+        ...(!report ? { contentVisibility: 'auto', containIntrinsicHeight: '0px' } : {}),
+        ...(!report && sameHeight ? { height: sameHeight, minHeight: 0, overflow: 'hidden' } : {}),
+        ...(retiring ? { display: 'none' } : {}),
+      }}
     >
       {!report || !global ? (
         <>
@@ -638,12 +740,12 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
           ) : (
             <>
               {report.banks.slice(0, Math.min(partsShown, kept ?? Infinity)).map((b) => (
-                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native} content={b.summary}>
+                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native}>
                   <Body summary={b.summary} view={shown} keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables />
                 </Part>
               ))}
               {showsGlobal(report) && partsShown > report.banks.length && kept === null && (
-                <Part kind="global" partKey="all" name="All banks" currency={report.currency} content={global}>
+                <Part kind="global" partKey="all" name="All banks" currency={report.currency}>
                   <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} />
                   <ConversionPanel conversion={report.conversion} />
                 </Part>

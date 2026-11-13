@@ -31,7 +31,7 @@ function css(t: Theme): string {
 .p-skeleton{display:block;background-color:${alpha(p.text.primary, dark ? 0.13 : 0.11)};height:1.2em;animation:p-pulse 2s ease-in-out .5s infinite}
 .p-skeleton-text{margin-top:0;margin-bottom:0;height:auto;transform-origin:0 55%;transform:scale(1,.6);border-radius:12px/20px}
 .p-skeleton-text:empty:before{content:"\\00a0"}
-.p-period{border:1px solid ${p.divider};border-radius:24px;background-color:${p.background.paper};padding:${t.spacing(2.5)};min-width:0;contain-intrinsic-height:auto 2400px}
+.p-period{border:1px solid ${p.divider};border-radius:24px;background-color:${p.background.paper};padding:${t.spacing(2.5)};min-width:0}
 @media (min-width:${t.breakpoints.values.md}px){.p-period{padding:${t.spacing(3.5)}}}
 .p-period-head{display:flex;align-items:baseline;gap:${t.spacing(2)}}
 .p-stat{flex:1 1 180px;border-radius:18px;padding:${t.spacing(2)} ${t.spacing(2.5)}}
@@ -43,7 +43,7 @@ function css(t: Theme): string {
 .p-section-head{display:flex;align-items:baseline;gap:${t.spacing(1.25)};margin-bottom:${t.spacing(1)};flex-wrap:wrap}
 .p-section-icon{align-self:center;display:flex;color:${p.text.secondary}}
 .p-section-total{font-weight:650;border-radius:10px;padding:${t.spacing(0.4)} ${t.spacing(1.25)}}
-[data-section],.p-lines{content-visibility:auto;contain-intrinsic-height:auto 800px}
+[data-section],.p-lines{content-visibility:auto;contain-intrinsic-height:auto 0px}
 .p-part{margin-top:${t.spacing(2.5)};border:1px solid ${p.divider};border-radius:20px;padding:${t.spacing(1)} ${t.spacing(2)} ${t.spacing(2)};min-width:0}
 @media (min-width:${t.breakpoints.values.md}px){.p-part{padding:${t.spacing(1)} ${t.spacing(2.5)} ${t.spacing(2.5)}}}
 .p-part-head{position:sticky;top:var(--sticky-top,0px);z-index:3;display:flex;align-items:center;gap:${t.spacing(1.25)};margin-bottom:${t.spacing(1)}}

@@ -861,3 +861,31 @@ real app with `tools/e2e/perf.mjs`.
 ### Added
 - End-to-end checks read the text of a table away from the screen as it shows once drawn, and wait for a period to be
   drawn in full before reading it.
+
+## November 12th, 2026 - Scrolling without jumps, readable transfers, faster start - Commit 38
+
+### Fixed
+- Scrolling the months (wheel, or dragging the scrollbar) no longer makes the scrollbar jump up and down. A month
+  coming in below the screen grew and shrank a dozen times while its banks and tables were drawn (each table first at a
+  guessed height); the page's length then changed under the scrollbar. Now:
+  - a table or section skipped away from the screen keeps the exact height it had when last laid out; while what it
+    shows changes, the browser lays it out with the rest of the page, then it is skipped again at that height;
+  - a month being drawn away from the screen keeps its height until all of it is there, then takes its new height at
+    once; one drawn on the screen is at least as tall as before meanwhile;
+  - months near the screen are drawn once in the background, three at a time, to know their height; the others take
+    the height of the drawn month with the nearest number of operations;
+  - a scroll the page has not yet been told about is never undone when something above changes height, and switching
+    the view keeps the period on screen in place.
+  Measured (real wheel, scrollbar dragged), page length changes while scrolling the months once loaded: 26 to 34 in
+  3 seconds before, none now (one change of a pixel, rounding).
+- A tooltip no longer opens after the mouse has left its element, nor stays.
+
+### Changed
+- No pop-up over the category pills, the brands, the accounts and labels of the transfers.
+- Transfers over time: each step with transfers is wide enough for them and their labels; a long period scrolls
+  sideways, the accounts' names on the left and what each gained or gave on the right staying in sight. More room
+  between accounts. Labels beside the arrows show when and how much, never over a stream or another transfer;
+  pointing at a transfer shows it in full. A button opens it on the whole screen. The PDF keeps it at the page's width.
+- The app starts faster: its code is compiled ahead (trimming had left it to be compiled at every start), and the latest
+  three months are made while the window and its browser start. First month on screen, several launches on the same test data:
+  about 3.6 s before, about 1 s now. The program is 52.5 MB (was 35.1 MB).

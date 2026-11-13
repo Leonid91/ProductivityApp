@@ -9,7 +9,7 @@ import { api, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample, moneyBeside, plural } from '../format'
 import { CategoryIcon } from './CategoryIcon'
-import { CategoryPill, LazyTooltip, MenuDivider, Money } from './common'
+import { CategoryPill, MenuDivider, Money } from './common'
 import { choiceItems, countChoices, hiding, shownByTags, tagChoices, type Choice } from './filters'
 import { Glyph } from './plain'
 import { TagCell, useTagName } from './tags'
@@ -88,11 +88,9 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: () =>
   }
   return (
     <div className="p-brand-box">
-      <LazyTooltip title={tx.rawLabel || 'Entered by hand'} placement="top-start">
-        <div className="p-brand" onClick={() => setEditing(true)}>
-          {tx.brand}
-        </div>
-      </LazyTooltip>
+      <div className="p-brand" onClick={() => setEditing(true)}>
+        {tx.brand}
+      </div>
     </div>
   )
 }
