@@ -200,9 +200,18 @@ export interface PeriodReport {
 
 /** Every operation of every bank in the global currency (converted ones keep the amount the bank wrote, and the rate). */
 export function globalTransactions(r: PeriodReport): TransactionView[] {
-  return r.banks.flatMap((b) => b.summary.transactions)
-    .filter((t) => t.currency === r.currency)
-    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
+  const before = (a: TransactionView, b: TransactionView) => a.date < b.date || (a.date === b.date && a.id < b.id)
+  const lists = r.banks.map((b) => b.summary.transactions.filter((t) => t.currency === r.currency))
+  // Each bank lists its operations by date, then id: merged, they stay in that order (sorted if one is not).
+  for (const l of lists) for (let i = 1; i < l.length; i++) if (before(l[i], l[i - 1])) { l.sort((a, b) => (before(a, b) ? -1 : before(b, a) ? 1 : 0)); break }
+  const at = lists.map(() => 0)
+  const out: TransactionView[] = []
+  for (;;) {
+    let k = -1
+    for (let i = 0; i < lists.length; i++) if (at[i] < lists[i].length && (k < 0 || before(lists[i][at[i]], lists[k][at[k]]))) k = i
+    if (k < 0) return out
+    out.push(lists[k][at[k]++])
+  }
 }
 export interface RatesStatus {
   sourceId: string; source: string; base: string; url: string; updatedAt: string | null; latest: string | null; first: string | null

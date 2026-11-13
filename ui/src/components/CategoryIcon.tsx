@@ -48,3 +48,6 @@ export function CategoryIcon({ name, ...props }: { name: string } & SvgIconProps
   const Icon = icons[name] ?? MoreHoriz
   return <Icon {...props} />
 }
+
+/** The icon of a category by its name (the "more" icon for a name it does not know). */
+export const categoryIconOf = (name: string): React.ComponentType<SvgIconProps> => icons[name] ?? MoreHoriz

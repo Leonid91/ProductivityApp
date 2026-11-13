@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { Box, Checkbox, Typography, useTheme } from '@mui/material'
 import { LineChart } from '@mui/x-charts/LineChart'
 import type { Slice, TransactionView } from '../api'
@@ -27,7 +27,7 @@ interface Shown { total: boolean; categories: string[] }
  * expenses in the period and the total, each ticked on or off; the total and the five largest categories are ticked
  * at first. The vertical scale follows the lines shown.
  */
-export function CategoryLines({ keep, from, to, transactions, categories, topLevel, currency }: {
+export const CategoryLines = memo(function CategoryLines({ keep, from, to, transactions, categories, topLevel, currency }: {
   /** Where the choices are kept while the period is away from the screen. */
   keep: string
   from: string
@@ -170,4 +170,4 @@ export function CategoryLines({ keep, from, to, transactions, categories, topLev
       )}
     </Box>
   )
-}
+})

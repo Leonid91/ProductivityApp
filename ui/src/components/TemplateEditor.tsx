@@ -257,7 +257,7 @@ export function TemplateEditor({ draft, currency, onClose }: { draft: Draft; cur
                     <TableRow key={r.index}>
                       <TableCell className="tnum" sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>{formatDate(r.date, settings.dateFormat)}</TableCell>
                       <TableCell sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</TableCell>
-                      <TableCell align="right"><Money value={r.amount} currency={currency} sign sx={{ fontSize: 12.5 }} /></TableCell>
+                      <TableCell align="right"><Money value={r.amount} currency={currency} sign style={{ fontSize: 12.5 }} /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

@@ -25,6 +25,17 @@ const shot = async (p, name) => {
 }
 const text = (p) => p.eval('document.body.innerText')
 // Analytics has two parts: General (the charts) and Transfers (the money moved, over time and in total).
+// A period drawn in full: it appears a piece at a time (the nearest to the screen first), so wait until nothing more
+// has come in it for a moment.
+const settle = async (p, sel) => {
+  let last = -1, same = 0
+  for (let i = 0; i < 60 && same < 3; i++) {
+    const n = await p.eval(`document.querySelectorAll('${sel} *').length`)
+    same = n === last ? same + 1 : 0
+    last = n
+    await sleep(200)
+  }
+}
 const analyticsPart = async (p, part) => { await p.clickText(part, { selector: '[data-analytics-view] button' }); await sleep(500) }
 // The transfers timeline of a period as drawn, beside what the engine says it holds.
 const timelineChecks = async (p, sec, t, label) => {
@@ -57,6 +68,32 @@ const timelineChecks = async (p, sec, t, label) => {
 }
 
 const p = await launch(exe, ['--offscreen', '--data-dir', data, '--size', '1440x920'], 9333)
+// Text read the way it shows on the screen: the banks and tables of a period away from the screen are drawn only when
+// they come near (content-visibility: auto), and the browser gives no text (innerText) for what it has not drawn. The
+// element read, and what it is in, are drawn for the reading.
+const readable = `(() => {
+  if (window.__readable) return
+  window.__readable = true
+  let style = null
+  const own = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText')
+  Object.defineProperty(HTMLElement.prototype, 'innerText', {
+    configurable: true,
+    set(v) { own.set.call(this, v) },
+    get() {
+      if (!style?.isConnected) {
+        style = document.createElement('style')
+        style.textContent = '[data-e2e-read], [data-e2e-read] *, [data-e2e-up] { content-visibility: visible !important }'
+        document.head.append(style)
+      }
+      this.setAttribute('data-e2e-read', '')
+      const up = []
+      for (let e = this.parentElement; e; e = e.parentElement) { e.setAttribute('data-e2e-up', ''); up.push(e) }
+      try { return own.get.call(this) } finally { this.removeAttribute('data-e2e-read'); for (const e of up) e.removeAttribute('data-e2e-up') }
+    },
+  })
+})()`
+await p.send('Page.addScriptToEvaluateOnNewDocument', { source: readable })
+await p.eval(readable)
 let failed = false
 try {
   await p.waitFor(`document.querySelector('nav') !== null`)
@@ -255,6 +292,7 @@ try {
   // transfers, card payments and investments: in their own folded table
   await p.eval(`document.querySelector('section[data-period="2025-08-01"]').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordion-root') !== null`, 20000, 'transfers section')
+  await settle(p, 'section[data-period="2025-08-01"]')
   const mainHasMoves = await p.eval(`[...document.querySelector('section[data-period="2025-08-01"] table').querySelectorAll('tbody tr')].some(r => /Credit card payment|Transfer between accounts/.test(r.innerText))`)
   check('transfers kept out of the main table, folded apart', !mainHasMoves)
   await p.eval(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordionSummary-root').click()`)
@@ -339,6 +377,7 @@ try {
   check('money moved: one card of its own after the banks, each account inside the box of its bank', own.cards === 1 && !own.inPart && own.after && own.banks.length > 0 && own.inside, JSON.stringify(own))
   await analyticsPart(p, 'General')
   await p.waitFor(`document.querySelector('${sec} [data-bars]') !== null`, 20000, 'general view again')
+  await settle(p, sec)
   // Expenses per day: the amount of the day on hover.
   await p.eval(`(() => { const f = document.querySelector('${sec} [data-bars]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 200 }) })()`)
   await sleep(600)
@@ -604,6 +643,7 @@ try {
     await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
     await p.waitFor(`document.querySelector('${sec} [data-pie="Expenses per category"]') !== null && document.querySelector('${sec} [data-category-lines]') !== null`, 20000, 'August analytics')
     await sleep(800)
+    await settle(p, sec)
     return p.eval(`(() => { const s = document.querySelector('${sec}'); return { pie: [...s.querySelectorAll('[data-pie="Expenses per category"] li')].map(l => l.innerText.split('\\n')[0]), lines: [...s.querySelectorAll('[data-category-choices] li[data-choice]')].map(l => l.dataset.choice), expenses: s.querySelector('[data-stat="Expenses"]').innerText } })()`)
   }
   const showPie = async (name) => {
@@ -1634,6 +1674,7 @@ try {
   // The movements table: an international transfer written in both currencies.
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(900)
+  await settle(p, fourSec)
   // The transfers of every bank, opened.
   await p.eval(`[...document.querySelectorAll('${fourSec} .MuiAccordionSummary-root')].filter(e => e.innerText.includes('Transfers, card payments') && e.getAttribute('aria-expanded') !== 'true').forEach(e => e.click())`)
   await sleep(900)

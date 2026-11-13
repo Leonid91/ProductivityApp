@@ -1,30 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { Autocomplete, Box, Checkbox, Chip, ListItemText, Menu, MenuItem, TextField, Tooltip, useTheme } from '@mui/material'
-import { alpha } from '@mui/material/styles'
 import LocalOffer from '@mui/icons-material/LocalOfferOutlined'
 import { api, type Tag } from '../api'
 import { useApp } from '../AppContext'
+import { soft } from './common'
+import { Mark } from './plain'
 
 /** A tag as a small pill in its colour (or neutral). Faded when it comes from the operation's category. */
 export function TagChip({ tag, inherited = false }: { tag: Tag; inherited?: boolean }) {
   const theme = useTheme()
   const dark = theme.palette.mode === 'dark'
   const color = tag.color
+  const vars: Record<string, string> = { '--tag-bg': color ? soft(color, dark, [0.12, 0.12], [0.2, 0.2])[0] : dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.05)' }
+  if (color) vars['--tag-color'] = color
+  if (color && inherited) vars['--tag-border'] = soft(color, dark, [0.55, 0.55], [0.55, 0.55])[0]
   return (
-    <Box
-      component="span"
-      data-tag={tag.name}
-      sx={{
-        display: 'inline-flex', alignItems: 'center', maxWidth: '100%', px: 0.9, py: 0.15, borderRadius: 999, fontSize: 12, fontWeight: 600,
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.6,
-        color: color ?? 'text.secondary',
-        bgcolor: color ? alpha(color, dark ? 0.2 : 0.12) : dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.05)',
-        border: inherited ? '1px dashed' : '1px solid transparent',
-        borderColor: inherited ? (color ? alpha(color, 0.55) : 'divider') : 'transparent',
-      }}
-    >
+    <span className={inherited ? 'p-tag p-inherited' : 'p-tag'} data-tag={tag.name} style={vars as CSSProperties}>
       {tag.name}
-    </Box>
+    </span>
   )
 }
 
@@ -34,6 +27,7 @@ export function TagChip({ tag, inherited = false }: { tag: Tag; inherited?: bool
  */
 export function TagCell({ operationId, own, all, categoryName }: { operationId: number; own: number[]; all: number[]; categoryName: string }) {
   const { tags, tag, setTagData, fail } = useApp()
+  const theme = useTheme()
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   // The tags ticked so far, until the operation comes back with them: a second tick builds on the first even when
   // the period has not been read again yet.
@@ -54,20 +48,10 @@ export function TagCell({ operationId, own, all, categoryName }: { operationId: 
   }
   return (
     <>
-      <Box
-        component="button"
-        data-tag-cell={operationId}
-        aria-label="Tags"
-        onClick={(e) => { setAnchor(e.currentTarget); setMenuMade(true) }}
-        sx={{
-          display: 'flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center', minHeight: 26, width: '100%', border: 0, background: 'none', p: 0.25, mx: -0.25,
-          borderRadius: 1.5, cursor: 'pointer', font: 'inherit', textAlign: 'left', '&:hover': { bgcolor: 'action.hover' },
-          '&:hover .tag-add, &:focus-visible .tag-add': { opacity: 1 },
-        }}
-      >
+      <button className="p-tags" data-tag-cell={operationId} aria-label="Tags" onClick={(e) => { setAnchor(e.currentTarget); setMenuMade(true) }}>
         {shown.map((t) => <TagChip key={t.id} tag={t} inherited={!ownSet.has(t.id)} />)}
-        {shown.length === 0 && <LocalOffer className="tag-add" sx={{ fontSize: 16, color: 'text.disabled', opacity: 0, transition: 'opacity 120ms' }} />}
-      </Box>
+        {shown.length === 0 && <Mark icon={LocalOffer} color={theme.palette.text.disabled} className="tag-add" />}
+      </button>
       {/* Made the first time it opens (a table holds hundreds of these), kept after so it closes as it always did. */}
       {menuMade && <Menu anchorEl={anchor} open={anchor !== null} onClose={() => setAnchor(null)} slotProps={{ paper: { sx: { minWidth: 240, maxHeight: 420 } } }}>
         {tags.length === 0 && (

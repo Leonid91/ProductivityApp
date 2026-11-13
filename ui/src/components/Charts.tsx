@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Box, Typography, useTheme } from '@mui/material'
 import { PieChart } from '@mui/x-charts/PieChart'
 import { BarChart } from '@mui/x-charts/BarChart'
@@ -28,7 +29,7 @@ export function sliceColor(colors: string[], other: string, slice: Slice, index:
 }
 
 /** Donut with a legend that carries names, amounts and shares in text colours. */
-export function ExpensePie({ title, slices, currency, empty = 'No expenses' }: { title: string; slices: Slice[]; currency: string; empty?: string }) {
+export const ExpensePie = memo(function ExpensePie({ title, slices, currency, empty = 'No expenses' }: { title: string; slices: Slice[]; currency: string; empty?: string }) {
   const theme = useTheme()
   const { series, other } = theme.palette.chart
   const total = slices.reduce((s, x) => s + x.amount, 0)
@@ -78,10 +79,10 @@ export function ExpensePie({ title, slices, currency, empty = 'No expenses' }: {
       )}
     </Box>
   )
-}
+})
 
 /** Expenses per day (month view), per month (year view) or per year (long ranges). */
-export function ExpenseBars({ bars, unit, currency }: { bars: Bar[]; unit: 'day' | 'month' | 'year'; currency: string }) {
+export const ExpenseBars = memo(function ExpenseBars({ bars, unit, currency }: { bars: Bar[]; unit: 'day' | 'month' | 'year'; currency: string }) {
   const theme = useTheme()
   const title = unit === 'day' ? 'Expenses per day' : unit === 'month' ? 'Expenses per month' : 'Expenses per year'
   const max = Math.max(0, ...bars.map((b) => b.expenses))
@@ -132,4 +133,4 @@ export function ExpenseBars({ bars, unit, currency }: { bars: Bar[]; unit: 'day'
       )}
     </Box>
   )
-}
+})

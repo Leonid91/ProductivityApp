@@ -244,7 +244,7 @@ export function CalendarPage() {
                   value={t.amount}
                   currency={currency}
                   sign
-                  sx={{ flexShrink: 0, color: c.kind === 'transfer' ? theme.palette.money.zero : t.amount < 0 ? theme.palette.money.negative : theme.palette.money.positive }}
+                  style={{ flexShrink: 0, color: c.kind === 'transfer' ? theme.palette.money.zero : t.amount < 0 ? theme.palette.money.negative : theme.palette.money.positive }}
                 />
               </Box>
             )

@@ -1,4 +1,4 @@
-import { cloneElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { cloneElement, useEffect, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import {
   Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
@@ -9,7 +9,8 @@ import Check from '@mui/icons-material/CheckRounded'
 import type { Category, CategoryKind } from '../api'
 import { useApp } from '../AppContext'
 import { money } from '../format'
-import { CategoryIcon } from './CategoryIcon'
+import { CategoryIcon, categoryIconOf } from './CategoryIcon'
+import { Mark } from './plain'
 
 /**
  * A tooltip made only when the mouse (or the keyboard) first comes to its element: a table of hundreds of lines draws
@@ -33,26 +34,23 @@ export function LazyTooltip({ children, enterDelay = 100, ...props }: Omit<Toolt
   )
 }
 
-/**
- * The lines of a long table drawn as plain cells (`<tr className="row">`, `<td>`), looking like the table's own: the
- * look is given once by the table instead of by each of its hundreds of cells.
- */
-export const plainRows = (theme: Theme) => ({
-  '& tbody tr.row:hover': { backgroundColor: theme.palette.mode === 'dark' ? alpha('#ffffff', 0.035) : alpha('#000000', 0.022) },
-  '& tbody tr.row > td': {
-    ...theme.typography.body2, fontSize: 13.5, display: 'table-cell', verticalAlign: 'inherit', textAlign: 'left',
-    color: theme.palette.text.primary, borderBottom: `1px solid ${theme.palette.divider}`, paddingTop: theme.spacing(0.9), paddingBottom: theme.spacing(0.9),
-  },
-})
-
-export function Money({ value, currency, sign, sx, muted }: { value: number; currency: string; sign?: boolean; sx?: SxProps<Theme>; muted?: boolean }) {
+export function Money({ value, currency, sign, style, muted }: { value: number; currency: string; sign?: boolean; style?: CSSProperties; muted?: boolean }) {
   const theme = useTheme()
   const color = muted ? theme.palette.text.secondary : value > 0 && sign ? theme.palette.money.positive : theme.palette.text.primary
   return (
-    <Box component="span" className="tnum" sx={{ color, whiteSpace: 'nowrap', fontWeight: 520, ...sx as object }}>
+    <span className="tnum p-money" style={{ color, ...style }}>
       {money(value, currency, { sign })}
-    </Box>
+    </span>
   )
+}
+
+/** A soft colour behind a coloured element (its pill), and under the mouse: worked out once per colour and theme. */
+const softs = new Map<string, [string, string]>()
+export function soft(color: string, dark: boolean, light: [number, number], darkOn: [number, number]): [string, string] {
+  const key = `${color}|${dark}|${light}|${darkOn}`
+  let v = softs.get(key)
+  if (!v) { const [a, b] = dark ? darkOn : light; softs.set(key, (v = [alpha(color, a), alpha(color, b)])) }
+  return v
 }
 
 /** The colour a category is shown in: its own, or none. */
@@ -160,39 +158,22 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
   const dark = theme.palette.mode === 'dark'
   const color = useCategoryColor()(c)
   const path = useCategoryPath()
+  const [bg, hover] = color ? soft(color, dark, [0.13, 0.2], [0.2, 0.28]) : dark ? ['rgba(255,255,255,.06)', 'rgba(255,255,255,.1)'] : ['rgba(0,0,0,.045)', 'rgba(0,0,0,.075)']
+  const shownPath = path(c)
   return (
     <>
-      <LazyTooltip title={path(c)} placement="top-start" enterDelay={400}>
-        <Box component="span" data-path={path(c)} sx={{ display: 'inline-flex', maxWidth: '100%' }}>
-          <Box
-            component="button"
+      <LazyTooltip title={shownPath} placement="top-start" enterDelay={400}>
+        <span className="p-pill-box" data-path={shownPath}>
+          <button
+            className={`p-pill${color ? ' p-colored' : c.kind === 'transfer' ? ' p-quiet' : ''}${onChange ? ' p-active' : ''}`}
             disabled={disabled || !onChange}
             onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); setMenuMade(true) }}
-            sx={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 0.75,
-              border: 0,
-              borderRadius: 999,
-              py: 0.4,
-              pl: 0.9,
-              pr: 1.25,
-              maxWidth: '100%',
-              font: 'inherit',
-              fontSize: 13,
-              fontWeight: color ? 620 : 520,
-              color: color ?? (c.kind === 'transfer' ? 'text.secondary' : 'text.primary'),
-              bgcolor: color ? alpha(color, dark ? 0.2 : 0.13) : dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)',
-              cursor: onChange ? 'pointer' : 'default',
-              transition: 'background-color 120ms',
-              '&:hover:not(:disabled)': { bgcolor: color ? alpha(color, dark ? 0.28 : 0.2) : dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.075)' },
-              '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}` },
-            }}
+            style={{ '--pill-bg': bg, '--pill-hover': hover, ...(color ? { color, '--pill-icon': color } : {}) } as CSSProperties}
           >
-            <CategoryIcon name={c.icon} sx={{ fontSize: 16, color: color ?? 'text.secondary' }} />
-            <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</Box>
-          </Box>
-        </Box>
+            <Mark icon={categoryIconOf(c.icon)} color={color ?? theme.palette.text.secondary} />
+            <span className="p-nowrap">{c.name}</span>
+          </button>
+        </span>
       </LazyTooltip>
       {/* Made the first time it opens (a table holds hundreds of these), kept after so it closes as it always did. */}
       {onChange && menuMade && <CategoryMenu anchor={anchor} value={id} onClose={() => setAnchor(null)} onPick={onChange} />}

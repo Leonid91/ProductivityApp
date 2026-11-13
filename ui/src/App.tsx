@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { PlainStyles } from './plainStyles'
 import { Box, ButtonBase, CssBaseline, IconButton, ThemeProvider, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
@@ -123,6 +124,7 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <PlainStyles />
       <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="en">
         {info ? (
           <AppProvider info={info} onTheme={setMode}>

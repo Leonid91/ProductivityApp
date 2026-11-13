@@ -1,5 +1,6 @@
 import { Box, IconButton } from '@mui/material'
 import { LazyTooltip } from './common'
+import { Glyph } from './plain'
 import EditOutlined from '@mui/icons-material/EditOutlined'
 import DeleteOutline from '@mui/icons-material/DeleteOutlineRounded'
 
@@ -39,6 +40,18 @@ export function RowActions({ onEdit, editLabel = 'Edit', onDelete, deleteLabel =
   only?: boolean
   children?: React.ReactNode
 }) {
+  // The pencil alone (the lines of a long table): plain elements, given their look by the page's style sheet.
+  if (!only && !onDelete && !children) {
+    return (
+      <div data-row-actions className="p-actions">
+        <LazyTooltip title={editLabel} enterDelay={600}>
+          <button className="p-icon-button p-edit" tabIndex={0} type="button" aria-label={editLabel} data-row-edit onClick={onEdit}>
+            <Glyph icon={EditOutlined} size={18} />
+          </button>
+        </LazyTooltip>
+      </div>
+    )
+  }
   return (
     <Box data-row-actions sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.25, verticalAlign: 'middle' }}>
       {children}

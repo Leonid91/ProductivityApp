@@ -832,3 +832,32 @@ real app with `tools/e2e/perf.mjs`.
 
 ### Added
 - Unit test: a long period sent in pieces makes the whole list again, in its order.
+
+## November 12th, 2026 - Periods drawn without dropping frames - Commit 37
+
+### Changed
+- Switching between Month, Year, All time and Custom, and scrolling the periods, keep the screen's frame rate. Lowest
+  frame rate during each action (the longest frame), ten years of fictitious operations, 240 Hz screen, median of 3
+  runs, commit 36 → now): switching to Year 48 → 119 fps, to All time 60 → 99 fps, to Custom 27 → 119 fps, to Month
+  60 → 120 fps; scrolling years 34 → 119 fps, months 48 → 92 fps (a scroll of about ten screens a second). Scrolled with
+  the mouse wheel: months 17 → 120 fps, years 120 → 213 fps. The average is now 235 to 240 fps everywhere (was 185 to
+  225). This machine itself drops to about 100 fps now and then with the app doing nothing.
+- What a period shows (its boxes of totals, its tables and their lines, the category and tag pills, the icons) is made
+  of plain elements given their look by one style sheet made from the theme, instead of styles worked out again for
+  every element each time it is drawn. Same look: compared element by element (computed style and place of every
+  element of a month and a year, light and dark, statements, analytics, summary, transfers) and pixel by pixel.
+- Everything that appears a piece at a time (a period coming in, its banks, each of its tables, five lines of a table
+  at a time, a period let go of) waits its turn in one queue for the whole page: pieces are drawn just after a frame is
+  shown, the nearest to the screen first, a little each frame.
+- Each table and section of a bank is only laid out and painted when near the screen; each is measured once in the
+  background, so the page keeps its real length.
+- Periods of the kind just left are hidden at once and taken away a little at a time; switching back to them before
+  they are gone shows them again at once. The days of a custom period are made ready while the window is idle.
+- A period's operations come in pieces small enough to be read between two frames (the latest 300 of each bank, then
+  1,500 at a time); a month or a year shows once all its pieces are in, a longer period shows its latest operations at
+  once and the older ones join as they come. The filters' lists are made when a filter is opened or in use.
+- The table headers stick to the top as one row (they looked the same; the page has fewer layers to draw).
+
+### Added
+- End-to-end checks read the text of a table away from the screen as it shows once drawn, and wait for a period to be
+  drawn in full before reading it.

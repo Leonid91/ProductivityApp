@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
-import { Box, Menu, Pagination, Table, TableBody, TableCell, TableHead, TableRow, Typography, useTheme } from '@mui/material'
-import { plainRows } from './common'
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Menu, useTheme } from '@mui/material'
+import { Glyph } from './plain'
 import East from '@mui/icons-material/EastRounded'
 import { api, type MovementView, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
@@ -9,18 +9,65 @@ import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill } from './common'
 import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './filters'
 import { TagCell, useTagName } from './tags'
-import { HeaderButton } from './TransactionTable'
+import { HeaderButton, Pager } from './TransactionTable'
 import { useKept } from '../keep'
+import { useStepper } from '../pace'
 import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
 
 const NONE_HIDDEN = new Set<string>()
+
+/** What the lines of the table do: the table's own functions. */
+interface MoveActs { setCategory: (m: MovementView, id: string) => void; onEdit: (t: TransactionView) => void }
+
+/** An account (or a place outside the app), and its kind under it. */
+function Place({ name, outside, type }: { name: string; outside: boolean; type: string | null }) {
+  const theme = useTheme()
+  return (
+    <div className="p-place">
+      <p className="p-body2 p-place-name" title={name} style={{ fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : theme.palette.text.primary }}>{name}</p>
+      {type && <span className="p-caption p-place-type">{type}</span>}
+    </div>
+  )
+}
+
+/** One movement (drawn again only when it changes). */
+const MoveRow = memo(function MoveRow({ m, tx, currency, act }: { m: MovementView; tx: TransactionView | undefined; currency: string; act: MoveActs }) {
+  const { settings, category } = useApp()
+  const theme = useTheme()
+  return (
+    <tr className="row">
+      <td className="tnum" style={{ color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}>{formatDate(m.date, settings.dateFormat)}</td>
+      <td><CategoryPill id={m.categoryId} onChange={(id) => act.setCategory(m, id)} /></td>
+      <td>
+        <div className="p-brand-box">
+          <p className="p-body2 p-nowrap" title={tx?.rawLabel ?? m.label}>{m.label}</p>
+        </div>
+        {/* An international transfer: each side in its own currency, and what the banks kept. */}
+        {m.sent != null && m.sentCurrency && m.received != null && m.receivedCurrency && (
+          <span data-international className="p-caption tnum" style={{ display: 'block' }}>
+            {money(m.sent, m.sentCurrency)} sent, {money(m.received, m.receivedCurrency)} received
+            {m.lost != null && <>, {money(m.lost, currency)} lost to exchange and fees</>}
+          </span>
+        )}
+      </td>
+      <td><Place name={m.from} outside={m.fromOutside} type={m.fromType} /></td>
+      <td><Glyph icon={East} size={16} style={{ color: theme.palette.text.disabled, display: 'block' }} /></td>
+      <td><Place name={m.to} outside={m.toOutside} type={m.toType} /></td>
+      <td>{tx && <TagCell operationId={tx.id} own={tx.ownTags} all={tx.tags} categoryName={category(tx.categoryId).name} />}</td>
+      <td className="tnum" style={{ textAlign: 'right', fontWeight: 560, whiteSpace: 'nowrap' }}>{money(m.amount, currency)}</td>
+      <td style={{ textAlign: 'right', paddingRight: 4 }}>
+        {tx && <RowActions onEdit={() => act.onEdit(tx)} />}
+      </td>
+    </tr>
+  )
+})
 
 /**
  * Transfers, card payments and investments, each movement once: from which account (or the outside) to which account
  * (or the outside). Places outside the app (accounts not imported, other people, investments) are in orange.
  * Dates, categories, descriptions and tags each have a filter (all, none, one or any of them).
  */
-export function MovementsTable({ keep, movements, transactions, currency, paged, onEdit }: {
+export const MovementsTable = memo(function MovementsTable({ keep, movements, transactions, currency, paged, onEdit }: {
   /** Where the table's filters and page are kept while the period is away from the screen. */
   keep: string
   movements: MovementView[]
@@ -45,7 +92,6 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
       fail(e)
     }
   }
-  const theme = useTheme()
   const [page, setPage] = useKept(keep + ':page', 1)
   const [hiddenDates, setHiddenDates] = useKept(keep + ':dates', NONE_HIDDEN)
   const [hiddenLabels, setHiddenLabels] = useKept(keep + ':labels', NONE_HIDDEN)
@@ -62,7 +108,6 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
   const labelChoices = useMemo(() => countChoices(movements, (m) => m.label, (l) => l).sort((a, b) => a.label.localeCompare(b.label)), [movements])
   const categoryChoices = useMemo(() => countChoices(movements, (m) => m.categoryId, (id) => category(id).name,
     (id) => <CategoryIcon name={category(id).icon} sx={{ fontSize: 18 }} />).sort((a, b) => b.count - a.count), [movements, category])
-  const tagsOf = (m: MovementView) => byId.get(m.editId)?.tags ?? []
   const tagFilter = useMemo(() => tagChoices(movements, (m) => byId.get(m.editId)?.tags ?? [], tagName), [movements, byId, tagName])
   const rows = useMemo(() => [...movements].reverse().filter((m) => !hiddenDates.has(m.date) && !hiddenCategories.has(m.categoryId) && !hiddenLabels.has(m.label)
     && shownByTags(byId.get(m.editId)?.tags ?? [], hiddenTags)),
@@ -71,17 +116,22 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
   const pages = Math.max(1, Math.ceil(rows.length / pageSize))
   const visible = paged ? rows.slice((Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize) : rows
 
-  const place = (name: string, outside: boolean, type: string | null) => (
-    <Box sx={{ minWidth: 0 }}>
-      <Typography variant="body2" title={name} sx={{ overflowWrap: 'anywhere', fontWeight: outside ? 520 : 600, color: outside ? theme.palette.outside : 'text.primary', lineHeight: 1.3 }}>{name}</Typography>
-      {type && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.2 }}>{type}</Typography>}
-    </Box>
-  )
+  // The lines appear five at a time, paced to the screen with every other piece of the page (see pace).
+  const table = useRef<HTMLTableElement>(null)
+  const drawnRows = useStepper(visible.length, visible.map((m) => m.editId).join(), table, 5, 5)
+
+  // What a line does, the same functions from one drawing to the next: a line is drawn again only when it changes.
+  const latest = useRef({ setCategory, onEdit })
+  useLayoutEffect(() => { latest.current = { setCategory, onEdit } })
+  const act = useMemo<MoveActs>(() => ({
+    setCategory: (m, id) => void latest.current.setCategory(m, id),
+    onEdit: (t) => latest.current.onEdit(t),
+  }), [])
 
 
   return (
-    <Box>
-      <Table size="small" data-movements sx={{ tableLayout: 'fixed', '& td, & th': { px: 1.25 }, '& tr > *:first-of-type': { pl: 0.5 }, ...plainRows(theme) }}>
+    <div className="p-lines">
+      <table ref={table} className="p-table p-tight" data-movements>
         <colgroup>
           <col style={{ width: '14%' }} />
           <col style={{ width: 196 }} />
@@ -93,61 +143,33 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
           <col style={{ width: '10%' }} />
           <col style={{ width: ROW_EDIT_WIDTH }} />
         </colgroup>
-        <TableHead>
-          <TableRow>
-            <TableCell><HeaderButton label="Date" active={hiding(hiddenDates, dateChoices)} onClick={(e) => setDateMenu(e.currentTarget)} /></TableCell>
-            <TableCell><HeaderButton label="Category" active={hiding(hiddenCategories, categoryChoices)} onClick={(e) => setCatMenu(e.currentTarget)} /></TableCell>
-            <TableCell><HeaderButton label="Description" active={hiding(hiddenLabels, labelChoices)} onClick={(e) => setLabelMenu(e.currentTarget)} /></TableCell>
-            <TableCell>From</TableCell>
-            <TableCell padding="none" />
-            <TableCell>To</TableCell>
-            <TableCell><HeaderButton label="Tags" active={hiding(hiddenTags, tagFilter)} onClick={(e) => setTagMenu(e.currentTarget)} /></TableCell>
-            <TableCell align="right">Amount ({currency})</TableCell>
-            <TableCell />
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {visible.map((m) => {
-            const tx = byId.get(m.editId)
-            return (
-              <tr key={m.editId} className="row">
-                <td className="tnum" style={{ color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}>{formatDate(m.date, settings.dateFormat)}</td>
-                <td><CategoryPill id={m.categoryId} onChange={(id) => void setCategory(m, id)} /></td>
-                <td>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-                    <Typography variant="body2" noWrap title={tx?.rawLabel ?? m.label}>{m.label}</Typography>
-                  </Box>
-                  {/* An international transfer: each side in its own currency, and what the banks kept. */}
-                  {m.sent != null && m.sentCurrency && m.received != null && m.receivedCurrency && (
-                    <Typography data-international variant="caption" color="text.secondary" className="tnum" sx={{ display: 'block' }}>
-                      {money(m.sent, m.sentCurrency)} sent, {money(m.received, m.receivedCurrency)} received
-                      {m.lost != null && <>, {money(m.lost, currency)} lost to exchange and fees</>}
-                    </Typography>
-                  )}
-                </td>
-                <td>{place(m.from, m.fromOutside, m.fromType)}</td>
-                <td><East sx={{ fontSize: 16, color: 'text.disabled', display: 'block' }} /></td>
-                <td>{place(m.to, m.toOutside, m.toType)}</td>
-                <td>{tx && <TagCell operationId={tx.id} own={tx.ownTags} all={tagsOf(m)} categoryName={category(tx.categoryId).name} />}</td>
-                <td className="tnum" style={{ textAlign: 'right', fontWeight: 560, whiteSpace: 'nowrap' }}>{money(m.amount, currency)}</td>
-                <td style={{ textAlign: 'right', paddingRight: 4 }}>
-                  {tx && <RowActions onEdit={() => onEdit(tx)} />}
-                </td>
-              </tr>
-            )
-          })}
+        <thead>
+          <tr>
+            <th><HeaderButton label="Date" active={hiding(hiddenDates, dateChoices)} onClick={(e) => setDateMenu(e.currentTarget)} /></th>
+            <th><HeaderButton label="Category" active={hiding(hiddenCategories, categoryChoices)} onClick={(e) => setCatMenu(e.currentTarget)} /></th>
+            <th><HeaderButton label="Description" active={hiding(hiddenLabels, labelChoices)} onClick={(e) => setLabelMenu(e.currentTarget)} /></th>
+            <th>From</th>
+            <th className="p-none" />
+            <th>To</th>
+            <th><HeaderButton label="Tags" active={hiding(hiddenTags, tagFilter)} onClick={(e) => setTagMenu(e.currentTarget)} /></th>
+            <th className="p-right">Amount ({currency})</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {visible.slice(0, drawnRows).map((m) => <MoveRow key={m.editId} m={m} tx={byId.get(m.editId)} currency={currency} act={act} />)}
           {visible.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={9} sx={{ py: 4, textAlign: 'center', color: 'text.secondary', borderBottom: 0 }}>No movements match these filters</TableCell>
-            </TableRow>
+            <tr>
+              <td colSpan={9} className="p-empty">No movements match these filters</td>
+            </tr>
           )}
-        </TableBody>
-      </Table>
-      {paged && pages > 1 && (
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 1.5 }}>
-          <Typography variant="body2" color="text.secondary">{plural(rows.length, 'movement')}</Typography>
-          <Pagination count={pages} page={Math.min(page, pages)} onChange={(_, p) => setPage(p)} shape="rounded" size="small" />
-        </Box>
+        </tbody>
+      </table>
+      {paged && pages > 1 && drawnRows >= visible.length && (
+        <div className="p-pager">
+          <p className="p-body2">{plural(rows.length, 'movement')}</p>
+          <Pager count={pages} page={Math.min(page, pages)} onChange={setPage} />
+        </div>
       )}
       <Menu anchorEl={dateMenu} open={dateMenu !== null} onClose={() => setDateMenu(null)} slotProps={{ paper: { sx: { minWidth: 280, maxHeight: 480 } } }}>
         {choiceItems({ choices: dateChoices, hidden: hiddenDates, onChange: filtered(setHiddenDates), all: 'All dates' })}
@@ -161,6 +183,6 @@ export function MovementsTable({ keep, movements, transactions, currency, paged,
       <Menu anchorEl={labelMenu} open={labelMenu !== null} onClose={() => setLabelMenu(null)} slotProps={{ paper: { sx: { minWidth: 300, maxWidth: 380, maxHeight: 480 } } }}>
         {choiceItems({ choices: labelChoices, hidden: hiddenLabels, onChange: filtered(setHiddenLabels), all: 'All descriptions' })}
       </Menu>
-    </Box>
+    </div>
   )
-}
+})
