@@ -40,6 +40,8 @@ export interface InitInfo {
   nonClientRegions: boolean
   maximized: boolean
   dataFolder: string
+  /** The log file (it can be moved). */
+  logFile: string
 }
 
 export interface Slice { key: string; label: string; amount: number; share: number }
@@ -342,6 +344,9 @@ export interface BrandRule { id: number; merchantKey: string; brand: string; cat
 
 export interface TransactionInput { date: string; amount: number; brand: string; categoryId: string; accountId: number | null; note: string | null; earned?: number | null }
 
+/** An entry of the log: its number, who did it (you, app, engine, window), what, and its full details (more: cut here, read in full with logs.entry). */
+export interface LogEntry { n: number; time: string; level: 'info' | 'warning' | 'error'; source: string; action: string; detail: string; more: boolean; size: number }
+
 export const api = {
   init: () => invoke<InitInfo>('app.init'),
   ready: () => invoke<null>('app.ready'),
@@ -484,4 +489,14 @@ export const api = {
   },
   eraseAll: () => invoke<null>('data.eraseAll'),
   moveDatabase: (folder: string) => invoke<{ dataFolder: string }>('data.moveDatabase', { folder }),
+  logs: {
+    /** A page of the log, newest first (page 0: the latest). */
+    read: (page: number, size: number) => invoke<{ total: number; entries: LogEntry[]; file: string }>('logs.read', { page, size }),
+    /** One entry in full. */
+    entry: (n: number) => invoke<LogEntry>('logs.entry', { n }),
+    /** The Logs page is open (told of new entries) or not. */
+    watch: (on: boolean) => invoke<null>('logs.watch', { on }),
+    clear: () => invoke<null>('logs.clear'),
+    move: (folder: string) => invoke<{ logFile: string }>('logs.move', { folder }),
+  },
 }

@@ -34,9 +34,19 @@ host?.addEventListener('message', (e) => {
 })
 
 let counter = 0
+let beforeSend: (() => void) | null = null
+
+/** Called before each request goes out (the log sends what it holds first, so its entries come before what they caused). */
+export function onBeforeSend(f: () => void) { beforeSend = f }
+
+/** A message that needs no answer. */
+export function send(method: string, params: unknown) {
+  host?.postMessage({ id: `${Date.now().toString(36)}-${(counter++).toString(36)}`, method, params })
+}
 
 export function invoke<T>(method: string, params?: unknown): Promise<T> {
   if (!host) return Promise.reject(new Error('The app engine is not available.'))
+  beforeSend?.()
   const id = `${Date.now().toString(36)}-${(counter++).toString(36)}`
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve: resolve as (v: unknown) => void, reject })

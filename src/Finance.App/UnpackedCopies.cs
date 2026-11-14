@@ -24,8 +24,8 @@ internal static class UnpackedCopies
                 Directory.Move(dir, doomed);
                 Directory.Delete(doomed, true);
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            catch (IOException e) { ProductivityApp.Finance.Services.Diagnostics.Report("UnpackedCopies.RemoveOld", e); }
+            catch (UnauthorizedAccessException e) { ProductivityApp.Finance.Services.Diagnostics.Report("UnpackedCopies.RemoveOld", e); }
         }
     }
 }

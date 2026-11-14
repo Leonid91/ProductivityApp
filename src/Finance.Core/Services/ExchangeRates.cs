@@ -85,6 +85,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
                 catch (Exception e) when (e is RatesFileException or IOException or InvalidDataException or JsonException or FormatException or UnauthorizedAccessException)
                 {
                     // Not readable (changed by hand, cut short): the copy before it is used.
+                    ProductivityApp.Finance.Services.Diagnostics.Report($"ExchangeRates.Load {source.Id} {file}", e);
                 }
             }
             return _copies[source.Id] = loaded;
@@ -292,6 +293,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidDataException or IOException or JsonException
             or RatesFileException or ArgumentException or FormatException)
         {
+            ProductivityApp.Finance.Services.Diagnostics.Report($"ExchangeRates.Update {source.Id} {source.Url}", e);
             db.SetSetting($"rates.{source.Id}.error", e switch
             {
                 RatesFileException or ArgumentException => e.Message,
@@ -303,6 +305,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         catch (Exception e)
         {
             // Anything else (a fault of the app or of the computer): said plainly; the copies kept so far stay in use.
+            ProductivityApp.Finance.Services.Diagnostics.Report($"ExchangeRates.Update {source.Id} {source.Url}", e);
             db.SetSetting($"rates.{source.Id}.error", $"The rates could not be downloaded: {e.Message}");
         }
         finally

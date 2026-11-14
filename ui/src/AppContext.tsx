@@ -2,8 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Snackbar, Typography } from '@mui/material'
 import { api, type Account, type Bank, type Category, type InitInfo, type Settings, type Tag, type TagData } from './api'
 import { categoryTree, savedOrder, type TreeEntry } from './components/order'
+import { pageOpened, record } from './actionLog'
 
-export type Page = 'periods' | 'calendar' | 'import' | 'settings'
+export type Page = 'periods' | 'logs' | 'calendar' | 'import' | 'settings'
 
 interface Toast {
   key: number
@@ -34,6 +35,9 @@ interface AppState {
   /** Folder of the database (it can be moved). */
   dataFolder: string
   setDataFolder: (folder: string) => void
+  /** The log file (it can be moved). */
+  logFile: string
+  setLogFile: (file: string) => void
   /** Increases whenever stored data changes, so every view reloads what it shows. */
   dataVersion: number
   dataChanged: () => void
@@ -67,10 +71,15 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const [categories, setCategories] = useState<Category[]>(info.categories)
   const [tagData, setTagDataState] = useState<TagData>(info.tags)
   const [dataFolder, setDataFolder] = useState(info.dataFolder)
+  const [logFile, setLogFile] = useState(info.logFile)
   const [dataVersion, setDataVersion] = useState(0)
   const [page, setPage] = useState<Page>('periods')
   const [view, setView] = useState<string | null>(null)
-  const go = useCallback((p: Page, v?: string) => { setPage(p); setView(v ?? null) }, [])
+  const go = useCallback((p: Page, v?: string) => {
+    pageOpened(p, v ?? null)
+    setPage(p)
+    setView(v ?? null)
+  }, [])
   const takeView = useCallback(() => setView(null), [])
   const [toast, setToast] = useState<Toast | null>(null)
   const counter = useRef(0)
@@ -87,10 +96,13 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const tree = useMemo(() => categoryTree(categories, savedOrder(settings, 'categories')), [categories, settings])
 
   const notify = useCallback((message: string, severity: Toast['severity'] = 'success', actions?: Toast['actions']) => {
+    record('toast', { severity, message, actions: actions?.map((a) => a.label) ?? [] }, 'app', severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'info')
     setToast({ key: ++counter.current, message, severity, actions })
   }, [])
 
   const fail = useCallback((error: unknown) => {
+    // The error as it is (with its stack), then the message shown.
+    record('fail', { error: error instanceof Error ? error : String(error) }, 'app', 'error')
     notify(error instanceof Error ? error.message : String(error), 'error')
   }, [notify])
 
@@ -163,6 +175,8 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     refreshBanks,
     dataFolder,
     setDataFolder,
+    logFile,
+    setLogFile,
     dataVersion,
     dataChanged,
     notify,
@@ -173,7 +187,7 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
     takeView,
     askScope,
   }), [info, settings, setSetting, categories, tree, category, tagData, tag, setTagData, accounts, refreshAccounts, banks, refreshBanks, dataFolder,
-    dataVersion, dataChanged, notify, fail, page, go, view, takeView, askScope])
+    logFile, dataVersion, dataChanged, notify, fail, page, go, view, takeView, askScope])
 
   return (
     <Ctx.Provider value={value}>

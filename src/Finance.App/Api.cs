@@ -26,6 +26,7 @@ internal static class Api
             nonClientRegions,
             maximized = window.Maximized,
             dataFolder = s.DbFolder,
+            logFile = s.Logs.FilePath,
         });
         b.Register("app.ready", _ => null);
         b.Register("window.minimize", _ => { window.WindowState = FormWindowState.Minimized; return null; });
@@ -367,7 +368,37 @@ internal static class Api
         // ------------------------------------------------------------ data
         b.Register("data.eraseAll", _ => { s.Db.EraseAll(); return null; });
         b.Register("data.moveDatabase", p => { s.MoveDatabase(p.Get<string>("folder")); return new { dataFolder = s.DbFolder }; });
+
+        // ------------------------------------------------------------ logs
+        // A page of the log, newest entry first (page 0: the latest).
+        b.RegisterBackground("logs.read", p =>
+        {
+            var (total, entries) = s.Logs.Read(p.Opt<int?>("page") ?? 0, p.Opt<int?>("size") ?? 100);
+            return Task.FromResult<object?>(new { total, entries, file = s.Logs.FilePath });
+        });
+        // What the person did in the window (clicks, keys, changes, scrolls, drops, pages opened, messages shown), sent in small batches.
+        b.Register("logs.write", p =>
+        {
+            var entries = p.Get<List<WindowEntry>>("entries");
+            if (entries.Count > 100_000) throw new ArgumentException("Too many entries.");
+            foreach (var e in entries)
+            {
+                var level = e.Level is "info" or "warning" or "error" ? e.Level : "info";
+                var source = e.Source is "you" or "app" ? e.Source : "app";
+                var time = e.At > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(e.At).LocalDateTime : DateTime.Now;
+                s.Logs.Write(level, source, e.Action ?? "", time, e.Detail ?? "");
+            }
+            return null;
+        });
+        // One entry in full (a page of the log cuts long ones).
+        b.RegisterBackground("logs.entry", p => Task.FromResult<object?>(s.Logs.ReadEntry(p.Get<long>("n")) ?? throw new KeyNotFoundException("This entry is no longer in the log.")));
+        // The Logs page opened (on: true) or closed: told of new entries only while it is open.
+        b.Register("logs.watch", p => { s.Logs.Watched = p.Get<bool>("on"); return null; });
+        b.Register("logs.clear", _ => { s.Logs.Clear(); return null; });
+        b.Register("logs.move", p => { s.Logs.MoveTo(p.Get<string>("folder")); return new { logFile = s.Logs.FilePath }; });
     }
+
+    private sealed record WindowEntry(long At, string? Level, string? Source, string? Action, string? Detail);
 
     private static DateOnly ParseDate(string s) =>
         DateOnly.TryParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : throw new ArgumentException("Invalid date.");

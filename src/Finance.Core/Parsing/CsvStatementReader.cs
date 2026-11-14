@@ -35,8 +35,9 @@ public static partial class CsvStatementReader
         {
             return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
         }
-        catch (DecoderFallbackException)
+        catch (DecoderFallbackException e)
         {
+            ProductivityApp.Finance.Services.Diagnostics.Report("CsvStatementReader.Decode (not UTF-8: read as Windows-1252)", e);
             return Encoding.GetEncoding(1252).GetString(bytes);
         }
     }

@@ -60,7 +60,7 @@ public static partial class PdfReader
                 if (scans.TryGetValue(index, out var scan))
                 {
                     try { read = await OcrImageAsync(scan.Image, scan.Left, scan.Top, scan.Width, scan.Height, pages[index], language).ConfigureAwait(false); }
-                    catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.Runtime.InteropServices.COMException) { read = null; }
+                    catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.Runtime.InteropServices.COMException) { ProductivityApp.Finance.Services.Diagnostics.Report("PdfReader OCR of the page's picture (the page is read whole instead)", e); read = null; }
                 }
                 pages[index] = read ?? await OcrPageAsync(pdf, index, pages[index], language).ConfigureAwait(false);
                 pages[index] = new PageWords { Number = pages[index].Number, Width = pages[index].Width, Height = pages[index].Height, Words = RepairAmounts(pages[index].Words), FromOcr = true };

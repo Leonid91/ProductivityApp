@@ -38,7 +38,7 @@ public static partial class TableFiles
                     if (r.ReadToEnd().StartsWith("application/vnd.oasis.opendocument", StringComparison.Ordinal)) return "OpenDocument";
                 }
             }
-            catch (InvalidDataException) { return null; }
+            catch (InvalidDataException e) { ProductivityApp.Finance.Services.Diagnostics.Report("TableFiles.Kind (not a zip package)", e); return null; }
             return null;
         }
         var ext = Path.GetExtension(fileName).ToLowerInvariant();

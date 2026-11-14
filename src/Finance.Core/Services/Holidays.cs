@@ -117,6 +117,7 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
                 catch (Exception e) when (e is HolidaysFileException or IOException or JsonException or FormatException or DecoderFallbackException or UnauthorizedAccessException)
                 {
                     // Not readable: the download before it is used.
+                    ProductivityApp.Finance.Services.Diagnostics.Report($"Holidays.Load {id} {copy.Folder}", e);
                 }
             }
             return _loaded[id] = loaded;
@@ -320,6 +321,7 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or JsonException
             or HolidaysFileException or ArgumentException or FormatException or DecoderFallbackException)
         {
+            ProductivityApp.Finance.Services.Diagnostics.Report($"Holidays.Update {c.Id} {c.Url}", e);
             db.SetSetting($"holidays.{c.Id}.error", e switch
             {
                 HolidaysFileException or ArgumentException => e.Message,
@@ -331,6 +333,7 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
         catch (Exception e)
         {
             // Anything else (a fault of the app or of the computer): said plainly; the copies kept so far stay in use.
+            ProductivityApp.Finance.Services.Diagnostics.Report($"Holidays.Update {c.Id} {c.Url}", e);
             db.SetSetting($"holidays.{c.Id}.error", $"The holidays could not be downloaded: {e.Message}");
         }
         finally

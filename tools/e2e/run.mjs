@@ -1698,6 +1698,112 @@ try {
   await p.clickText('Month', { selector: 'button' })
   await p.clickText('Statements', { selector: '[data-period-view] button' })
 
+  // ---- Logs: every action written with its full raw details (the event and the element it reached; every request to
+  // the engine as received and its whole answer; every exception with its stack), the latest first. Clear logs is under
+  // the table and empties the file; the file can move.
+  const logFile = join(data, 'app.log')
+  await p.clickText('Logs', { selector: 'nav button' })
+  await p.waitFor(`document.querySelectorAll('[data-logs] tbody tr.row').length > 0`, 15000, 'log entries')
+  await sleep(600)
+  await shot(p, '26-logs.png')
+  const logRows = () => p.eval(`[...document.querySelectorAll('[data-logs] tbody tr.row')].map(r => [...r.cells].map(c => c.innerText))`)
+  const all = await p.engine('logs.read', { page: 0, size: 100 })
+  const firstPage = await logRows()
+  check('the log page lists the latest hundred entries, newest first, with time, source, action and details',
+    firstPage.length === 100 && firstPage.every((r) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/.test(r[0]) && r.length === 4), JSON.stringify(firstPage.slice(0, 2)).slice(0, 600))
+  const fullLog = []
+  for (let i = 0; i * 1000 < all.total; i++) fullLog.push(...(await p.engine('logs.read', { page: i, size: 1000 })).entries)
+  const find = (pred) => fullLog.find(pred)
+  // A click of the user: the raw mouse event, the element reached with its path and attributes, its control and text.
+  const click = find((e) => e.action === 'click' && e.detail.includes('"text":"Settings"') && e.detail.includes('"path":"'))
+  const clickData = click ? JSON.parse(click.detail) : null
+  check('a click is written as the raw event: button, coordinates, keys, element path, attributes and text',
+    !!clickData && 'clientX' in clickData && 'button' in clickData && 'ctrlKey' in clickData && clickData.target?.path?.includes('nav') && clickData.page, click?.detail.slice(0, 500))
+  // A request of the window to the engine: the message as received and the whole answer, not cut.
+  const request = find((e) => e.source === 'engine' && e.action === 'periods.report' && e.more)
+  const whole = request ? await p.engine('logs.entry', { n: request.n }) : null
+  const answer = whole ? JSON.parse(whole.detail.slice(whole.detail.indexOf('\nanswer: ') + 9)) : null
+  check('an engine request is written in full: when it started, the request as received, the whole answer',
+    !!whole && /^started: \d{4}-/.test(whole.detail) && whole.detail.includes('\nrequest: {"id":') && answer?.ok === true && typeof answer.result === "object" && answer.result !== null && whole.size > 16 * 1024 && !whole.more,
+    whole ? `${whole.size} bytes` : 'none')
+  // A failed request: its full exception, type, message and call stack.
+  const failed = find((e) => e.source === 'engine' && (e.level === 'warning' || e.level === 'error') && e.detail.includes('\nexception: '))
+  const failedWhole = failed ? await p.engine('logs.entry', { n: failed.n }) : null
+  check('a failed request is written with its full exception and call stack', !!failedWhole && /\nexception: System\.[A-Za-z.]+Exception: /.test(failedWhole.detail) && failedWhole.detail.includes('\n   at '), failedWhole?.detail.slice(0, 400))
+  // A failure the engine handles itself (the wrong address of a download): its exception in full all the same.
+  const caught = find((e) => e.action === 'Caught exception' && e.detail.includes('Update '))
+  const caughtWhole = caught ? await p.engine('logs.entry', { n: caught.n }) : null
+  check('an exception the engine handles (a download that failed) is written in full', !!caughtWhole && /\nexception: System\.[A-Za-z.]+Exception: /.test(caughtWhole.detail) && caughtWhole.detail.includes('\n   at '), caughtWhole?.detail.slice(0, 400))
+  check('the log has every kind of entry: clicks, keys, scrolls, drags, pages, messages, window events, the start',
+    !!find((e) => e.action === 'scroll') && !!find((e) => e.action === 'page' && e.detail.includes('"to":"logs"')) && !!find((e) => e.action === 'toast')
+    && !!find((e) => e.action === 'drag') && !!find((e) => e.action === 'keydown') && !!find((e) => e.action === 'change')
+    && !!find((e) => e.source === 'window' && e.action === 'CoreWebView2.NavigationStarting') && !!find((e) => e.action === 'Start' && e.detail.includes('version: '))
+    && !!find((e) => e.action === 'Database.Open'),
+    JSON.stringify([...new Set(fullLog.map((e) => e.source + ':' + e.action))].slice(0, 60)))
+  check('more than a page: pages to go through', await p.eval(`document.querySelectorAll('[data-logs] .MuiPagination-root').length === 2`) && all.total > 100, String(all.total))
+  // A long entry: its first lines, Show all opens it whole.
+  const shownBefore = await p.eval(`(() => { const d = [...document.querySelectorAll('[data-logs] [data-log-detail]')].find(d => d.parentElement.querySelector('button')); if (!d) return null; d.closest('tr').setAttribute('data-e2e-long', ''); return d.innerText.length })()`)
+  await p.clickText('Show all', { selector: '[data-e2e-long] button' })
+  await sleep(600)
+  const shownAfter = await p.eval(`document.querySelector('[data-e2e-long] [data-log-detail]').innerText.length`)
+  check('a long entry shows its first lines, Show all shows all of it', shownBefore !== null && shownAfter > shownBefore, `${shownBefore} -> ${shownAfter} characters`)
+  await shot(p, '26b-logs-show-all.png')
+  // A key pressed while the page shows: it comes in at the top without anything being reloaded by hand.
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'F2', code: 'F2', windowsVirtualKeyCode: 113 })
+  await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'F2', code: 'F2', windowsVirtualKeyCode: 113 })
+  await p.waitFor(`[...document.querySelectorAll('[data-logs] tbody tr.row')].slice(0, 5).some(r => r.cells[2].innerText === 'keydown' && r.innerText.includes('"key":"F2"'))`, 5000, 'key in the log').catch(() => false)
+  const keyRow = (await logRows()).slice(0, 5).find((r) => r[2] === 'keydown')
+  check('a new action shows at the top of the open log page, as the raw key event', !!keyRow && keyRow[1] === 'You' && keyRow[3].includes('"key":"F2"') && keyRow[3].includes('"code":"F2"') && keyRow[3].includes('"isTrusted":true'), keyRow?.[3].slice(0, 300))
+  await p.clickText('2', { selector: '[data-logs] .MuiPagination-root button' })
+  await sleep(700)
+  const second = await logRows()
+  // Entries are listed in the order they were written: the second page is the engine's second hundred.
+  const enginePage2 = (await p.engine('logs.read', { page: 1, size: 100 })).entries.map((e) => [e.time, e.action])
+  check('the second page goes on from the first', second.length === 100 && JSON.stringify(second.map((r) => [r[0], r[2]])) === JSON.stringify(enginePage2), JSON.stringify(second[0]).slice(0, 300))
+
+  // Clear logs, under the table (not in the left menu), asks first, then empties the file.
+  check('Clear logs is under the table of the Logs page, not in the left menu', await p.eval(`(() => { const b = document.querySelector('[data-logs] [data-clear-logs]'); const t = document.querySelector('[data-logs] table'); return !!b && b.getBoundingClientRect().top > t.getBoundingClientRect().bottom && ![...document.querySelectorAll('nav button')].some(n => n.innerText.includes('Clear')) })()`))
+  await p.eval(`document.querySelector('[data-clear-logs]').scrollIntoView({ block: 'center' })`)
+  await sleep(300)
+  await shot(p, '27a-clear-logs-button.png')
+  await p.click('[data-clear-logs]')
+  await p.waitFor(`[...document.querySelectorAll('[role=dialog]')].some(d => d.innerText.includes('Clear logs?'))`, 5000, 'clear dialog')
+  await shot(p, '27-clear-logs.png')
+  await p.clickText('Clear', { selector: '[role=dialog] button' })
+  await sleep(1500)
+  const cleared = await p.engine('logs.read', { page: 0, size: 100 })
+  check('Clear logs empties the log file: only what came after is left', cleared.total <= 6 && !cleared.entries.some((e) => e.action === 'Start' || e.action === 'periods.report') && readFileSync(logFile, 'utf8').trim().split('\n').length === cleared.total,
+    JSON.stringify(cleared.entries.map((e) => e.action)))
+  check('the log page shows the emptied log', (await logRows()).length === cleared.total && cleared.total >= 1, String((await logRows()).length))
+  await shot(p, '28-logs-cleared.png')
+
+  // Settings > Data > Log location: under the database location; Open and Change; the file moves and goes on there.
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.waitFor(`document.querySelector('[data-log-file]') !== null`, 10000, 'log location row')
+  const mainText = await p.eval(`document.querySelector('main').innerText`)
+  const rowsOrder = mainText.indexOf('Database location') < mainText.indexOf('Log location') && mainText.indexOf('Log location') < mainText.indexOf('Erase all data')
+  check('Log location sits under Database location, with the path of the log file', rowsOrder && (await p.eval(`document.querySelector('[data-log-file]').innerText`)) === logFile, await p.eval(`document.querySelector('[data-log-file]').innerText`))
+  await p.eval(`document.querySelector('[data-log-file]').scrollIntoView({ block: 'center' })`)
+  await sleep(300)
+  await shot(p, '29-log-location.png')
+  const movedLog = join(data, 'moved-log')
+  mkdirSync(movedLog, { recursive: true })
+  await p.eval(`[...document.querySelector('[data-log-file]').parentElement.querySelectorAll('button')].find(b => b.innerText.includes('Change')).click()`)
+  await p.waitFor(`[...document.querySelectorAll('[role=dialog]')].some(d => d.innerText.includes('Log location') && d.innerText.includes('moved-log'))`, 10000, 'log folder listed')
+  await p.clickText('moved-log', { selector: '[role=dialog] [role=button]', partial: true })
+  await sleep(600)
+  await p.clickText('Use this folder', { selector: '[role=dialog] button' })
+  await sleep(1200)
+  const shown = await p.eval(`document.querySelector('[data-log-file]').innerText`)
+  await p.clickText('Logs', { selector: 'nav button' })
+  await sleep(1200)
+  const afterMoveLog = existsSync(join(movedLog, 'app.log')) ? readFileSync(join(movedLog, 'app.log'), 'utf8') : ''
+  check('the log file moved to the chosen folder and goes on being written there', shown === join(movedLog, 'app.log') && !existsSync(logFile)
+    && afterMoveLog.includes('\tlogs.move\t') && afterMoveLog.includes('"to":"logs"'), shown)
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.waitFor(`document.querySelector('[data-log-file]') !== null`, 10000, 'log location row')
+  await p.engine('logs.move', { folder: data })
+
   check('no phrase joined to the next by a semicolon on any screen photographed', semicolons.length === 0, semicolons.slice(0, 3).join(' | '))
   check('no script errors in the interface', p.consoleErrors.length === 0, p.consoleErrors.slice(0, 3).join(' | '))
 } catch (e) {

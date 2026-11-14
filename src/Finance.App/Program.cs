@@ -28,7 +28,7 @@ internal static class Program
         new Thread(UnpackedCopies.RemoveOld) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
 
         ApplicationConfiguration.Initialize();
-        using var services = new AppServices(options.DataDir);
+        using var services = new AppServices(options.DataDir, $"version: {typeof(Program).Assembly.GetName().Version}\nexe: {Environment.ProcessPath}\nprocessId: {Environment.ProcessId}\nargs: {string.Join(' ', args)}\ndataDir: {options.DataDir}\nos: {Environment.OSVersion}\nruntime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
         _ = Task.Run(services.Warm);
         Application.ThreadException += (_, e) => services.Log(e.Exception, "ui");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (e.ExceptionObject is Exception ex) services.Log(ex, "fatal"); };
@@ -40,6 +40,7 @@ internal static class Program
             while (activate.WaitOne())
             {
                 if (form.IsDisposed) return;
+                services.Logs.Info("app", "SecondInstance", "a second launch asked this window to come forward");
                 form.BeginInvoke(form.BringToFront2);
             }
         }) { IsBackground = true };

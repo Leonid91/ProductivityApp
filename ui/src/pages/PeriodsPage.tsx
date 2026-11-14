@@ -173,25 +173,21 @@ export function PeriodsPage() {
       lastHeight = scroller.scrollHeight
       if (shrunk && anchor) return
       const y = line()
-      // The first period that starts on screen, even under the bar (a period whose last lines show at the top may grow
-      // downwards when it loads); failing that, the one that fills the screen.
+      // What is read at the top of the screen stays there: the period across the top line (under the bar), then the bank
+      // across it inside, then the section; where nothing crosses the line, the first one that starts on screen. An
+      // element below the top line is never the one kept: whatever grows between it and the top of the screen (charts
+      // drawn, banks and tables drawn as they come near, a period loading) would push what is read away.
       const { top, bottom } = scroller.getBoundingClientRect()
       const first = (list: Element[]) => list.find((c) => { const r = c.getBoundingClientRect(); return r.top >= top - 1 && r.top < bottom })
+      const crossing = (list: Element[]) => list.find((c) => { const r = c.getBoundingClientRect(); return r.top < y && r.bottom > y })
       const children = [...el.children].filter((c) => !c.hasAttribute('data-retiring'))
-      let s = first(children)
-      if (!s) {
-        // A period taller than the screen, started above it: the bank (then the table) on screen inside it, the same
-        // way. Banks and tables away from the screen are drawn only when they come near (with a guessed height until
-        // then): one above the screen growing as it is drawn leaves the one on screen where it is.
-        s = children.find((c) => c.getBoundingClientRect().bottom > y)
-        for (const inner of ['[data-part-block]', '[data-section]']) {
-          if (!s) break
-          const list = [...s.querySelectorAll(inner)]
-          const next = first(list) ?? list.find((c) => { const r = c.getBoundingClientRect(); return r.top < y && r.bottom > y })
-          if (!next) break
-          s = next
-          if (next.getBoundingClientRect().top >= top - 1) break
-        }
+      let s = crossing(children) ?? first(children)
+      for (const inner of ['[data-part-block]', '[data-section]']) {
+        if (!s || s.getBoundingClientRect().top >= y) break
+        const list = [...s.querySelectorAll(inner)]
+        const next = crossing(list) ?? first(list)
+        if (!next) break
+        s = next
       }
       const period = s?.closest('section[data-period]') ?? s
       anchor = s && period && scroller.scrollTop > 0 ? { el: s, offset: s.getBoundingClientRect().top - y, period, periodOffset: period.getBoundingClientRect().top - y, top: scroller.scrollTop } : null

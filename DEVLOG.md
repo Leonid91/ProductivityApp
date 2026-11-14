@@ -889,3 +889,45 @@ real app with `tools/e2e/perf.mjs`.
 - The app starts faster: its code is compiled ahead (trimming had left it to be compiled at every start), and the latest
   three months are made while the window and its browser start. First month on screen, several launches on the same test data:
   about 3.6 s before, about 1 s now. The program is 52.5 MB (was 35.1 MB).
+
+## November 14th, 2026 - Logs of every action - Commit 39
+
+### Added
+- Logs, in the left menu under Periods: every entry of the log file, the latest first, a hundred per page, with its
+  time (to the millisecond), source (You, App, Engine, Window), action and full details. New entries come in while
+  the page is open. Details show their first lines; Show all opens the whole entry (read from the file when it is long).
+  Written, with full raw details:
+  - the window: every click, double, right and middle click, every key pressed, every changed field, copy, cut and
+    paste (with the text), drags, files dropped (name, size, type), scrolls (where each started and ended): the event's
+    type and properties (buttons, coordinates, keys, modifiers, trusted or not), the element reached (its path in the
+    page, every attribute, its text, value and place on the screen), its control, row, dialog and menu, the page;
+    pages opened, messages shown, failures with their stack, errors and unhandled rejections of the page, console
+    errors and warnings;
+  - the engine: every request of the window as received and the whole answer as sent, when it started; a failed
+    request with its full exception (type, message, inner exceptions, call stack); any exception of the app, and every
+    exception the engine catches and handles itself (a download that fails, a copy that cannot be read, a picture the
+    text recognition refuses, a file read in another encoding) with where it was caught;
+  - the window: start (version, program, process, arguments, data folder, system, runtime), database opened, every
+    WinForms and WebView2 event (state, bounds, activation, closing, navigations, blocked windows, downloads and
+    permissions, browser process failures, missing interface files), exit.
+- Clear logs, under the table of the Logs page: asks first, then empties the log file.
+- Settings > Data > Log location, under Database location: the path of the log file, Open (shows it in Explorer) and
+  Change (moves it to another folder, where it goes on being written; kept at the next start).
+
+### Fixed
+- Periods: the page could jump away from what was being looked at (by a screen or more) just after switching to
+  General and scrolling, while the other months drew their charts. The element kept in place was the first one
+  starting on screen, below what was being read: whatever grew between it and the top of the screen pushed the page.
+  Now what crosses the top of the screen is kept in place (the month, then its bank, then its section). Found in the
+  new log (the page's own scrolls, 8,347 to 13,469 px). In repeated runs of the end-to-end check the chart-hover step
+  failed in about half of the runs before (previous version included), 1 in 6 after: not fully gone yet.
+- The Logs page reloads only while it is open; it never told the window about new entries otherwise.
+
+### Changed
+- The error log is part of this log; the older error file is turned into entries the first time. One line per entry in
+  `app.log`, written on a thread of its own (large answers are written as they are, never copied first): nothing waits
+  for the disk. A page of the log reads at most 16 KB of each entry.
+- Tests: 7 unit tests of the log file (order, pages, line breaks, a long entry cut on the page and read whole,
+  clearing, moving, older log, restart); the end-to-end check reads the raw entries (a click, a whole request and
+  answer, a failure's stack, a handled download failure's exception), opens a long entry, presses a key with the page open, clears the logs from under the
+  table and moves the file through the interface.

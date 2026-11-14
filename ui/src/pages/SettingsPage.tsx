@@ -319,14 +319,23 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
 }
 
 function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEditRates: () => void }) {
-  const { settings, setSetting, info, dataFolder, setDataFolder, dataChanged, notify, fail } = useApp()
-  const [browsing, setBrowsing] = useState<'reports' | 'database' | null>(null)
+  const { settings, setSetting, info, dataFolder, setDataFolder, logFile, setLogFile, dataChanged, notify, fail } = useApp()
+  const [browsing, setBrowsing] = useState<'reports' | 'database' | 'log' | null>(null)
 
   const moveDatabase = async (folder: string) => {
     try {
       setDataFolder((await api.moveDatabase(folder)).dataFolder)
       notify('Database moved')
       dataChanged()
+    } catch (e) {
+      fail(e)
+    }
+  }
+
+  const moveLog = async (folder: string) => {
+    try {
+      setLogFile((await api.logs.move(folder)).logFile)
+      notify('Log moved')
     } catch (e) {
       fail(e)
     }
@@ -385,6 +394,11 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
           <Button size="small" onClick={() => void api.shell.reveal(dataFolder).catch(fail)}>Open</Button>
           <Button size="small" startIcon={<FolderOpen />} onClick={() => setBrowsing('database')}>Change</Button>
         </Row>
+        <Row label="Log location">
+          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 360 }} className="selectable" data-log-file>{logFile}</Typography>
+          <Button size="small" onClick={() => void api.shell.reveal(logFile).catch(fail)}>Open</Button>
+          <Button size="small" startIcon={<FolderOpen />} onClick={() => setBrowsing('log')}>Change</Button>
+        </Row>
         <Row label="Erase all data">
           <Button color="error" variant="outlined" onClick={() => confirm({
             title: 'Erase all data?',
@@ -398,13 +412,14 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
       <FileBrowser
         open={browsing !== null}
         mode="folder"
-        title={browsing === 'database' ? 'Database location' : 'Report location'}
-        initialPath={(browsing === 'database' ? dataFolder : settings.reportsFolder) || undefined}
+        title={browsing === 'database' ? 'Database location' : browsing === 'log' ? 'Log location' : 'Report location'}
+        initialPath={(browsing === 'database' ? dataFolder : browsing === 'log' ? logFile.replace(/[\\/][^\\/]*$/, '') : settings.reportsFolder) || undefined}
         onClose={() => setBrowsing(null)}
         onPick={([p]) => {
           const which = browsing
           setBrowsing(null)
           if (which === 'database') void moveDatabase(p)
+          else if (which === 'log') void moveLog(p)
           else void setSetting('reportsFolder', p)
         }}
       />

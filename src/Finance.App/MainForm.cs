@@ -19,6 +19,7 @@ internal sealed class MainForm : Form
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private Bridge? _bridge;
     private static string? _devOrigin;
+    private FormWindowState _lastState = FormWindowState.Normal;
 
     public MainForm(AppOptions options, AppServices services)
     {
@@ -34,7 +35,19 @@ internal sealed class MainForm : Form
         _web.DefaultBackgroundColor = BackColor;
         Controls.Add(_web);
         PlaceWindow();
-        Resize += (_, _) => _bridge?.Emit("window.state", new { maximized = WindowState == FormWindowState.Maximized });
+        Resize += (_, _) =>
+        {
+            _bridge?.Emit("window.state", new { maximized = WindowState == FormWindowState.Maximized });
+            if (WindowState != _lastState)
+            {
+                _lastState = WindowState;
+                services.Logs.Info("window", "Form.WindowState", $"WindowState: {WindowState}\nBounds: {Bounds}\nClientSize: {ClientSize}");
+            }
+        };
+        // Moved or resized by its edges (logged once the person lets go).
+        ResizeEnd += (_, _) => services.Logs.Info("window", "Form.ResizeEnd", $"Bounds: {Bounds}\nClientSize: {ClientSize}\nWindowState: {WindowState}");
+        Activated += (_, _) => services.Logs.Info("window", "Form.Activated", $"Bounds: {Bounds}\nWindowState: {WindowState}");
+        Deactivate += (_, _) => services.Logs.Info("window", "Form.Deactivate", $"Bounds: {Bounds}\nWindowState: {WindowState}");
     }
 
     public static bool IsDevSource(string source) => _devOrigin is not null && source.StartsWith(_devOrigin, StringComparison.OrdinalIgnoreCase);
@@ -135,8 +148,9 @@ internal sealed class MainForm : Form
         {
             await InitializeWebViewAsync();
         }
-        catch (WebView2RuntimeNotFoundException)
+        catch (WebView2RuntimeNotFoundException ex)
         {
+            _services.Log(ex, "startup");
             ShowFatal("This app needs the Microsoft Edge WebView2 Runtime, which is part of Windows 10 and 11. Install it from Microsoft, then start the app again.");
         }
         catch (Exception ex)
@@ -152,6 +166,7 @@ internal sealed class MainForm : Form
     private void ShowFatal(string message)
     {
         _fatal = message;
+        _services.Logs.Error("window", "ShowFatal", message);
         _web.Visible = false;
         Invalidate();
     }
@@ -206,19 +221,28 @@ internal sealed class MainForm : Form
         s.AreDefaultScriptDialogsEnabled = false;
         var nonClientRegions = true;
         try { s.IsNonClientRegionSupportEnabled = true; }
-        catch (NotImplementedException) { nonClientRegions = false; }
+        catch (NotImplementedException ex) { ProductivityApp.Finance.Services.Diagnostics.Report("IsNonClientRegionSupportEnabled (title bar drawn without it)", ex); nonClientRegions = false; }
 
         core.AddWebResourceRequestedFilter(AppOrigin + "*", CoreWebView2WebResourceContext.All);
-        core.WebResourceRequested += (_, e) => ServeAsset(env, e);
+        core.WebResourceRequested += (_, e) => ServeAsset(env, e, _services.Logs);
         core.NavigationStarting += (_, e) =>
         {
-            if (!e.Uri.StartsWith(AppOrigin, StringComparison.OrdinalIgnoreCase) && !IsDevSource(e.Uri)) e.Cancel = true;
+            if (!e.Uri.StartsWith(AppOrigin, StringComparison.OrdinalIgnoreCase) && !IsDevSource(e.Uri))
+            {
+                e.Cancel = true;
+            }
+            _services.Logs.Write(e.Cancel ? "warning" : "info", "window", "CoreWebView2.NavigationStarting", DateTime.Now,
+                $"Uri: {e.Uri}\nNavigationId: {e.NavigationId}\nIsUserInitiated: {e.IsUserInitiated}\nIsRedirected: {e.IsRedirected}\nNavigationKind: {e.NavigationKind}\nCancel: {e.Cancel}");
         };
-        core.NewWindowRequested += (_, e) => e.Handled = true;
-        core.DownloadStarting += (_, e) => e.Cancel = true;
-        core.PermissionRequested += (_, e) => e.State = CoreWebView2PermissionState.Deny;
+        core.NewWindowRequested += (_, e) => { e.Handled = true; _services.Logs.Write("warning", "window", "CoreWebView2.NewWindowRequested", DateTime.Now, $"Uri: {e.Uri}\nIsUserInitiated: {e.IsUserInitiated}\nName: {e.Name}\nHandled: {e.Handled}"); };
+        core.DownloadStarting += (_, e) => { e.Cancel = true; _services.Logs.Write("warning", "window", "CoreWebView2.DownloadStarting", DateTime.Now, $"Uri: {e.DownloadOperation.Uri}\nMimeType: {e.DownloadOperation.MimeType}\nContentDisposition: {e.DownloadOperation.ContentDisposition}\nResultFilePath: {e.ResultFilePath}\nCancel: {e.Cancel}"); };
+        core.PermissionRequested += (_, e) => { e.State = CoreWebView2PermissionState.Deny; _services.Logs.Write("warning", "window", "CoreWebView2.PermissionRequested", DateTime.Now, $"PermissionKind: {e.PermissionKind}\nUri: {e.Uri}\nIsUserInitiated: {e.IsUserInitiated}\nState: {e.State}"); };
+        core.NavigationCompleted += (_, e) => _services.Logs.Write(e.IsSuccess ? "info" : "error", "window", "CoreWebView2.NavigationCompleted", DateTime.Now, $"NavigationId: {e.NavigationId}\nIsSuccess: {e.IsSuccess}\nHttpStatusCode: {e.HttpStatusCode}\nWebErrorStatus: {e.WebErrorStatus}");
+        core.ProcessFailed += (_, e) => _services.Logs.Error("window", "CoreWebView2.ProcessFailed", $"ProcessFailedKind: {e.ProcessFailedKind}\nReason: {e.Reason}\nExitCode: {e.ExitCode}\nProcessDescription: {e.ProcessDescription}\nFailureSourceModulePath: {e.FailureSourceModulePath}");
 
-        _bridge = new Bridge(core, this, _services.Log);
+        _bridge = new Bridge(core, this, _services.Logs);
+        var bridge = _bridge;
+        _services.Logs.Changed += () => { if (!IsDisposed && IsHandleCreated) bridge.Emit("logs.changed", null); };
         Api.Register(_bridge, _services, this, nonClientRegions);
 
         if (_options.Capture is not null)
@@ -249,7 +273,7 @@ internal sealed class MainForm : Form
         .Where(n => n.StartsWith("ui/", StringComparison.Ordinal))
         .ToDictionary(n => n[3..].Replace('\\', '/'), n => n, StringComparer.OrdinalIgnoreCase);
 
-    private static void ServeAsset(CoreWebView2Environment env, CoreWebView2WebResourceRequestedEventArgs e)
+    private static void ServeAsset(CoreWebView2Environment env, CoreWebView2WebResourceRequestedEventArgs e, ProductivityApp.Finance.Services.ActionLog log)
     {
         var uri = new Uri(e.Request.Uri);
         var path = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
@@ -259,7 +283,12 @@ internal sealed class MainForm : Form
         if (stream is null)
         {
             // Unknown paths fall back to the page itself; unknown files with an extension are a 404.
-            if (Path.HasExtension(path)) { e.Response = env.CreateWebResourceResponse(null, 404, "Not Found", ""); return; }
+            if (Path.HasExtension(path))
+            {
+                e.Response = env.CreateWebResourceResponse(null, 404, "Not Found", "");
+                log.Write("error", "window", "CoreWebView2.WebResourceRequested", DateTime.Now, $"Uri: {e.Request.Uri}\nMethod: {e.Request.Method}\nResourceContext: {e.ResourceContext}\nResponse: 404 Not Found");
+                return;
+            }
             stream = asm.GetManifestResourceStream(Assets["index.html"])!;
             path = "index.html";
         }
@@ -317,6 +346,7 @@ internal sealed class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        _services.Logs.Info("window", "Form.FormClosing", $"CloseReason: {e.CloseReason}\nBounds: {Bounds}\nWindowState: {WindowState}");
         if (!_options.IsolatedRun)
         {
             var r = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;

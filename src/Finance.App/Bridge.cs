@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Web.WebView2.Core;
+using ProductivityApp.Finance.Services;
 
 namespace ProductivityApp.Host;
 
@@ -20,13 +21,16 @@ internal sealed class Bridge
     private readonly CoreWebView2 _web;
     private readonly Control _ui;
     private readonly Dictionary<string, Func<JsonElement, Task<object?>>> _methods = new(StringComparer.Ordinal);
-    private readonly Action<Exception, string> _log;
+    private readonly ActionLog _actions;
 
-    public Bridge(CoreWebView2 web, Control ui, Action<Exception, string> log)
+    /// <summary>Requests not written to the log: the log's own reading and the window's entries (written as they are).</summary>
+    private static readonly HashSet<string> Unlogged = ["logs.read", "logs.entry", "logs.write"];
+
+    public Bridge(CoreWebView2 web, Control ui, ActionLog actions)
     {
+        _actions = actions;
         _web = web;
         _ui = ui;
-        _log = log;
         _web.WebMessageReceived += OnMessage;
     }
 
@@ -47,28 +51,45 @@ internal sealed class Bridge
     private async void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         // Only the app's own page may talk to the engine.
-        if (!e.Source.StartsWith(MainForm.AppOrigin, StringComparison.OrdinalIgnoreCase) && !MainForm.IsDevSource(e.Source)) return;
+        if (!e.Source.StartsWith(MainForm.AppOrigin, StringComparison.OrdinalIgnoreCase) && !MainForm.IsDevSource(e.Source))
+        {
+            _actions.Write("warning", "engine", "message refused", DateTime.Now, "source: ", e.Source, "\nmessage: ", e.WebMessageAsJson);
+            return;
+        }
+        // The message as received, kept for the log (read here: it can only be read while the event is raised).
+        var raw = e.WebMessageAsJson;
+        var started = DateTime.Now;
         string? id = null;
+        string method = "";
         try
         {
-            using var doc = JsonDocument.Parse(e.WebMessageAsJson);
+            using var doc = JsonDocument.Parse(raw);
             var root = doc.RootElement;
             id = root.GetProperty("id").GetString();
-            var method = root.GetProperty("method").GetString() ?? "";
+            method = root.GetProperty("method").GetString() ?? "";
             var args = root.TryGetProperty("params", out var p) ? p.Clone() : default;
             if (!_methods.TryGetValue(method, out var handler)) throw new InvalidOperationException($"Unknown method '{method}'.");
             // Work done on a worker thread is also turned into text there: the window's thread only passes the answer on.
             var result = await handler(args).ConfigureAwait(false);
-            Reply(JsonSerializer.Serialize(new { id, ok = true, result }, Json));
+            var reply = JsonSerializer.Serialize(new { id, ok = true, result }, Json);
+            Reply(reply);
+            // In full: the request as received and the answer as sent.
+            if (!Unlogged.Contains(method)) _actions.Write("info", "engine", method, DateTime.Now, Started(started), "\nrequest: ", raw, "\nanswer: ", reply);
         }
         catch (Exception ex)
         {
             var expected = ex is ArgumentException or InvalidOperationException or KeyNotFoundException or InvalidDataException or FileNotFoundException or DirectoryNotFoundException or UnauthorizedAccessException or IOException;
-            if (!expected) _log(ex, "bridge");
             var message = expected ? ex.Message : "Something went wrong. The details were written to the log.";
-            Reply(JsonSerializer.Serialize(new { id, ok = false, error = new { message } }, Json));
+            var reply = JsonSerializer.Serialize(new { id, ok = false, error = new { message } }, Json);
+            Reply(reply);
+            // The full exception: its type, message, inner exceptions and call stack.
+            if (!Unlogged.Contains(method) || !expected)
+                _actions.Write(expected ? "warning" : "error", "engine", method.Length > 0 ? method : "unreadable message", DateTime.Now,
+                    Started(started), "\nrequest: ", raw, "\nanswer: ", reply, "\nexception: ", ex.ToString());
         }
     }
+
+    private static string Started(DateTime t) => "started: " + t.ToString("yyyy-MM-dd HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
 
     private void Reply(string json)
     {

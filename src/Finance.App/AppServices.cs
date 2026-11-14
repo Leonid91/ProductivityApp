@@ -17,7 +17,9 @@ internal sealed class AppServices : IDisposable
     public ExchangeRates Rates { get; private set; } = null!;
     public Holidays Holidays { get; private set; } = null!;
     public string DataDir { get; }
-    public string LogPath { get; }
+    /// <summary>The log of every action (Logs page; Settings > Data > Log location).</summary>
+    public ActionLog Logs { get; }
+    public string LogPath => Logs.FilePath;
 
     private const string DbFile = "finances.db";
 
@@ -60,17 +62,21 @@ internal sealed class AppServices : IDisposable
     /// <summary>Raised whenever classification rules change, so existing operations are classified again at start.</summary>
     private const string RulesVersion = "6";
 
-    public AppServices(string dataDir)
+    public AppServices(string dataDir, string started = "")
     {
         DataDir = dataDir;
         Directory.CreateDirectory(dataDir);
-        LogPath = Path.Combine(dataDir, "app.log");
+        Logs = new ActionLog(dataDir);
+        // Exceptions the engine catches and handles: written in full too.
+        Diagnostics.Caught += (where, e) => Logs.Write("warning", "app", "Caught exception", DateTime.Now, "where: " + where + "\nexception: " + e);
+        Logs.Info("app", "Start", started);
         Open();
     }
 
     private void Open()
     {
         Db = new Database(Path.Combine(DbFolder, DbFile));
+        Logs.Info("app", "Database.Open", $"path: {Path.Combine(DbFolder, DbFile)}\nsize: {new FileInfo(Path.Combine(DbFolder, DbFile)).Length} bytes");
         Summaries = new SummaryService(Db);
         Transactions = new TransactionService(Db, () => Setting("currency"));
         Imports = new ImportService(Db, () => Setting("currency"), Transactions);
@@ -85,6 +91,7 @@ internal sealed class AppServices : IDisposable
         {
             Transactions.ReapplyRules();
             Db.SetSetting("rulesVersion", RulesVersion);
+            Logs.Info("app", "Transactions.ReapplyRules", "rulesVersion: " + RulesVersion);
         }
     }
 
@@ -139,6 +146,7 @@ internal sealed class AppServices : IDisposable
                 var from = new DateOnly(m.Year, m.Month, 1);
                 Summaries.Report(from, from.AddMonths(1).AddDays(-1), Granularity.Month, Setting("currency"), Rates, Holidays);
             }
+            Logs.Info("app", "Warm", "months: " + string.Join(", ", Summaries.Index(null).Months.Take(3).Select(m => $"{m.Year}-{m.Month:00}")));
         }
         catch (Exception ex) { Log(ex, "warm"); }
     }
@@ -192,21 +200,12 @@ internal sealed class AppServices : IDisposable
     private static bool IsStringList(string json)
     {
         try { return JsonSerializer.Deserialize<List<string>>(json) is not null; }
-        catch (JsonException) { return false; }
+        catch (JsonException e) { Diagnostics.Report("AppServices.IsStringList", e); return false; }
     }
 
-    public void Log(Exception ex, string where)
-    {
-        try
-        {
-            // Only the error itself: no amounts, labels or file contents ever go to the log.
-            File.AppendAllText(LogPath, $"{DateTime.Now:O} [{where}] {ex.GetType().Name}: {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}");
-        }
-        catch (IOException)
-        {
-            // The log is a convenience; a locked or full disk must not take the app down.
-        }
-    }
+    /// <summary>An error, with its call stack, as an entry of the log (written on the log's own thread, never failing).</summary>
+    public void Log(Exception ex, string where) =>
+        Logs.Error("app", "Exception (" + where + ")", ex.ToString());
 
     public sealed record WindowPlacement(int X, int Y, int Width, int Height, bool Maximized);
 
@@ -218,5 +217,10 @@ internal sealed class AppServices : IDisposable
 
     public void SavePlacement(WindowPlacement p) => Db.SetSetting("window", JsonSerializer.Serialize(p));
 
-    public void Dispose() => Db.Dispose();
+    public void Dispose()
+    {
+        Db.Dispose();
+        Logs.Info("app", "Exit");
+        Logs.Dispose();
+    }
 }
