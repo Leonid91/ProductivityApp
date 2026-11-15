@@ -79,8 +79,8 @@ export function PeriodsPage() {
   // The periods follow the button in the background: the button answers at once, the periods of the old kind are
   // replaced a little at a time (the screen keeps moving).
   const listMode = useDeferredValue(mode)
-  // Second layer, the same for every kind of period: its statements (tables) or analytics (charts). Every period folds
-  // down to its summary (see folds), bank by bank.
+  // Second layer, the same for every kind of period: its statements (tables) or analytics (charts). In Statements every
+  // period folds down to its summary (see folds), bank by bank; Analytics shows everything, unfolded, without summaries.
   const [view, setView] = useState<'statements' | 'analytics'>('statements')
   const anythingOpen = useAnythingOpen()
   // Analytics in two parts: the charts of the spending and income (General), the money moved between accounts (Transfers).
@@ -255,10 +255,11 @@ export function PeriodsPage() {
             </Box>
           )}
           </Box>
-          {/* In the bar that stays at the top of the screen: every period and bank folded to its summary, or all unfolded. */}
-          <Button data-fold-everything variant="outlined" size="small" startIcon={anythingOpen ? <UnfoldLess /> : <UnfoldMore />} onClick={() => setEverything(!anythingOpen)}>
+          {/* In the bar that stays at the top of the screen: every period and bank folded to its summary, or all unfolded
+              (Statements only: Analytics never folds). */}
+          {view === 'statements' && <Button data-fold-everything variant="outlined" size="small" startIcon={anythingOpen ? <UnfoldLess /> : <UnfoldMore />} onClick={() => setEverything(!anythingOpen)}>
             {anythingOpen ? 'Fold everything' : 'Unfold everything'}
-          </Button>
+          </Button>}
         </Box>
       </Box>
 

@@ -984,3 +984,12 @@ real app with `tools/e2e/perf.mjs`.
   both pies counting every expense once), `npm test` in ui (selected total and total; shown to fail when the selected
   total is counted into the total). The real app checked off-screen on a copy of real data: 40 of 40. The
   end-to-end suite (tools/e2e/run.mjs) was not updated for the folded periods and was not run.
+
+## November 15th, 2026 - Folding in Statements only - Commit 41
+
+### Fixed
+- The folding of Commit 40 (months and banks folded to their Earnings, Expenses and Balance, the Fold everything
+  button) is for Statements only. Analytics, General and Transfers, show every period and bank whole again, with no
+  fold buttons and no summary boxes: the charts of each bank, then of every bank together; the transfers' charts.
+- Tests: `npm test` in ui 3 of 3. The real app checked off-screen on a copy of real data: Statements folded,
+  Analytics General and Transfers unfolded without summaries, Statements folded again on coming back (4 of 4).

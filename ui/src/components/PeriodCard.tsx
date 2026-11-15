@@ -132,7 +132,9 @@ const PART_HEAD = 52
  * accounts, shown with the display currency when they differ ("EUR → CAD").
  */
 function Part({ kind, name, currency, native, children, partKey, summary, foldKey }: {
-  kind: 'bank' | 'global'; name: string; currency: string; native?: string; children?: ReactNode; partKey: string; summary: PeriodSummary
+  kind: 'bank' | 'global'; name: string; currency: string; native?: string; children?: ReactNode; partKey: string
+  /** Its Earnings, Expenses and Balance under the heading (Statements only). */
+  summary?: PeriodSummary
   /** Folds to its summary (none: nothing more to show). */
   foldKey?: string
 }) {
@@ -151,7 +153,7 @@ function Part({ kind, name, currency, native, children, partKey, summary, foldKe
           {native && native !== currency ? `${native} → ${currency}` : currency}
         </p>
       </div>
-      <Totals summary={summary} currency={currency} />
+      {summary && <Totals summary={summary} currency={currency} />}
       {(!foldable || open) && children}
     </div>
   )
@@ -532,9 +534,9 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   const [onScreen, setOnScreen] = useState(false)
   const [inReach, setInReach] = useState(false)
   const id = periodId(granularity, from, to, currency)
-  // Folded to its summary until opened (see folds).
-  const [monthOpen, setMonthOpen] = useFold(`p:${id}`, false)
-  const [height, setHeight] = useState(() => heightOf(`${granularity}:${view}:f:${id}`) ?? usualHeight(`${granularity}:${view}:f`, count))
+  // Folded to its summary until opened (see folds); in Statements only, Analytics shows every period whole.
+  const [monthFolds, setMonthOpen] = useFold(`p:${id}`, false)
+  const [height, setHeight] = useState(() => { const f = view === 'statements' ? 'f' : 'a'; return heightOf(`${granularity}:${view}:${f}:${id}`) ?? usualHeight(`${granularity}:${view}:${f}`, count) })
   // Loaded in the background (away from the screen) once, to know its height, then let go of again.
   const [measuring, setMeasuring] = useState(false)
   const [report, setReport] = useState<PeriodReport | null>(null)
@@ -547,6 +549,8 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
     if (!report) { setShown(view); return }
     return pace(ref.current, () => setShown(view))
   }, [view, shown, report])
+  const folding = shown === 'statements'
+  const monthOpen = !folding || monthFolds
   // All banks together: the totals and charts of the report, the operations of every bank in the global currency.
   const charts = shown === 'analytics'
   const global = useMemo(() => (report ? { ...report.global, transactions: charts ? globalTransactions(report) : NO_OPERATIONS } : null), [report, charts])
@@ -557,10 +561,11 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   // (Paced to the screen with every other piece of every period: see pace.) The older operations of a long period
   // coming in later do not draw its banks again.
   // (Every bank together first, then each bank once the period is unfolded.)
-  const parts = report ? 1 + (monthOpen && shown !== 'transfers' ? report.banks.length : 0) : 0
+  // Analytics: each bank, then every bank together when there is more than one (the transfers: one part).
+  const parts = !report ? 0 : folding ? 1 + (monthOpen ? report.banks.length : 0) : shown === 'transfers' ? 1 : report.banks.length + (showsGlobal(report) ? 1 : 0)
   const partsShown = useStepper(parts, `${report ? 'r' : ''}:${shown}:${monthOpen}`, ref)
   // What is unfolded in it: its height is kept for each way it was drawn.
-  const folded = !monthOpen ? 'f' : 'o' + (report ? [...report.banks.map((b) => b.key), 'all'].map((k) => (isOpen(`p:${id}:${k}`, false) ? 1 : 0)).join('') : '')
+  const folded = !folding ? 'a' : !monthOpen ? 'f' : 'o' + (report ? [...report.banks.map((b) => b.key), 'all'].map((k) => (isOpen(`p:${id}:${k}`, false) ? 1 : 0)).join('') : '')
   const hasData = useRef(false)
   hasData.current = report !== null
   // While a period lets go of its data: how many of its banks are still drawn.
@@ -600,9 +605,9 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   const guess = useCallback(() => {
     if (hasData.current) return
     // Moved only when the new guess is notably nearer (the page's length changes as little as it can).
-    const h = heightOf(heightKey) ?? usualHeight(`${granularity}:${shown}:${monthOpen ? 'o' : 'f'}`, count)
+    const h = heightOf(heightKey) ?? usualHeight(`${granularity}:${shown}:${!folding ? 'a' : monthOpen ? 'o' : 'f'}`, count)
     setHeight((now) => (heightOf(heightKey) !== undefined || Math.abs(h - now) > 0.08 * now ? h : now))
-  }, [heightKey, granularity, shown, count, monthOpen])
+  }, [heightKey, granularity, shown, count, monthOpen, folding])
   useLayoutEffect(guess, [guess])
   useEffect(() => { usualListeners.add(guess); return () => { usualListeners.delete(guess) } }, [guess])
   // Never drawn in this view, at this width, with this data: drawn once in the background, a few periods at a time,
@@ -698,14 +703,14 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
 
   // The salary is written under the Income chart of every bank together, or of the only bank when it is alone.
   const salaryWith = report && (showsGlobal(report) ? 'all' : report.banks[0]?.key)
-  const banksDrawn = report ? Math.max(0, Math.min(partsShown, kept ?? Infinity) - 1) : 0
+  const banksDrawn = report ? Math.max(0, Math.min(partsShown, kept ?? Infinity) - (folding ? 1 : 0)) : 0
 
   return (
     <section
       ref={ref}
       data-period={retiring ? undefined : from}
       data-retiring={retiring || undefined}
-      data-open={monthOpen || undefined}
+      data-open={(folding && monthOpen) || undefined}
       className="p-period"
       // The tables and sections of a period away from the screen are not laid out or painted (see useRealHeights). One
       // being drawn away from the screen keeps its height until all of it is there, then takes its new height at once:
@@ -728,8 +733,8 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
       ) : (
         <>
           {/* The period folds down to the summary of every bank together; a click on its heading folds or unfolds it. */}
-          <div className="p-period-head p-fold-head" onClick={() => { if (clickedNotSelected()) setMonthOpen(!monthOpen) }}>
-            <FoldButton open={monthOpen} name={report.title} onToggle={() => setMonthOpen(!monthOpen)} />
+          <div className={folding ? 'p-period-head p-fold-head' : 'p-period-head'} onClick={folding ? () => { if (clickedNotSelected()) setMonthOpen(!monthOpen) } : undefined}>
+            {folding && <FoldButton open={monthOpen} name={report.title} onToggle={() => setMonthOpen(!monthOpen)} />}
             <h2 className="p-h5" style={{ flex: 1 }}>{report.title}</h2>
             <p data-days className="p-body1 tnum" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
@@ -749,32 +754,48 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
             timeline={report.global.timeline}
             timelineCurrency={report.currency}
           />}
-          {partsShown > 0 && (kept === null || kept > 0) && (
-            // Every bank together first, in the display currency: its summary, then (unfolded) its charts and how the
-            // amounts were converted, or the transfers.
-            <Part kind="global" partKey="all" name="All banks" currency={report.currency} summary={report.global}
-              foldKey={monthOpen && shown !== 'transfers' && showsGlobal(report) ? `p:${id}:all` : undefined}>
-              {monthOpen && (shown === 'transfers' ? (
-                // Money moved between the accounts of every bank, in the display currency: over time, then in total.
-                <Box data-transfers sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2.5, mt: 2.5 }}>
-                  <TransferTimelineChart timeline={report.global.timeline} currency={report.currency} />
-                  <Box data-flow-card>
-                    <FlowChart diagram={report.global.diagram} flows={report.global.flows} currency={report.currency} />
-                  </Box>
-                </Box>
-              ) : showsGlobal(report) && (
-                <>
-                  {shown === 'analytics' && <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} salary={salaryWith === 'all' ? report.salary : null} />}
-                  <ConversionPanel conversion={report.conversion} />
-                </>
+          {folding ? (
+            <>
+              {partsShown > 0 && (kept === null || kept > 0) && (
+                // Every bank together first, in the display currency: its summary, then (unfolded) how the amounts were
+                // converted.
+                <Part kind="global" partKey="all" name="All banks" currency={report.currency} summary={report.global}
+                  foldKey={monthOpen && showsGlobal(report) ? `p:${id}:all` : undefined}>
+                  {monthOpen && showsGlobal(report) && <ConversionPanel conversion={report.conversion} />}
+                </Part>
+              )}
+              {monthOpen && report.banks.slice(0, banksDrawn).map((b) => (
+                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native} summary={b.summary} foldKey={`p:${id}:${b.key}`}>
+                  <Body summary={b.summary} view="statements" keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables salary={null} />
+                </Part>
               ))}
-            </Part>
+            </>
+          ) : shown === 'transfers' ? (
+            // Money moved between the accounts of every bank, in the display currency: over time, then in total.
+            partsShown > 0 && (kept === null || kept > 0) && (
+              <Box data-transfers sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2.5, mt: 2.5 }}>
+                <TransferTimelineChart timeline={report.global.timeline} currency={report.currency} />
+                <Box data-flow-card>
+                  <FlowChart diagram={report.global.diagram} flows={report.global.flows} currency={report.currency} />
+                </Box>
+              </Box>
+            )
+          ) : (
+            // Analytics: the charts of each bank, then of every bank together; nothing folds, no summaries.
+            <>
+              {report.banks.slice(0, banksDrawn).map((b) => (
+                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native}>
+                  <Body summary={b.summary} view="analytics" keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables salary={salaryWith === b.key ? report.salary : null} />
+                </Part>
+              ))}
+              {showsGlobal(report) && partsShown > report.banks.length && kept === null && (
+                <Part kind="global" partKey="all" name="All banks" currency={report.currency}>
+                  <Body summary={global} view="analytics" keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} salary={salaryWith === 'all' ? report.salary : null} />
+                  <ConversionPanel conversion={report.conversion} />
+                </Part>
+              )}
+            </>
           )}
-          {monthOpen && shown !== 'transfers' && report.banks.slice(0, banksDrawn).map((b) => (
-            <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native} summary={b.summary} foldKey={`p:${id}:${b.key}`}>
-              <Body summary={b.summary} view={shown} keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables salary={salaryWith === b.key ? report.salary : null} />
-            </Part>
-          ))}
         </>
       )}
     </section>
