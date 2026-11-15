@@ -115,13 +115,13 @@ public sealed record ConversionLine(
 public sealed record Conversion(string To, string Source, string Base, string Url, string? UpdatedAt, string? Latest, List<ConversionLine> Lines);
 
 /// <summary>
-/// The net salary of a period worked out per hour and per year, in the display currency: the salary received
-/// (<see cref="Net"/>, every bank together) over the period's business days (weekend days and the checked calendars'
-/// holidays are not worked) of <see cref="HoursPerDay"/> hours (a 40-hour week shared by the working days of the
-/// week); per year: the same daily pay over <see cref="YearBusinessDays"/>, the business days of a year of the period
-/// (on average when it runs over several years).
+/// The net salary of a period worked out per day, per hour and per year, in the display currency: the salary alone
+/// (<see cref="Net"/>, every bank together; no other income) over the period's working days (<see cref="WorkingDays"/>:
+/// every day but the weekend days; holidays are paid, so they count) of <see cref="HoursPerDay"/> hours (the hours of
+/// a week entered in Settings, shared by the working days of the week); per year: the same daily pay over
+/// <see cref="YearWorkingDays"/>, the working days of a year of the period (on average when it runs over several years).
 /// </summary>
-public sealed record SalaryRate(decimal Net, int BusinessDays, decimal HoursPerDay, decimal PerHour, decimal YearBusinessDays, decimal PerYear);
+public sealed record SalaryRate(decimal Net, int WorkingDays, decimal HoursPerDay, decimal PerDay, decimal PerHour, decimal YearWorkingDays, decimal PerYear, decimal HoursPerWeek);
 
 /// <summary>A period bank by bank, then every bank together, all in the global display currency.</summary>
 public sealed record PeriodReport
@@ -230,7 +230,7 @@ public sealed class SummaryService(Database db)
     /// holidays, the day): going back to a period, or scrolling back to it, shows it at once.
     /// </summary>
     private readonly LinkedList<(ReportKey Key, PeriodReport Report)> _reports = new();
-    private sealed record ReportKey(DateOnly From, DateOnly To, Granularity G, string Global, ExchangeRates Rates, string Source, Holidays? Holidays, string Weekend, long Version, long Bookkeeping, DateOnly Today);
+    private sealed record ReportKey(DateOnly From, DateOnly To, Granularity G, string Global, ExchangeRates Rates, string Source, Holidays? Holidays, string Weekend, decimal Hours, long Version, long Bookkeeping, DateOnly Today);
 
     /// <summary>At most this many reports are kept, holding at most <see cref="KeptOperations"/> operations together.</summary>
     private const int KeptReports = 8, KeptOperations = 60_000;
@@ -242,7 +242,7 @@ public sealed class SummaryService(Database db)
     public PeriodReport Report(DateOnly from, DateOnly to, Granularity g, string global, ExchangeRates rates, Holidays? holidays = null)
     {
         // The source of rates and the weekend days chosen are read as the report would read them.
-        var key = new ReportKey(from, to, g, global, rates, rates.Source.Id, holidays, holidays is null ? "" : string.Join(',', holidays.Weekend().Order()),
+        var key = new ReportKey(from, to, g, global, rates, rates.Source.Id, holidays, holidays is null ? "" : string.Join(',', holidays.Weekend().Order()), holidays?.WeekHours() ?? 0,
             db.Version, db.BookkeepingVersion, DateOnly.FromDateTime(DateTime.Today));
         lock (_reports)
         {
@@ -334,15 +334,19 @@ public sealed class SummaryService(Database db)
     public static SalaryRate? SalaryOf(IEnumerable<Transaction> txs, DateOnly from, DateOnly to, Holidays holidays)
     {
         var net = txs.Where(t => IsSalary(t.CategoryId)).Sum(t => t.Amount);
-        var days = holidays.BusinessDays(from, to);
+        var weekend = holidays.Weekend();
+        // Holidays are paid: only the weekend days are left out.
+        var days = Holidays.WorkingDays(from, to, weekend);
         var perWeek = holidays.WorkingDaysPerWeek();
         if (net <= 0 || days <= 0 || perWeek <= 0) return null;
-        var hoursPerDay = Holidays.HoursPerWeek / perWeek;
+        var weekHours = holidays.WeekHours();
+        var hoursPerDay = weekHours / perWeek;
         var years = Enumerable.Range(from.Year, to.Year - from.Year + 1).ToList();
-        var yearDays = (decimal)years.Sum(y => holidays.BusinessDays(new DateOnly(y, 1, 1), new DateOnly(y, 12, 31))) / years.Count;
+        var yearDays = (decimal)years.Sum(y => Holidays.WorkingDays(new DateOnly(y, 1, 1), new DateOnly(y, 12, 31), weekend)) / years.Count;
         return new SalaryRate(net, days, Math.Round(hoursPerDay, 2),
+            Math.Round(net / days, 2, MidpointRounding.AwayFromZero),
             Math.Round(net / (days * hoursPerDay), 2, MidpointRounding.AwayFromZero), Math.Round(yearDays, 1),
-            Math.Round(net / days * yearDays, 2, MidpointRounding.AwayFromZero));
+            Math.Round(net / days * yearDays, 2, MidpointRounding.AwayFromZero), weekHours);
     }
 
     /// <summary>
@@ -591,7 +595,8 @@ public sealed class SummaryService(Database db)
     {
         // Each operation goes once to its bar (its day, month or year), however long the period.
         var days = to.DayNumber - from.DayNumber + 1;
-        var unit = g == Granularity.Month || days <= 62 ? "day" : g == Granularity.Year || days <= 366 * 3 ? "month" : "year";
+        // A day per bar up to a month; beyond, a month per bar.
+        var unit = g == Granularity.Month || days <= 31 ? "day" : "month";
         var first = new DateOnly(from.Year, unit == "year" ? 1 : from.Month, 1);
         int BarOf(DateOnly d) => unit == "day" ? (d >= from && d <= to ? d.DayNumber - from.DayNumber : -1)
             : unit == "month" ? (d.Year - first.Year) * 12 + d.Month - first.Month : d.Year - first.Year;

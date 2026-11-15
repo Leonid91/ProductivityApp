@@ -49,8 +49,14 @@ internal sealed class AppServices : IDisposable
         ["calendarHideTransfers"] = "true",
         ["calendarHideCardPayments"] = "true",
         ["calendarHideInvestments"] = "false",
-        // Pies: every category and brand ("true"), or the five largest and "Other" ("false").
-        ["pieShowAll"] = "false",
+        // Pies: every slice ("true"), or the five largest and "Other" ("false"): the category pies (and the recurring,
+        // income and tag pies), and the brand pie on its own.
+        ["pieShowAllCategories"] = "true",
+        ["pieShowAllBrands"] = "false",
+        // The hours worked in a week (the net salary per hour, Analytics).
+        ["hoursPerWeek"] = "40",
+        // The two currencies of the calendar's exchange rates ("CAD>EUR": what one CAD is worth in EUR; "CAD<EUR": one EUR in CAD).
+        ["calendarRates"] = "",
         // Charts by first-level category, nested categories counted in theirs ("true"), or by every category ("false").
         ["chartsTopLevel"] = "true",
         // Names of the three kinds of operation the categories sit under (renamed in Categories).
@@ -86,7 +92,7 @@ internal sealed class AppServices : IDisposable
         // Movements between accounts in two currencies are paired with the rates of the bank in use.
         var rates = Rates;
         Transactions.Convert = (amount, from, to, day) => rates.Convert(amount, from, to, day)?.Amount;
-        Holidays = new Holidays(Db, () => Setting("weekendDays"));
+        Holidays = new Holidays(Db, () => Setting("weekendDays"), () => Setting("hoursPerWeek"));
         if (Db.GetSetting("rulesVersion") != RulesVersion)
         {
             Transactions.ReapplyRules();
@@ -174,7 +180,11 @@ internal sealed class AppServices : IDisposable
                 throw new DirectoryNotFoundException("This folder does not exist.");
             case "periodTransfers" when value is not ("separate" or "table" or "hidden" or "inline"):
                 throw new ArgumentException("Unknown choice.");
-            case "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" or "chartsTopLevel" when value is not ("true" or "false"):
+            case "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAllCategories" or "pieShowAllBrands" or "chartsTopLevel" when value is not ("true" or "false"):
+                throw new ArgumentException("Unknown choice.");
+            case "hoursPerWeek" when !int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var hours) || hours is < 1 or > 168:
+                throw new ArgumentException("The hours of a week are a whole number from 1 to 168.");
+            case "calendarRates" when value.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-Z]{3}[<>][A-Z]{3}$"):
                 throw new ArgumentException("Unknown choice.");
             case "section.expense" or "section.income" or "section.transfer" when value.Trim().Length is 0 or > 40:
                 throw new ArgumentException("A name has 1 to 40 characters.");
@@ -187,7 +197,8 @@ internal sealed class AppServices : IDisposable
             case not null when key.StartsWith("order.", StringComparison.Ordinal) && (key.Length > 60 || value.Length > 200_000 || !IsStringList(value)):
                 throw new ArgumentException("Invalid row order.");
             case "currency" or "ratesSource" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers"
-                or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAll" or "chartsTopLevel"
+                or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAllCategories" or "pieShowAllBrands" or "chartsTopLevel"
+                or "hoursPerWeek" or "calendarRates"
                 or "section.expense" or "section.income" or "section.transfer" or "weekendDays" or "calendarFirstDay":
             case not null when key.StartsWith("order.", StringComparison.Ordinal):
                 Db.SetSetting(key, value);

@@ -10,6 +10,7 @@ import { ConfirmDialog, EmptyState, SectionCard } from '../components/common'
 import { TagChip } from '../components/tags'
 import { palette, swatch } from './CategoriesPage'
 import { RowActions } from '../components/RowActions'
+import { TextCell } from '../components/amounts'
 
 type Editing = { id: number | null; name: string; color: string | null }
 
@@ -93,7 +94,11 @@ export function TagsPanel({ adding, onAdded }: { adding: boolean; onAdded: () =>
             <TableBody>
               {tags.map((t) => (
                 <TableRow key={t.id} hover data-tag-row={t.name}>
-                  <TableCell><TagChip tag={t} /></TableCell>
+                  <TableCell>
+                    <TextCell value={t.name} label="Tag name" maxLength={40} onSave={(name) => void api.tags.update({ id: t.id, name, color: t.color }).then((d) => { setTagData(d); notify(`${name} saved`) }, fail)}>
+                      <TagChip tag={t} />
+                    </TextCell>
+                  </TableCell>
                   <TableCell sx={{ color: 'text.secondary' }}>{categoriesOf(t.id).join(', ')}</TableCell>
                   <TableCell align="right" className="tnum">{t.operations}</TableCell>
                   <TableCell padding="none" align="right" sx={{ whiteSpace: 'nowrap', pr: 0.5 }}>

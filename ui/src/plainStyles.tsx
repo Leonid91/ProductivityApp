@@ -16,6 +16,7 @@ function css(t: Theme): string {
   }
   const rowHover = dark ? alpha('#ffffff', 0.035) : alpha('#000000', 0.022)
   const headBg = dark ? '#1c1c1b' : '#ffffff'
+  const sunken = (p as unknown as { surface: { sunken: string } }).surface.sunken
   return `
 .p-h5{margin:0;${font('h5')}}
 .p-h6{margin:0;${font('h6')}}
@@ -33,14 +34,30 @@ function css(t: Theme): string {
 .p-skeleton-text:empty:before{content:"\\00a0"}
 .p-period{border:1px solid ${p.divider};border-radius:24px;background-color:${p.background.paper};padding:${t.spacing(2.5)};min-width:0}
 @media (min-width:${t.breakpoints.values.md}px){.p-period{padding:${t.spacing(3.5)}}}
-.p-period-head{display:flex;align-items:baseline;gap:${t.spacing(2)}}
+.p-period-head{display:flex;align-items:baseline;gap:${t.spacing(1.5)};margin-bottom:${t.spacing(2)}}
+.p-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:${t.spacing(1.5)}}
+.p-totals .p-ratio{grid-column:3}
+.p-totals .p-ratio .p-stat-value{font-size:21px}
+.p-fold-head{cursor:pointer}
+.p-fold-button{display:inline-grid;place-items:center;align-self:center;flex:0 0 30px;width:30px;height:30px;padding:0;border:0;border-radius:9px;background:none;color:${p.text.secondary};cursor:pointer}
+.p-fold-button:hover{background-color:${p.action.hover};color:${p.text.primary}}
+.p-fold-button:focus-visible{outline:2px solid ${p.primary.main}}
+.p-chev{transition:transform 160ms ease}
+.p-chev.p-open{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.p-chev{transition:none}}
+.p-section-count{color:${p.text.secondary};white-space:nowrap}
+.p-boxed{border:1px solid ${p.divider};border-radius:16px;background-color:${sunken};padding:${t.spacing(0.75)} ${t.spacing(2.5)} ${t.spacing(1.5)};--head-bg:${sunken}}
+.p-boxed>.p-section-head{margin-bottom:0;min-height:44px;align-items:center}
+.p-boxed .p-table th{border-bottom:1px solid ${alpha(p.text.primary, dark ? 0.2 : 0.16)}}
+.p-part>.p-totals{margin-bottom:${t.spacing(0.5)}}
+.p-body{padding-top:${t.spacing(0.5)}}
 .p-stat{flex:1 1 180px;border-radius:18px;padding:${t.spacing(2)} ${t.spacing(2.5)}}
 .p-stat-label{font-weight:520}
 .p-stat-value{font-size:26px;font-weight:650;letter-spacing:-0.02em;margin-top:${t.spacing(0.25)}}
 .p-stat-note{margin-top:${t.spacing(0.25)}}
 .p-row{display:flex;flex-wrap:wrap;gap:${t.spacing(1.5)}}
 .p-section{margin-top:${t.spacing(3)}}
-.p-section-head{display:flex;align-items:baseline;gap:${t.spacing(1.25)};margin-bottom:${t.spacing(1)};flex-wrap:wrap}
+.p-section-head{display:flex;align-items:baseline;gap:${t.spacing(1)};margin-bottom:${t.spacing(1)};flex-wrap:wrap}
 .p-section-icon{align-self:center;display:flex;color:${p.text.secondary}}
 .p-section-total{font-weight:650;border-radius:10px;padding:${t.spacing(0.4)} ${t.spacing(1.25)}}
 [data-section],.p-lines{content-visibility:auto;contain-intrinsic-height:auto 0px}
@@ -55,7 +72,7 @@ function css(t: Theme): string {
 .p-table.p-tight th,.p-table.p-tight td{padding-left:10px;padding-right:10px}
 .p-table tr>*:first-of-type{padding-left:4px}
 .p-table thead{position:sticky;top:calc(var(--sticky-top, 0px) + var(--part-head, 0px));z-index:2}
-.p-table th{line-height:${ty.pxToRem(24)};font-weight:600;color:${p.text.secondary};font-size:12.5px;background-color:${headBg}}
+.p-table th{line-height:${ty.pxToRem(24)};font-weight:600;color:${p.text.secondary};font-size:12.5px;background-color:var(--head-bg,${headBg})}
 .p-table .p-right{text-align:right;flex-direction:row-reverse}
 .p-table .p-none{padding:0}
 .p-table tbody tr.row:hover{background-color:${rowHover}}
@@ -77,7 +94,15 @@ function css(t: Theme): string {
 .p-brand-box{display:flex;align-items:center;gap:${t.spacing(1)};min-width:0}
 .p-brand{font-weight:520;cursor:text;border-radius:18px;padding:${t.spacing(0.25)} ${t.spacing(1)};margin:0 -${t.spacing(1)};overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .p-brand:hover{background-color:${p.action.hover}}
-.p-tags{display:flex;flex-wrap:wrap;gap:${t.spacing(0.5)};align-items:center;min-height:26px;width:100%;border:0px solid;background:none;padding:${t.spacing(0.25)};margin:0 -${t.spacing(0.25)};border-radius:18px;cursor:pointer;font:inherit;text-align:left}
+.p-brand.p-wrap{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;line-height:1.35}
+.p-cell-edit{display:inline-block;max-width:100%;border:0;background:none;font:inherit;color:inherit;padding:${t.spacing(0.25)} ${t.spacing(1)};margin:0 -${t.spacing(1)};border-radius:18px;cursor:pointer;text-align:inherit;white-space:nowrap}
+.p-cell-edit:hover{background-color:${p.action.hover}}
+.p-cell-edit:focus-visible{outline:2px solid ${p.primary.main}}
+.p-cell-input{font:inherit;font-size:13.5px;width:100%;box-sizing:border-box;border:0;outline:2px solid ${p.primary.main};border-radius:8px;padding:2px 6px;background:${p.background.paper};color:${p.text.primary};text-align:right}
+.p-tags{display:flex;flex-wrap:wrap;gap:${t.spacing(0.75)};align-items:center;min-height:26px;width:100%;border:0px solid;background:none;padding:${t.spacing(0.25)};margin:0 -${t.spacing(0.25)};border-radius:18px;cursor:pointer;font:inherit;text-align:left}
+.p-tag-x{display:inline-grid;place-items:center;width:15px;height:15px;margin:0 -${t.spacing(0.5)} 0 ${t.spacing(0.5)};padding:0;border:0;border-radius:50%;background:none;color:inherit;opacity:.6;cursor:pointer;flex:0 0 15px}
+.p-tag-x:hover{opacity:1;background-color:${alpha(p.text.primary, 0.1)}}
+.p-tag-x:focus-visible{outline:2px solid ${p.primary.main};opacity:1}
 .p-tags:hover{background-color:${p.action.hover}}
 .p-tags .tag-add{font-size:16px;color:${p.text.disabled};opacity:0;transition:opacity 120ms}
 .p-tags:hover .tag-add,.p-tags:focus-visible .tag-add{opacity:1}
@@ -88,7 +113,8 @@ function css(t: Theme): string {
 .p-icon-button:focus-visible{outline:2px solid ${p.primary.main};outline-offset:1px}
 .p-icon-button.p-edit:hover{color:${p.primary.main}}
 .p-icon-button.p-delete:hover{color:${p.error.main}}
-.p-pager{display:flex;align-items:center;justify-content:space-between;margin-top:${t.spacing(1.5)}}
+.p-pager{display:flex;align-items:center;justify-content:space-between;gap:${t.spacing(2)};margin-top:${t.spacing(1.5)};min-height:32px}
+.p-pager>.p-body2{color:${p.text.secondary}}
 .p-place{min-width:0}
 .p-place-name{overflow-wrap:anywhere;line-height:1.3}
 .p-place-type{display:block;line-height:1.2}

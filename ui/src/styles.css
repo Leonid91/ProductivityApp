@@ -7,13 +7,13 @@
 }
 
 :root {
-  --scroll-thumb: rgba(40, 40, 30, 0.22);
-  --scroll-thumb-hover: rgba(40, 40, 30, 0.36);
+  --scroll-thumb: rgba(40, 40, 30, 0.34);
+  --scroll-thumb-hover: rgba(40, 40, 30, 0.5);
   --selection: rgba(42, 120, 214, 0.22);
 }
 :root[data-theme='dark'] {
-  --scroll-thumb: rgba(240, 239, 236, 0.18);
-  --scroll-thumb-hover: rgba(240, 239, 236, 0.3);
+  --scroll-thumb: rgba(240, 239, 236, 0.3);
+  --scroll-thumb-hover: rgba(240, 239, 236, 0.44);
   --selection: rgba(85, 152, 231, 0.35);
 }
 
@@ -50,8 +50,8 @@ img, a, svg {
 
 /* Slim overlay-style scrollbars instead of the system ones. */
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;

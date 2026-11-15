@@ -42,7 +42,9 @@ public static class ReportBuilder
     /// own table ("separate"), left out ("hidden") or among the operations ("inline").
     /// </summary>
     /// <param name="TopLevelCategories">Charts by first-level category (nested categories counted in theirs), or by the categories themselves.</param>
-    public sealed record Options(bool PieShowAll = true, string Transfers = "separate", bool TopLevelCategories = true);
+    /// <param name="PieShowAll">Every category in the pies (the brand pie aside); otherwise the largest five and "Other".</param>
+    /// <param name="BrandPieShowAll">Every brand in the brand pie; otherwise the largest five and "Other".</param>
+    public sealed record Options(bool PieShowAll = true, string Transfers = "separate", bool TopLevelCategories = true, bool BrandPieShowAll = false);
 
     /// <summary>
     /// The views of the period a report holds, as chosen when exporting: the summary (the balance, by month or by year),
@@ -92,7 +94,7 @@ public static class ReportBuilder
             {
                 Start(true);
                 if (p.Analytics && r.Salary is { } pay)
-                    col.Item().Text($"Your net salary per hour is {Formatting.Money(pay.PerHour, r.Currency)} and per year is {Formatting.Money(pay.PerYear, r.Currency)}.").FontSize(10);
+                    col.Item().Text($"Your net salary is {Formatting.Money(pay.PerDay, r.Currency)} per working day, {Formatting.Money(pay.PerHour, r.Currency)} per hour and {Formatting.Money(pay.PerYear, r.Currency)} per year.").FontSize(10);
                 foreach (var bank in r.Banks)
                 {
                     col.Item().PaddingTop(4).Text(bank.Native == bank.Currency ? $"{bank.Name} · {bank.Currency}" : $"{bank.Name} · {bank.Native} → {bank.Currency}").FontSize(14).SemiBold();
@@ -128,7 +130,7 @@ public static class ReportBuilder
             col.Item().Table(table =>
             {
                 table.ColumnsDefinition(d => { d.RelativeColumn(3); d.RelativeColumn(2); d.RelativeColumn(2); d.RelativeColumn(2); });
-                foreach (var (h, right) in new[] { ("Period", false), ("Expenses", true), ("Earnings", true), ("Balance", true) })
+                foreach (var (h, right) in new[] { ("Period", false), ("Earnings", true), ("Expenses", true), ("Balance", true) })
                 {
                     var cell = table.Cell().BorderBottom(0.6f).BorderColor(Palette.Hairline).PaddingBottom(4);
                     (right ? cell.AlignRight() : cell).Text(h).FontSize(7.5f).SemiBold().FontColor(Palette.InkSecondary);
@@ -138,8 +140,8 @@ public static class ReportBuilder
                     IContainer Cell() => table.Cell().BorderBottom(total ? 0 : 0.4f).BorderColor(Palette.Hairline).PaddingVertical(4);
                     var t = Cell().Text(title);
                     if (total) t.SemiBold();
-                    Cell().AlignRight().Text(Formatting.Money(expenses, r.Currency));
                     Cell().AlignRight().Text(Formatting.Money(earnings, r.Currency));
+                    Cell().AlignRight().Text(Formatting.Money(expenses, r.Currency));
                     var b = Cell().AlignRight().Text(Formatting.Money(balance, r.Currency, sign: true)).FontColor(balance > 0 ? Palette.Positive : balance < 0 ? Palette.Negative : Palette.Ink);
                     if (total) b.SemiBold();
                 }
@@ -259,7 +261,7 @@ public static class ReportBuilder
         if (!charts) return;
                 var byCategory = o.TopLevelCategories ? s.ByTopCategory : s.ByCategory;
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per category", o.PieShowAll ? byCategory : SummaryService.FoldPie(byCategory), s.Currency));
-                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", o.PieShowAll ? s.ByBrand : s.BrandPie, s.Currency));
+                col.Item().ShowEntire().Element(c => PieBlock(c, "Expenses per brand", o.BrandPieShowAll ? s.ByBrand : s.BrandPie, s.Currency));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Recurring payments & subscriptions",
                     o.PieShowAll ? s.RecurringExpensePie : SummaryService.FoldPie(s.RecurringExpensePie), s.Currency, "No recurring payments in this period."));
                 col.Item().ShowEntire().Element(c => PieBlock(c, "Income", o.PieShowAll ? s.IncomePie : SummaryService.FoldPie(s.IncomePie), s.Currency, "No income in this period."));
@@ -285,15 +287,15 @@ public static class ReportBuilder
             col.Item().Table(table =>
             {
                 table.ColumnsDefinition(d => { d.RelativeColumn(2.2f); d.RelativeColumn(1.1f); d.RelativeColumn(0.8f); d.RelativeColumn(2.4f); d.RelativeColumn(2.4f); d.RelativeColumn(2.2f); });
-                foreach (var h in new[] { "Bank", "Currency", "Operations", "Expenses", "Earnings", "Rate (lowest to highest)" })
+                foreach (var h in new[] { "Bank", "Currency", "Operations", "Earnings", "Expenses", "Rate (lowest to highest)" })
                     table.Cell().PaddingBottom(4).Text(h).FontSize(7.5f).SemiBold().FontColor(Palette.InkSecondary);
                 foreach (var l in c.Lines)
                 {
                     table.Cell().Text(l.Group).FontSize(8);
                     table.Cell().Text($"{l.From} to {l.To}").FontSize(8);
                     table.Cell().Text(l.Operations.ToString(CultureInfo.InvariantCulture)).FontSize(8);
-                    table.Cell().Text($"{Formatting.Money(l.Expenses, l.From)} = {Formatting.Money(l.ConvertedExpenses, l.To)}").FontSize(8).EnableFontFeature("tnum");
                     table.Cell().Text($"{Formatting.Money(l.Earnings, l.From)} = {Formatting.Money(l.ConvertedEarnings, l.To)}").FontSize(8).EnableFontFeature("tnum");
+                    table.Cell().Text($"{Formatting.Money(l.Expenses, l.From)} = {Formatting.Money(l.ConvertedExpenses, l.To)}").FontSize(8).EnableFontFeature("tnum");
                     table.Cell().Text(l.LowestRate is { } lo ? $"1 {l.From} = {lo.ToString("0.######", CultureInfo.InvariantCulture)}{(l.HighestRate != lo ? " to " + l.HighestRate!.Value.ToString("0.######", CultureInfo.InvariantCulture) : "")} {l.To}" : "-").FontSize(8);
                 }
             });
@@ -428,8 +430,8 @@ public static class ReportBuilder
                 });
             }
             // Expenses faintly red, earnings faintly green, the balance more strongly in the colour of its sign.
-            Stat("Expenses", Formatting.Money(s.Expenses, s.Currency), Palette.Ink, Palette.NegativeSoft);
             Stat("Earnings", Formatting.Money(s.Earnings, s.Currency), Palette.Ink, Palette.PositiveSoft);
+            Stat("Expenses", Formatting.Money(s.Expenses, s.Currency), Palette.Ink, Palette.NegativeSoft);
             Stat("Balance", Formatting.Money(s.Balance, s.Currency, sign: true), balanceColor, balanceBack);
         });
     }
@@ -498,7 +500,7 @@ public static class ReportBuilder
 
     private static void SeriesBlock(IContainer container, PeriodSummary s)
     {
-        var title = s.SeriesUnit switch { "month" => "Expenses per month", "year" => "Expenses per year", _ => "Expenses per day" };
+        var title = s.SeriesUnit == "month" ? "Expenses per month" : "Expenses per day";
         container.Border(0.6f).BorderColor(Palette.Hairline).CornerRadius(8).Padding(12).Column(col =>
         {
             col.Item().Text(title).SemiBold().FontSize(10);

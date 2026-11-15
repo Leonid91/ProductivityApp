@@ -1,14 +1,15 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Accordion, AccordionDetails, AccordionSummary, Box, Button, Link, Table, TableBody, TableCell, TableHead, TableRow, Typography, useTheme, type Theme } from '@mui/material'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Box, Button, Link, Table, TableBody, TableCell, TableHead, TableRow, Typography, useTheme, type Theme } from '@mui/material'
 import PictureAsPdf from '@mui/icons-material/PictureAsPdfOutlined'
-import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
+import ChevronRight from '@mui/icons-material/ChevronRightRounded'
+import ReceiptLong from '@mui/icons-material/ReceiptLongRounded'
 import SwapHoriz from '@mui/icons-material/SwapHorizRounded'
 import EventRepeat from '@mui/icons-material/EventRepeatRounded'
 import Payments from '@mui/icons-material/PaymentsRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceOutlined'
 import Public from '@mui/icons-material/PublicRounded'
 import CurrencyExchange from '@mui/icons-material/CurrencyExchangeRounded'
-import { api, globalTransactions, type Category, type Conversion, type ConversionLine, type Granularity, type PeriodReport, type PeriodSummary, type TransactionView } from '../api'
+import { api, globalTransactions, type Category, type Conversion, type ConversionLine, type Granularity, type PeriodReport, type PeriodSummary, type SalaryRate, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, moneyBeside, plural } from '../format'
 // The charts (the largest library of the interface) are not needed to start: their code is read when the browser is
@@ -32,6 +33,7 @@ import { TransactionTable } from './TransactionTable'
 import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
 import { Glyph } from './plain'
 import { pace, paceTurn, pending, useStepper } from '../pace'
+import { clickedNotSelected, isOpen, useFold } from '../folds'
 
 /** A colour of the theme by its path ("surface.sunken"), or the colour itself. */
 function paint(theme: Theme, c: string): string {
@@ -40,10 +42,10 @@ function paint(theme: Theme, c: string): string {
   return v ?? c
 }
 
-function Stat({ label, value, color, bg, note, ...rest }: { label: string; value: string; color?: string; bg: string; note?: string; 'data-part'?: string }) {
+function Stat({ label, value, color, bg, note, className, ...rest }: { label: string; value: string; color?: string; bg: string; note?: string; className?: string; 'data-part'?: string; 'data-ratio'?: boolean }) {
   const theme = useTheme()
   return (
-    <div data-stat={label} {...rest} className="p-stat" style={{ backgroundColor: paint(theme, bg) }}>
+    <div data-stat={label} {...rest} className={className ? `p-stat ${className}` : 'p-stat'} style={{ backgroundColor: paint(theme, bg) }}>
       <p className="p-body2 p-stat-label">{label}</p>
       <p className="p-body1 tnum p-stat-value" style={color ? { color } : undefined}>{value}</p>
       {note && <p className="p-body2 tnum p-stat-note">{note}</p>}
@@ -51,59 +53,106 @@ function Stat({ label, value, color, bg, note, ...rest }: { label: string; value
   )
 }
 
-// In the Summary view every month (or year) is as tall as the others: periods not loaded yet take the height of a loaded
-// one, so nothing above the screen changes size while scrolling (the page never jumps back down).
-const summaryHeights = new Map<string, number>()
-const summaryListeners = new Set<() => void>()
-
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`)
 const rate = (v: number) => v.toLocaleString('en-CA', { maximumFractionDigits: 6 })
 
-/** A table under its own heading, with the total of the period on the right. */
-function Section({ icon, title, total, note, children, id, tint }: { icon: ReactNode; title: string; total?: string; note?: string; children: ReactNode; id: string; tint?: string }) {
+/**
+ * The summary of a bank, or of every bank together: what came in, what went out and the balance; under the balance,
+ * the expenses as a share of the earnings (above 100% more was spent than earned).
+ */
+function Totals({ summary, currency }: { summary: PeriodSummary; currency: string }) {
+  const theme = useTheme()
+  const m = theme.palette.money
+  const balanceColor = summary.balance > 0 ? m.positive : summary.balance < 0 ? m.negative : m.zero
+  const balanceBg = summary.balance === 0 ? 'surface.sunken' : summary.balance > 0 ? m.positiveStrong : m.negativeStrong
+  const ratioBg = summary.expensesShare === null ? (summary.expenses > 0 ? m.expenseSoft : 'surface.sunken')
+    : summary.expensesShare > 1 ? m.expenseSoft
+    : summary.expensesShare < 1 ? m.incomeSoft
+    : 'surface.sunken'
   return (
-    <div data-section={id} className="p-section">
-      <div className="p-section-head">
+    <div data-totals className="p-totals">
+      <Stat label="Earnings" value={money(summary.earnings, currency)} bg={m.incomeSoft} />
+      <Stat label="Expenses" value={money(summary.expenses, currency)} bg={m.expenseSoft} />
+      <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
+      <Stat label="Expenses / earnings" value={percent(summary.expensesShare)} bg={ratioBg} className="p-ratio" data-ratio />
+    </div>
+  )
+}
+
+/** The button that folds or unfolds what its heading is the heading of. */
+function FoldButton({ open, name, onToggle }: { open: boolean; name: string; onToggle: () => void }) {
+  return (
+    <button className="p-fold-button" data-fold={name} aria-expanded={open} aria-label={open ? `Fold ${name}` : `Unfold ${name}`}
+      onClick={(e) => { e.stopPropagation(); onToggle() }}>
+      <Glyph icon={ChevronRight} size={22} className={open ? 'p-chev p-open' : 'p-chev'} />
+    </button>
+  )
+}
+
+/**
+ * A table under its own heading: folded or unfolded from it (its title stays selectable), how many operations it
+ * holds, and the total of the period on the right.
+ */
+function Section({ icon, title, count, total, note, children, id, tint, foldKey, byDefault = true, boxed = false }: {
+  icon: ReactNode; title: string; count: number; total?: string; note?: string; children: ReactNode; id: string; tint?: string
+  foldKey: string; byDefault?: boolean; boxed?: boolean
+}) {
+  const [open, setOpen] = useFold(foldKey, byDefault)
+  return (
+    <div data-section={id} data-open={open || undefined} className={boxed ? 'p-section p-boxed' : 'p-section'}>
+      <div className="p-section-head p-fold-head" onClick={() => { if (clickedNotSelected()) setOpen(!open) }}>
+        <FoldButton open={open} name={title} onToggle={() => setOpen(!open)} />
         <div className="p-section-icon">{icon}</div>
-        <h6 className="p-h6" style={{ flex: 1 }}>{title}</h6>
+        <h6 className="p-h6">{title}</h6>
+        <p data-section-count className="p-body2 tnum p-section-count">{plural(count, 'operation')}</p>
+        <span style={{ flex: 1 }} />
         {/* The total on a faint tint: red for payments, green for income. */}
         {total && <p data-section-total className="p-body1 tnum p-section-total" style={{ backgroundColor: tint }}>{total}</p>}
         {note && <p className="p-body2 tnum">{note}</p>}
       </div>
-      {children}
+      {open && children}
     </div>
   )
 }
 
 /**
- * What a period shows: its summary (only the balance, all banks together: a month or a year alone, other periods month
- * by month, or year by year beyond a year), its statements (the tables) or its analytics (the charts), bank by bank,
- * each with its totals, then every bank together in the global display currency; or its transfers (the second part
- * of Analytics): the money moved between the accounts of every bank, over time and in total.
+ * What a period shows: its statements (the tables) or its analytics (the charts), bank by bank, each with its totals,
+ * after every bank together in the global display currency; or its transfers (the second part of Analytics): the money
+ * moved between the accounts of every bank, over time and in total. Every period, and every bank in it, folds down to
+ * its summary.
  */
-export type PeriodView = 'summary' | 'statements' | 'analytics' | 'transfers'
+export type PeriodView = 'statements' | 'analytics' | 'transfers'
 
 /** Height of a bank's heading: it stays at the top of the screen while the bank's tables scroll, their headers just under it. */
 const PART_HEAD = 52
 
 /**
- * One bank (or every bank together): a heading, then what the view shows, in one bordered block. The heading stays at
- * the top of the screen while the block scrolls by; native: the currency of the bank's accounts, shown with the
- * display currency when they differ ("EUR → CAD").
+ * One bank (or every bank together): a heading, its summary, then (unfolded) what the view shows, in one bordered
+ * block. The heading stays at the top of the screen while the block scrolls by; native: the currency of the bank's
+ * accounts, shown with the display currency when they differ ("EUR → CAD").
  */
-function Part({ kind, name, currency, native, children, partKey }: { kind: 'bank' | 'global'; name: string; currency: string; native?: string; children: ReactNode; partKey: string }) {
+function Part({ kind, name, currency, native, children, partKey, summary, foldKey }: {
+  kind: 'bank' | 'global'; name: string; currency: string; native?: string; children?: ReactNode; partKey: string; summary: PeriodSummary
+  /** Folds to its summary (none: nothing more to show). */
+  foldKey?: string
+}) {
   const theme = useTheme()
+  const [open, setOpen] = useFold(foldKey ?? '', false)
   const bg = kind === 'global' ? theme.palette.surface.sunken : theme.palette.background.paper
+  const foldable = foldKey !== undefined
   return (
-    <div data-part-block={partKey} className="p-part" style={{ backgroundColor: bg, '--part-head': `${PART_HEAD}px` } as CSSProperties}>
-      <div data-part-head className="p-part-head" style={{ height: PART_HEAD, backgroundColor: bg }}>
+    <div data-part-block={partKey} data-open={(foldable && open) || undefined} className="p-part" style={{ backgroundColor: bg, '--part-head': `${PART_HEAD}px` } as CSSProperties}>
+      <div data-part-head className={foldable ? 'p-part-head p-fold-head' : 'p-part-head'} style={{ height: PART_HEAD, backgroundColor: bg }}
+        onClick={foldable ? () => { if (clickedNotSelected()) setOpen(!open) } : undefined}>
+        {foldable && <FoldButton open={open} name={name} onToggle={() => setOpen(!open)} />}
         <div className="p-part-icon"><Glyph icon={kind === 'global' ? Public : AccountBalance} /></div>
         <h6 data-part-name className="p-h6 p-part-name">{name}</h6>
         <p data-part-currency className="p-body1 tnum p-part-currency" title={native && native !== currency ? `Its accounts are in ${native}, shown in ${currency}` : undefined}>
           {native && native !== currency ? `${native} → ${currency}` : currency}
         </p>
       </div>
-      {children}
+      <Totals summary={summary} currency={currency} />
+      {(!foldable || open) && children}
     </div>
   )
 }
@@ -215,8 +264,8 @@ function usePageWidth(): number {
   return w
 }
 
-/** Statements (the tables) or analytics (the charts) of one bank or of all of them, then their totals (drawn again only when they change). */
-const Body = memo(function Body({ summary, view, keep, currency, granularity, onEdit, tables }: {
+/** Statements (the tables) or analytics (the charts) of one bank or of all of them (drawn again only when they change). */
+const Body = memo(function Body({ summary, view, keep, currency, granularity, onEdit, tables, salary }: {
   summary: PeriodSummary
   view: 'statements' | 'analytics'
   keep: string
@@ -225,6 +274,8 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
   onEdit: (tx: TransactionView) => void
   /** False for all banks together: their operations are in each bank's tables. */
   tables: boolean
+  /** The net salary of the period, written under the Income chart. */
+  salary?: SalaryRate | null
 }) {
   const { category, settings } = useApp()
   const theme = useTheme()
@@ -232,7 +283,9 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
   // Transfers, card payments and investments: in their own folded table, hidden, or with the rest (Settings).
   // Recurring payments and income are shown in their own tables, never twice.
   const mode = settings.periodTransfers || 'separate'
-  const showAll = settings.pieShowAll !== 'false'
+  // Pies: every category (and the recurring, income and tag pies) unless set otherwise; the brands, the largest five.
+  const showAll = settings.pieShowAllCategories !== 'false'
+  const showAllBrands = settings.pieShowAllBrands === 'true'
   // Charts by first-level category (nested categories counted in theirs), or down to every nested category.
   const topLevel = settings.chartsTopLevel !== 'false'
   // The tables (statements) or the rows of charts (analytics) appear one at a time, paced to the screen (see pace),
@@ -248,20 +301,16 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
     last.current = split
     return split
   }, [summary, mode, category, splitting])
+  // What the non-recurring table spends (transfers listed with it are not spending).
+  const mainSpent = useMemo(() => main.reduce((s, t) => (t.amount < 0 && category(t.categoryId).kind !== 'transfer' ? s - t.amount : s), 0), [main, category])
   // Editing a row of the income table opens the operation itself (full amount), not the earned part shown.
   const editOriginal = useCallback((t: TransactionView) => onEdit(summary.transactions.find((x) => x.id === t.id) ?? t), [onEdit, summary.transactions])
 
-  const balanceColor = summary.balance > 0 ? theme.palette.money.positive : summary.balance < 0 ? theme.palette.money.negative : theme.palette.money.zero
-  const balanceBg = summary.balance === 0 ? 'surface.sunken' : summary.balance > 0 ? theme.palette.money.positiveStrong : theme.palette.money.negativeStrong
-  const ratioBg = summary.expensesShare === null ? (summary.expenses > 0 ? theme.palette.money.expenseSoft : 'surface.sunken')
-    : summary.expensesShare > 1 ? theme.palette.money.expenseSoft
-    : summary.expensesShare < 1 ? theme.palette.money.incomeSoft
-    : 'surface.sunken'
   const per = granularity === 'month' ? 'this month' : granularity === 'year' ? 'this year' : 'over the period'
   const months = Math.max(1, Math.round((Date.parse(summary.to) - Date.parse(summary.from)) / (30.44 * 86400000)))
   const monthly = (v: number) => (granularity === 'month' ? undefined : `about ${money(v / months, currency)} a month`)
-  const fold = (slices: PeriodSummary['byCategory']) => {
-    if (showAll || slices.length <= 6) return slices
+  const fold = (slices: PeriodSummary['byCategory'], all = showAll) => {
+    if (all || slices.length <= 6) return slices
     // The same slices folded once: a chart is drawn again only when what it shows changes.
     let folded = folds.get(slices)
     if (!folded) {
@@ -273,63 +322,49 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
   }
 
   return (
-    <>
-      {/* Each bank starts with what it spent, earned and its balance. */}
-      <div data-totals className="p-row" style={{ marginBottom: tables || view === 'analytics' ? theme.spacing(3) : 0 }}>
-        <Stat label="Expenses" value={money(summary.expenses, currency)} bg={theme.palette.money.expenseSoft} />
-        <Stat label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
-        <Stat label="Balance" value={money(summary.balance, currency, { sign: true })} color={balanceColor} bg={balanceBg} />
-      </div>
+    <div ref={end} className="p-body">
       {view === 'statements' ? (tables && (
         <>
-          {step > 1 && <TransactionTable keep={keep + ':main'} transactions={main} currency={currency} paged onEdit={onEdit} empty="No other spending in this period" />}
+          {step > 1 && (
+            <Section id="main" foldKey={`t:${keep}:main`} tint={theme.palette.money.expenseSoft} icon={<Glyph icon={ReceiptLong} />} title="Non-recurring expenses" count={main.length}
+              total={`${money(mainSpent, currency)} ${per}`}>
+              <TransactionTable keep={keep + ':main'} transactions={main} currency={currency} paged onEdit={onEdit} noun="non-recurring expense" empty="No other spending in this period" />
+            </Section>
+          )}
 
           {step > 2 && recurringOut.length > 0 && (
-            <Section id="recurring-payments" tint={theme.palette.money.expenseSoft} icon={<Glyph icon={EventRepeat} />} title="Recurring payments & subscriptions" total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
-              <TransactionTable keep={keep + ':recurring'} transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency />
+            <Section id="recurring-payments" foldKey={`t:${keep}:recurring`} tint={theme.palette.money.expenseSoft} icon={<Glyph icon={EventRepeat} />} title="Recurring payments & subscriptions" count={recurringOut.length}
+              total={`${money(summary.recurringExpenses, currency)} ${per}`} note={monthly(summary.recurringExpenses)}>
+              <TransactionTable keep={keep + ':recurring'} transactions={recurringOut} currency={currency} paged onEdit={onEdit} frequency noun="recurring payment" />
+              <div data-recurring-burden className="p-row" style={{ marginTop: theme.spacing(1.5) }}>
+                <Stat label="Recurring payments, rent excluded" value={money(summary.recurringWithoutHousing, currency)} bg="surface.sunken" />
+              </div>
             </Section>
           )}
           {step > 3 && income.length > 0 && (
-            <Section id="income" tint={theme.palette.money.incomeSoft} icon={<Glyph icon={Payments} />} title="Income" total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
-              <TransactionTable keep={keep + ':income'} transactions={income} currency={currency} paged onEdit={editOriginal} frequency />
+            <Section id="income" foldKey={`t:${keep}:income`} tint={theme.palette.money.incomeSoft} icon={<Glyph icon={Payments} />} title="Income" count={income.length}
+              total={`${money(summary.earnings, currency)} ${per}`} note={monthly(summary.earnings)}>
+              <TransactionTable keep={keep + ':income'} transactions={income} currency={currency} paged onEdit={editOriginal} frequency noun="income operation" />
             </Section>
           )}
 
-          {step > 4 && mode === 'table' && summary.movements.length > 0 && (
-            <Section id="movements" icon={<Glyph icon={SwapHoriz} />} title="Transfers, card payments & investments" note={String(summary.movements.length)}>
+          {step > 4 && (mode === 'table' || mode === 'separate') && summary.movements.length > 0 && (
+            // In its own table, unfolded or (the setting's "folded table") folded at first, on a sunken box.
+            <Section id="movements" foldKey={`t:${keep}:movements`} byDefault={mode === 'table'} boxed={mode === 'separate'} icon={<Glyph icon={SwapHoriz} />}
+              title="Transfers, card payments & investments" count={summary.movements.length}>
               <MovementsTable keep={keep + ':movements'} movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
             </Section>
           )}
-          {step > 4 && mode === 'separate' && summary.movements.length > 0 && (
-            <Accordion
-              data-section="movements"
-              disableGutters
-              elevation={0}
-              slotProps={{ transition: { unmountOnExit: true } }}
-              sx={{ mt: 3, border: 1, borderColor: 'divider', borderRadius: '16px !important', bgcolor: 'surface.sunken', '& th': { bgcolor: 'surface.sunken' }, '&::before': { display: 'none' } }}
-            >
-              <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2.5, minHeight: 52 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
-                  <SwapHoriz sx={{ color: 'text.secondary', fontSize: 20 }} />
-                  <Typography sx={{ fontWeight: 600 }}>Transfers, card payments & investments</Typography>
-                  <Typography color="text.secondary" className="tnum">{summary.movements.length}</Typography>
-                </Box>
-              </AccordionSummary>
-              <AccordionDetails sx={{ px: 2.5, pt: 0, pb: 2 }}>
-                <MovementsTable keep={keep + ':movements'} movements={summary.movements} transactions={summary.transactions} currency={currency} paged onEdit={onEdit} />
-              </AccordionDetails>
-            </Accordion>
-          )}
         </>
       )) : (
-        !c ? <Box data-loading-charts sx={{ minHeight: 1400 }} /> : <>
+        !c ? <Box data-loading-charts sx={{ minHeight: 1400 }} /> : <Box sx={{ mt: 2.5 }}>
           {step > 1 && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'flex-start' }}>
             <c.ExpensePie title="Expenses per category" slices={fold(topLevel ? summary.byTopCategory : summary.byCategory)} currency={currency} />
-            <c.ExpensePie title="Expenses per brand" slices={fold(summary.byBrand)} currency={currency} />
+            <c.ExpensePie title="Expenses per brand" slices={fold(summary.byBrand, showAllBrands)} currency={currency} />
           </Box>}
-          {step > 2 && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
+          {step > 2 && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5, alignItems: 'flex-start' }}>
             <c.ExpensePie title="Recurring payments & subscriptions" slices={fold(summary.recurringExpensePie)} currency={currency} empty="No recurring payments" />
-            <c.ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" />
+            <c.ExpensePie title="Income" slices={fold(summary.incomePie)} currency={currency} empty="No income" footer={salary ? <SalaryLine salary={salary} currency={currency} /> : undefined} />
           </Box>}
           {step > 3 && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1.5 }}>
             {/* Each tagged expense in the slice of its whole set of tags: no money is counted twice. */}
@@ -337,22 +372,35 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
             <Box sx={{ flex: '1 1 340px', minWidth: 0 }} />
           </Box>}
           {step > 4 && <Box sx={{ mt: 1.5 }}>
-            <c.ExpenseBars bars={summary.series} unit={summary.seriesUnit} currency={currency} />
+            <c.IncomeExpenseBars keep={`${keep}:bars`} bars={summary.series} unit={summary.seriesUnit} currency={currency} />
           </Box>}
           {step > 5 && <Box sx={{ mt: 1.5 }}>
             <c.CategoryLines keep={`${keep}:lines:${topLevel}`} from={summary.from} to={summary.to} transactions={summary.transactions} categories={topLevel ? summary.byTopCategory : summary.byCategory} topLevel={topLevel} currency={currency} />
           </Box>}
-        </>
+        </Box>
       )}
-
-      <div ref={end} data-ratios className="p-row" style={{ marginTop: theme.spacing(tables || view === 'analytics' ? 3.5 : 1.5) }}>
-        <Stat label="Recurring payments, rent excluded" value={money(summary.recurringWithoutHousing, currency)} bg="surface.sunken" />
-        {/* Above 100% more was spent than earned (red, like the expenses); below, a surplus (green, like the earnings). */}
-        <Stat label="Expenses / earnings" value={percent(summary.expensesShare)} bg={ratioBg} />
-      </div>
-    </>
+    </div>
   )
 })
+
+/**
+ * The net salary of the period (the salary alone) per working day and per hour, and per year: every day but the
+ * weekend is a working day (holidays are paid), each of the hours of a week entered in Settings shared by its days.
+ */
+function SalaryLine({ salary, currency }: { salary: SalaryRate; currency: string }) {
+  const tip = `${money(salary.net, currency)} of salary over ${plural(salary.workingDays, 'working day')} (weekends left out, holidays paid), `
+    + `${salary.hoursPerDay} hours a day (${salary.hoursPerWeek} a week). A year: ${salary.yearWorkingDays} working days.`
+  return (
+    <Box data-salary title={tip} sx={{ mt: 2, pt: 1.75, borderTop: 1, borderColor: 'divider', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1 }}>
+      {([['Net salary per day', salary.perDay, 'data-salary-day'], ['Per hour', salary.perHour, 'data-salary-hour'], ['Per year', salary.perYear, 'data-salary-year']] as const).map(([label, v, attr]) => (
+        <Box key={label} {...{ [attr]: '' }}>
+          <Typography variant="body2" color="text.secondary">{label}</Typography>
+          <Typography className="tnum" sx={{ fontWeight: 650, fontSize: 17 }}>{money(v, currency)}</Typography>
+        </Box>
+      ))}
+    </Box>
+  )
+}
 
 /** One bank's currency converted: totals before and after, the rates, and every rate by day on demand. */
 function ConversionRow({ line }: { line: ConversionLine }) {
@@ -478,20 +526,20 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   retiring?: boolean
 }) {
   const { dataVersion, fail } = useApp()
-  const theme = useTheme()
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
   // On the screen itself (not only near it); within reach of it (see below).
   const [onScreen, setOnScreen] = useState(false)
   const [inReach, setInReach] = useState(false)
   const id = periodId(granularity, from, to, currency)
-  const [height, setHeight] = useState(() => heightOf(`${granularity}:${view}:${id}`) ?? usualHeight(`${granularity}:${view}:`, count))
+  // Folded to its summary until opened (see folds).
+  const [monthOpen, setMonthOpen] = useFold(`p:${id}`, false)
+  const [height, setHeight] = useState(() => heightOf(`${granularity}:${view}:f:${id}`) ?? usualHeight(`${granularity}:${view}:f`, count))
   // Loaded in the background (away from the screen) once, to know its height, then let go of again.
   const [measuring, setMeasuring] = useState(false)
   const [report, setReport] = useState<PeriodReport | null>(null)
   const [exporting, setExporting] = useState(false)
   const [exportMade, setExportMade] = useState(false)
-  const [, redraw] = useReducer((n: number) => n + 1, 0)
   // The view drawn: the one chosen, each period in its turn, the nearest to the screen first (see pace).
   const [shown, setShown] = useState(view)
   useLayoutEffect(() => {
@@ -502,24 +550,17 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   // All banks together: the totals and charts of the report, the operations of every bank in the global currency.
   const charts = shown === 'analytics'
   const global = useMemo(() => (report ? { ...report.global, transactions: charts ? globalTransactions(report) : NO_OPERATIONS } : null), [report, charts])
-  useEffect(() => { summaryListeners.add(redraw); return () => { summaryListeners.delete(redraw) } }, [])
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (shown !== 'summary' || !global || global.breakdown.length > 1 || !el) return
-    if (summaryHeights.get(granularity) !== el.offsetHeight) {
-      summaryHeights.set(granularity, el.offsetHeight)
-      summaryListeners.forEach((l) => l())
-    }
-  }, [shown, global, granularity])
-  const sameHeight = shown === 'summary' ? summaryHeights.get(granularity) : undefined
   // Whenever its content changes (loaded, or another view): drawn once no piece of it is waiting any more.
   const [drawn, setDrawn] = useState(false)
   // The parts of a period (each bank, then every bank together) appear one per frame: no frame has to lay out a whole
   // period at once, so the screen never freezes while a long period comes in.
   // (Paced to the screen with every other piece of every period: see pace.) The older operations of a long period
   // coming in later do not draw its banks again.
-  const parts = report ? report.banks.length + (showsGlobal(report) ? 1 : 0) : 0
-  const partsShown = useStepper(parts, `${report ? 'r' : ''}:${shown}`, ref)
+  // (Every bank together first, then each bank once the period is unfolded.)
+  const parts = report ? 1 + (monthOpen && shown !== 'transfers' ? report.banks.length : 0) : 0
+  const partsShown = useStepper(parts, `${report ? 'r' : ''}:${shown}:${monthOpen}`, ref)
+  // What is unfolded in it: its height is kept for each way it was drawn.
+  const folded = !monthOpen ? 'f' : 'o' + (report ? [...report.banks.map((b) => b.key), 'all'].map((k) => (isOpen(`p:${id}:${k}`, false) ? 1 : 0)).join('') : '')
   const hasData = useRef(false)
   hasData.current = report !== null
   // While a period lets go of its data: how many of its banks are still drawn.
@@ -531,7 +572,7 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
     return () => { holding.delete(id) }
   }, [report, id])
   const loaded = report !== null
-  useLayoutEffect(() => { setDrawn(false) }, [loaded, shown, partsShown])
+  useLayoutEffect(() => { setDrawn(false) }, [loaded, shown, partsShown, folded])
   useEffect(() => {
     if (drawn || !report) return
     // Drawn in full once no piece of it is waiting any more, for a few frames.
@@ -542,7 +583,7 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   }, [drawn, report])
 
   // Its height once drawn, for this view: kept for when it is let go of, and for the next time it is made.
-  const heightKey = `${granularity}:${shown}:${id}`
+  const heightKey = `${granularity}:${shown}:${folded}:${id}`
   // The end of its turn at being drawn in the background (see below).
   const turnOver = useRef<(() => void) | null>(null)
   const endTurn = useCallback(() => { turnOver.current?.(); turnOver.current = null; setMeasuring(false) }, [])
@@ -559,9 +600,9 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   const guess = useCallback(() => {
     if (hasData.current) return
     // Moved only when the new guess is notably nearer (the page's length changes as little as it can).
-    const h = heightOf(heightKey) ?? usualHeight(`${granularity}:${shown}:`, count)
+    const h = heightOf(heightKey) ?? usualHeight(`${granularity}:${shown}:${monthOpen ? 'o' : 'f'}`, count)
     setHeight((now) => (heightOf(heightKey) !== undefined || Math.abs(h - now) > 0.08 * now ? h : now))
-  }, [heightKey, granularity, shown, count])
+  }, [heightKey, granularity, shown, count, monthOpen])
   useLayoutEffect(guess, [guess])
   useEffect(() => { usualListeners.add(guess); return () => { usualListeners.delete(guess) } }, [guess])
   // Never drawn in this view, at this width, with this data: drawn once in the background, a few periods at a time,
@@ -655,17 +696,16 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
     return () => { live = false; stops.forEach((s) => s()) }
   }, [wanted, from, to, granularity, currency, dataVersion, fail, onLoaded])
 
-  // A balance in green above zero, red below, plain at zero.
-  const tone = (v: number) => ({
-    color: v > 0 ? theme.palette.money.positive : v < 0 ? theme.palette.money.negative : theme.palette.money.zero,
-    bg: v === 0 ? 'surface.sunken' : v > 0 ? theme.palette.money.positiveStrong : theme.palette.money.negativeStrong,
-  })
+  // The salary is written under the Income chart of every bank together, or of the only bank when it is alone.
+  const salaryWith = report && (showsGlobal(report) ? 'all' : report.banks[0]?.key)
+  const banksDrawn = report ? Math.max(0, Math.min(partsShown, kept ?? Infinity) - 1) : 0
 
   return (
     <section
       ref={ref}
       data-period={retiring ? undefined : from}
       data-retiring={retiring || undefined}
+      data-open={monthOpen || undefined}
       className="p-period"
       // The tables and sections of a period away from the screen are not laid out or painted (see useRealHeights). One
       // being drawn away from the screen keeps its height until all of it is there, then takes its new height at once:
@@ -677,25 +717,25 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
         ...(report && !drawn && !onScreen ? { height, overflow: 'clip' } : {}),
         // Not loaded: its outline is not drawn (nor its pulse) away from the screen, at its height.
         ...(!report ? { contentVisibility: 'auto', containIntrinsicHeight: '0px' } : {}),
-        ...(!report && sameHeight ? { height: sameHeight, minHeight: 0, overflow: 'hidden' } : {}),
         ...(retiring ? { display: 'none' } : {}),
       }}
     >
       {!report || !global ? (
         <>
           <span className="p-skeleton p-skeleton-text" style={{ width: '55%', height: 40 }} />
-          <span className="p-skeleton" style={{ height: 220, marginTop: 16, borderRadius: 36 }} />
-          <span className="p-skeleton" style={{ height: 90, marginTop: 24, borderRadius: 36 }} />
+          <span className="p-skeleton" style={{ height: 160, marginTop: 16, borderRadius: 36 }} />
         </>
       ) : (
         <>
-          <div className="p-period-head" style={shown === 'summary' ? { marginBottom: theme.spacing(2.5) } : undefined}>
+          {/* The period folds down to the summary of every bank together; a click on its heading folds or unfolds it. */}
+          <div className="p-period-head p-fold-head" onClick={() => { if (clickedNotSelected()) setMonthOpen(!monthOpen) }}>
+            <FoldButton open={monthOpen} name={report.title} onToggle={() => setMonthOpen(!monthOpen)} />
             <h2 className="p-h5" style={{ flex: 1 }}>{report.title}</h2>
             <p data-days className="p-body1 tnum" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
               {plural(Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1, 'day')}
               {report.businessDays != null && <> · <span data-business-days>{plural(report.businessDays, 'business day')}</span></>}
             </p>
-            <Button data-export variant="outlined" size="small" startIcon={<PictureAsPdf />} onClick={() => { setExporting(true); setExportMade(true) }} sx={{ alignSelf: 'center' }}>Export</Button>
+            <Button data-export variant="outlined" size="small" startIcon={<PictureAsPdf />} onClick={(e) => { e.stopPropagation(); setExporting(true); setExportMade(true) }} sx={{ alignSelf: 'center' }}>Export</Button>
           </div>
           {/* Made the first time it opens, kept after (so it closes as it always did). */}
           {exportMade && <ExportDialog
@@ -709,48 +749,32 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
             timeline={report.global.timeline}
             timelineCurrency={report.currency}
           />}
-          {shown === 'analytics' && report.salary && (
-            // The net salary of the period per hour worked and per year, every bank together, in the display currency.
-            <Typography data-salary className="tnum" sx={{ mt: 1, mb: 2.5, fontSize: 15.5 }}
-              title={`${money(report.salary.net, currency)} of salary over ${plural(report.salary.businessDays, 'business day')} of ${report.salary.hoursPerDay} hours. A year: ${report.salary.yearBusinessDays} business days`}>
-              Your net salary per hour is <Box component="b" data-salary-hour sx={{ fontWeight: 680 }}>{money(report.salary.perHour, currency)}</Box> and
-              per year is <Box component="b" data-salary-year sx={{ fontWeight: 680 }}>{money(report.salary.perYear, currency)}</Box>.
-            </Typography>
-          )}
-          {shown === 'summary' ? (
-            // The summary stays global: every bank together, in the global display currency.
-            <Box data-summary sx={{ display: 'grid', gap: 1.5 }}>
-              {global.breakdown.length > 1 && (
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 1.5 }}>
-                  {global.breakdown.map((b) => (
-                    <Stat key={b.from} label={b.title} value={money(b.balance, currency, { sign: true })} color={tone(b.balance).color} bg={tone(b.balance).bg} data-part={b.from} />
-                  ))}
+          {partsShown > 0 && (kept === null || kept > 0) && (
+            // Every bank together first, in the display currency: its summary, then (unfolded) its charts and how the
+            // amounts were converted, or the transfers.
+            <Part kind="global" partKey="all" name="All banks" currency={report.currency} summary={report.global}
+              foldKey={monthOpen && shown !== 'transfers' && showsGlobal(report) ? `p:${id}:all` : undefined}>
+              {monthOpen && (shown === 'transfers' ? (
+                // Money moved between the accounts of every bank, in the display currency: over time, then in total.
+                <Box data-transfers sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2.5, mt: 2.5 }}>
+                  <TransferTimelineChart timeline={report.global.timeline} currency={report.currency} />
+                  <Box data-flow-card>
+                    <FlowChart diagram={report.global.diagram} flows={report.global.flows} currency={report.currency} />
+                  </Box>
                 </Box>
-              )}
-              <Stat label="Balance" value={money(global.balance, currency, { sign: true })} color={tone(global.balance).color} bg={tone(global.balance).bg} />
-            </Box>
-          ) : shown === 'transfers' ? (
-            // Money moved between the accounts of every bank, in the display currency: over time, then in total.
-            <Box data-transfers sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2.5, mt: 2.5 }}>
-              <TransferTimelineChart timeline={report.global.timeline} currency={report.currency} />
-              <Box data-flow-card>
-                <FlowChart diagram={report.global.diagram} flows={report.global.flows} currency={report.currency} />
-              </Box>
-            </Box>
-          ) : (
-            <>
-              {report.banks.slice(0, Math.min(partsShown, kept ?? Infinity)).map((b) => (
-                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native}>
-                  <Body summary={b.summary} view={shown} keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables />
-                </Part>
-              ))}
-              {showsGlobal(report) && partsShown > report.banks.length && kept === null && (
-                <Part kind="global" partKey="all" name="All banks" currency={report.currency}>
-                  <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} />
+              ) : showsGlobal(report) && (
+                <>
+                  {shown === 'analytics' && <Body summary={global} view={shown} keep={`${from}_${to}_all`} currency={report.currency} granularity={granularity} onEdit={onEdit} tables={false} salary={salaryWith === 'all' ? report.salary : null} />}
                   <ConversionPanel conversion={report.conversion} />
-                </Part>
-              )}            </>
+                </>
+              ))}
+            </Part>
           )}
+          {monthOpen && shown !== 'transfers' && report.banks.slice(0, banksDrawn).map((b) => (
+            <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native} summary={b.summary} foldKey={`p:${id}:${b.key}`}>
+              <Body summary={b.summary} view={shown} keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables salary={salaryWith === b.key ? report.salary : null} />
+            </Part>
+          ))}
         </>
       )}
     </section>

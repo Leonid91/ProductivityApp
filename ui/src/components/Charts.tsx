@@ -1,9 +1,10 @@
-import { memo } from 'react'
-import { Box, Typography, useTheme } from '@mui/material'
+import { memo, type ReactNode } from 'react'
+import { Box, Checkbox, FormControlLabel, Typography, useTheme } from '@mui/material'
 import { PieChart } from '@mui/x-charts/PieChart'
 import { BarChart } from '@mui/x-charts/BarChart'
 import type { Bar, Slice } from '../api'
 import { money, percent } from '../format'
+import { useKept } from '../keep'
 
 /**
  * Chart tooltips go on the page itself: inside a period (drawn with content-visibility, which makes the period the
@@ -29,7 +30,7 @@ export function sliceColor(colors: string[], other: string, slice: Slice, index:
 }
 
 /** Donut with a legend that carries names, amounts and shares in text colours. */
-export const ExpensePie = memo(function ExpensePie({ title, slices, currency, empty = 'No expenses' }: { title: string; slices: Slice[]; currency: string; empty?: string }) {
+export const ExpensePie = memo(function ExpensePie({ title, slices, currency, empty = 'No expenses', footer }: { title: string; slices: Slice[]; currency: string; empty?: string; footer?: ReactNode }) {
   const theme = useTheme()
   const { series, other } = theme.palette.chart
   const total = slices.reduce((s, x) => s + x.amount, 0)
@@ -77,37 +78,60 @@ export const ExpensePie = memo(function ExpensePie({ title, slices, currency, em
           </Box>
         </Box>
       )}
+      {footer}
     </Box>
   )
 })
 
-/** Expenses per day (month view), per month (year view) or per year (long ranges). */
-export const ExpenseBars = memo(function ExpenseBars({ bars, unit, currency }: { bars: Bar[]; unit: 'day' | 'month' | 'year'; currency: string }) {
+/**
+ * Income and expenses per day (a period within a month) or per month: two bars side by side, income in green and
+ * expenses in red, both drawn upwards. Either can be unticked.
+ */
+export const IncomeExpenseBars = memo(function IncomeExpenseBars({ bars, unit, currency, keep }: { bars: Bar[]; unit: 'day' | 'month' | 'year'; currency: string; keep: string }) {
   const theme = useTheme()
-  const title = unit === 'day' ? 'Expenses per day' : unit === 'month' ? 'Expenses per month' : 'Expenses per year'
-  const max = Math.max(0, ...bars.map((b) => b.expenses))
+  const [show, setShow] = useKept(keep, { income: true, expenses: true })
+  const per = unit === 'day' ? 'day' : unit === 'month' ? 'month' : 'year'
+  const max = Math.max(0, ...bars.map((b) => Math.max(show.expenses ? b.expenses : 0, show.income ? b.earnings : 0)))
+  const any = bars.some((b) => b.expenses > 0 || b.earnings > 0)
   // Every day of a month is on the axis, from the 1st to the last; longer series keep about twelve labels.
   const every = bars.length <= 31 ? 1 : Math.ceil(bars.length / 12)
+  const tick = (i: number) => (every === 1 || i === 0 || (i + 1) % every === 0)
+  const series = [
+    ...(show.income ? [{ id: 'income', data: bars.map((b) => b.earnings), color: theme.palette.money.positive, label: 'Income', valueFormatter: (v: number | null) => (v === null ? '' : money(v, currency)) }] : []),
+    ...(show.expenses ? [{ id: 'expenses', data: bars.map((b) => b.expenses), color: theme.palette.money.negative, label: 'Expenses', valueFormatter: (v: number | null) => (v === null ? '' : money(v, currency)) }] : []),
+  ]
+  const box = (key: 'income' | 'expenses', label: string, color: string) => (
+    <FormControlLabel
+      data-bars-choice={key}
+      control={<Checkbox size="small" checked={show[key]} onChange={() => setShow({ ...show, [key]: !show[key] })} sx={{ p: 0.5, color, '&.Mui-checked': { color } }} />}
+      label={<Typography variant="body2">{label}</Typography>}
+      sx={{ mr: 1.5, ml: 0 }}
+    />
+  )
   return (
     <Box data-bars sx={{ border: 1, borderColor: 'divider', borderRadius: '18px', p: 2.5, pb: 1, bgcolor: 'background.paper' }}>
-      <Typography variant="subtitle1">{title}</Typography>
-      {max === 0 ? (
-        <Typography color="text.secondary" sx={{ py: 6, textAlign: 'center' }}>No expenses</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+        <Typography variant="subtitle1" sx={{ flex: 1 }}>Income and expenses per {per}</Typography>
+        {box('income', 'Income', theme.palette.money.positive)}
+        {box('expenses', 'Expenses', theme.palette.money.negative)}
+      </Box>
+      {!any || series.length === 0 ? (
+        <Typography color="text.secondary" sx={{ py: 6, textAlign: 'center' }}>{!any ? 'No income or expenses' : 'Tick income or expenses'}</Typography>
       ) : (
         <BarChart
           height={250}
           hideLegend
           slotProps={tooltipOnPage}
-          borderRadius={4}
+          borderRadius={3}
           grid={{ horizontal: true }}
           margin={{ left: 4, right: 8, top: 16, bottom: 0 }}
           xAxis={[{
             scaleType: 'band',
             data: bars.map((b) => b.label),
-            categoryGapRatio: bars.length > 20 ? 0.3 : 0.45,
-            tickLabelInterval: (_v: unknown, i: number) => every === 1 || i === 0 || (i + 1) % every === 0,
+            categoryGapRatio: bars.length > 20 ? 0.25 : 0.4,
+            barGapRatio: 0.1,
+            tickLabelInterval: (_v: string, i: number) => tick(i),
             disableTicks: true,
-            // Never drop a day label to make room: all of them are wanted.
             tickLabelMinGap: 0,
             tickLabelStyle: { fontSize: 11, fill: theme.palette.chart.axis },
             valueFormatter: (v: string, ctx) => (ctx.location === 'tooltip' ? (unit === 'day' ? `Day ${v}` : v) : v),
@@ -119,12 +143,7 @@ export const ExpenseBars = memo(function ExpenseBars({ bars, unit, currency }: {
             valueFormatter: (v: number) => money(v, currency, { compact: max >= 10000, whole: true }),
             tickNumber: 4,
           }]}
-          series={[{
-            data: bars.map((b) => b.expenses),
-            color: theme.palette.chart.series[0],
-            label: 'Expenses',
-            valueFormatter: (v) => (v === null ? '' : money(v, currency)),
-          }]}
+          series={series}
           sx={{
             '& .MuiChartsGrid-line': { stroke: theme.palette.chart.grid, strokeDasharray: 'none' },
             '& .MuiChartsAxis-line': { stroke: 'transparent' },

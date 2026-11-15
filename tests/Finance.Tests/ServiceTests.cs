@@ -43,6 +43,38 @@ public class ServiceTests
         return s.Imports.Commit(new CommitRequest(draft.Id, account, null, spec.Currency, account is null ? kind : null, [], BankId: s.Bank));
     }
 
+    /// <summary>
+    /// The category pie and the brand pie hold the same money: every expense once in each, a brand written in another
+    /// case is one brand, a brand in two categories is one slice holding both, and a small brand of a category (12.60 of
+    /// Groceries at another shop) is a slice of its own, never folded into another brand or lost.
+    /// </summary>
+    [Fact]
+    public void Every_expense_is_once_in_the_category_pie_and_once_in_the_brand_pie()
+    {
+        using var s = new TempStore();
+        var account = s.Db.AddAccount(new Account { Name = "Chequing", Currency = "CAD", Kind = AccountKind.Bank, BankId = s.Bank });
+        void Op(string day, decimal amount, string brand, string category) => s.Transactions.Create(new TransactionInput(day, amount, brand, category, account, null));
+        Op("2026-10-02", -100m, "FreshMart", "groceries");
+        Op("2026-10-03", -20m, "freshmart", "groceries");
+        Op("2026-10-04", -12.60m, "Market Corner", "groceries");
+        Op("2026-10-05", -5m, "FreshMart", "restaurants");
+        Op("2026-10-06", -42.10m, "Pharmacy", "health");
+        Op("2026-10-07", -500m, "To savings", Categories.Investments);
+        Op("2026-10-15", 2000m, "Employer", "salary");
+        var r = s.Summaries.Report(new(2026, 10, 1), new(2026, 10, 31), Granularity.Month, "CAD", new ExchangeRates(s.Db));
+        foreach (var sum in r.Banks.Select(b => b.Summary).Append(r.Global))
+        {
+            Assert.Equal(179.70m, sum.Expenses);
+            Assert.Equal(sum.Expenses, sum.ByCategory.Sum(x => x.Amount));
+            Assert.Equal(sum.Expenses, sum.ByTopCategory.Sum(x => x.Amount));
+            Assert.Equal(sum.Expenses, sum.ByBrand.Sum(x => x.Amount));
+            Assert.Equal(132.60m, sum.ByCategory.Single(x => x.Key == "groceries").Amount);
+            Assert.Equal(125m, sum.ByBrand.Single(x => x.Label.Equals("FreshMart", StringComparison.OrdinalIgnoreCase)).Amount);
+            Assert.Equal(12.60m, sum.ByBrand.Single(x => x.Label == "Market Corner").Amount);
+            Assert.Equal(3, sum.ByBrand.Count);
+        }
+    }
+
     [Fact]
     public async Task Import_stores_exact_amounts_and_summaries_add_up()
     {

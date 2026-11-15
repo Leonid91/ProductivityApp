@@ -7,6 +7,7 @@ import Add from '@mui/icons-material/AddRounded'
 import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
 import Refresh from '@mui/icons-material/RefreshRounded'
+import ReceiptLong from '@mui/icons-material/ReceiptLongRounded'
 import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem, type CentralBank, type RateSource } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample } from '../format'
@@ -27,7 +28,20 @@ const systems: { value: BankingSystem; label: string }[] = [
   { value: 'france', label: 'Debit card system' },
 ]
 
-type Confirm = { title: string; body?: string; confirm?: string; run: () => Promise<void> } | null
+type Confirm = { title: string; body?: string; confirm?: string; cancel?: string; run: () => Promise<void> } | null
+
+/** A whole number of hours in a week (1 to 168), saved when Enter is pressed or the field is left. */
+function HoursField({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [text, setText] = useState(value)
+  useEffect(() => setText(value), [value])
+  const n = Number(text)
+  const valid = /^\d+$/.test(text.trim()) && n >= 1 && n <= 168
+  const save = () => { if (valid && String(n) !== value) onSave(String(n)); else if (!valid) setText(value) }
+  return (
+    <TextField size="small" value={text} onChange={(e) => setText(e.target.value)} onBlur={save} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      error={!valid} sx={{ width: 120 }} slotProps={{ htmlInput: { inputMode: 'numeric', 'aria-label': 'Hours worked per week', 'data-hours-per-week': '', className: 'tnum' }, input: { endAdornment: <Typography variant="body2" color="text.secondary">hours</Typography> } }} />
+  )
+}
 
 /** A setting: its label on the left, its value on the right; note: a line under the value (an error). */
 function Row({ label, children, note }: { label: string; children: React.ReactNode; note?: React.ReactNode }) {
@@ -319,7 +333,7 @@ function RatesSourcesTable({ rates, adding, onAdded, confirm }: {
 }
 
 function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEditRates: () => void }) {
-  const { settings, setSetting, info, dataFolder, setDataFolder, logFile, setLogFile, dataChanged, notify, fail } = useApp()
+  const { settings, setSetting, info, dataFolder, setDataFolder, logFile, setLogFile, dataChanged, notify, fail, go } = useApp()
   const [browsing, setBrowsing] = useState<'reports' | 'database' | 'log' | null>(null)
 
   const moveDatabase = async (folder: string) => {
@@ -365,7 +379,8 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
               <MenuItem value="inline">With the other operations</MenuItem>
             </TextField>
           </Row>
-          <Toggle label="Show all data in pie charts" setting="pieShowAll" />
+          <Toggle label="Show all data in Expenses per category pie chart" setting="pieShowAllCategories" />
+          <Toggle label="Show all data in Expenses per brand pie chart" setting="pieShowAllBrands" />
           <Toggle label="Expenses per category charts: main categories only" setting="chartsTopLevel" />
         </Group>
         <Group title="Calendar">
@@ -384,6 +399,13 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
         </Group>
       </SectionCard>
 
+      <SectionCard title="Analytics">
+        {/* The net salary per hour (under the Income chart): the salary of a period over its working days of these hours. */}
+        <Row label="Hours worked per week">
+          <HoursField value={settings.hoursPerWeek || '40'} onSave={(v) => void setSetting('hoursPerWeek', v)} />
+        </Row>
+      </SectionCard>
+
       <SectionCard title="Data">
         <Row label="Report location">
           <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 360 }} className="selectable">{settings.reportsFolder || 'Documents'}</Typography>
@@ -400,13 +422,22 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
           <Button size="small" startIcon={<FolderOpen />} onClick={() => setBrowsing('log')}>Change</Button>
         </Row>
         <Row label="Erase all data">
-          <Button color="error" variant="outlined" onClick={() => confirm({
-            title: 'Erase all data?',
-            body: 'Every account, statement, operation, learned brand and template is deleted.',
+          <Button color="error" variant="outlined" data-erase onClick={() => confirm({
+            title: 'Are you sure you want to erase all your data?',
+            body: 'Every account, statement, operation, learned brand and template is deleted. This cannot be undone.',
+            confirm: 'Yes',
+            cancel: 'No',
             run: async () => { await api.eraseAll(); notify('All data erased'); dataChanged() },
           })}>Erase</Button>
         </Row>
         <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 1 }}>Version {info.version}</Typography>
+      </SectionCard>
+
+      <SectionCard title="Logs">
+        {/* Every action and error of the app, with its full details (where the file is: Data > Log location). */}
+        <Row label="What the app did, with every error">
+          <Button variant="outlined" data-open-logs startIcon={<ReceiptLong />} onClick={() => go('logs')}>Open logs</Button>
+        </Row>
       </SectionCard>
 
       <FileBrowser
@@ -738,6 +769,7 @@ export function SettingsPage() {
         title={confirm?.title ?? ''}
         body={confirm?.body}
         confirm={confirm?.confirm ?? 'Delete'}
+        cancel={confirm?.cancel}
         danger
         onClose={() => setConfirm(null)}
         onConfirm={() => { const c = confirm; if (c) void c.run().catch(fail) }}

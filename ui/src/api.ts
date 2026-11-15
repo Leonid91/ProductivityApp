@@ -11,7 +11,7 @@ export type Verification = 'verified' | 'mismatch' | 'noBalances' | 'noTransacti
 /** parentId: the category it is nested in (null at the top); color: '#rrggbb' or null; builtIn: comes with the app (cannot be deleted). */
 export interface Category { id: string; name: string; kind: CategoryKind; icon: string; parentId: string | null; color: string | null; builtIn: boolean }
 
-export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'periodTransfers' | 'calendarHideCardPayments' | 'calendarHideTransfers' | 'calendarHideInvestments' | 'pieShowAll' | 'chartsTopLevel', string> & Record<string, string>
+export type Settings = Record<'currency' | 'dateFormat' | 'theme' | 'reportsFolder' | 'periodTransfers' | 'calendarHideCardPayments' | 'calendarHideTransfers' | 'calendarHideInvestments' | 'pieShowAllCategories' | 'pieShowAllBrands' | 'chartsTopLevel', string> & Record<string, string>
 
 /** A tag the person made; operations counts the operations that carry it themselves (not through a category). */
 export interface Tag { id: number; name: string; color: string | null; operations: number }
@@ -246,10 +246,12 @@ export interface HolidayPreset { id: string; location: string; url: string; acti
 /** A holiday of a checked calendar, with the place of its calendar; observed: the day off for one on a weekend. */
 export interface Holiday { day: string; name: string; location: string; observed: boolean }
 /**
- * The net salary of a period per hour worked and per year, in the display currency: the salary received over the
- * business days of hoursPerDay hours; per year, the same daily pay over the business days of a year (yearBusinessDays).
+ * The net salary of a period (the salary alone, no other income) per working day, per hour and per year, in the display
+ * currency: over the working days of the period (every day but the weekend: holidays are paid), of hoursPerDay hours
+ * (the hours of a week in Settings shared by the working days of the week); per year, the same daily pay over the
+ * working days of a year.
  */
-export interface SalaryRate { net: number; businessDays: number; hoursPerDay: number; perHour: number; yearBusinessDays: number; perYear: number }
+export interface SalaryRate { net: number; workingDays: number; hoursPerDay: number; perDay: number; perHour: number; yearWorkingDays: number; perYear: number; hoursPerWeek: number }
 
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 
@@ -377,6 +379,10 @@ export const api = {
     /** The central banks the app reads. */
     banks: () => invoke<CentralBank[]>('rates.banks'),
     /** A new bank of the table (format), or a new address for one (id). */
+    /** The currencies of the rates in use. */
+    currencies: () => invoke<string[]>('rates.currencies'),
+    /** What one from is worth in to, each day from start to end (at most 62 days). */
+    pair: (from: string, to: string, start: string, end: string) => invoke<RateUse[]>('rates.pair', { from, to, start, end }),
     saveSource: (source: { id?: string; format?: string; url: string }) => invoke<{ id: string; sources: RateSource[] }>('rates.saveSource', source),
     removeSource: (id: string) => invoke<RateSource[]>('rates.removeSource', { id }),
     /** Downloads every bank of the table again now; updated: the rates in use changed. */

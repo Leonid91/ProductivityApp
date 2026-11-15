@@ -137,6 +137,32 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
 
     public RatesStatus Status() => Status(Source);
 
+    /// <summary>The currencies the rates in use are published for, the base currency included, in alphabetical order.</summary>
+    public List<string> Currencies()
+    {
+        var source = Source;
+        return [.. Loaded(source).Raw.Keys.Append(source.Base).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+    }
+
+    /// <summary>The most days <see cref="Daily"/> gives at once (a calendar shows six weeks).</summary>
+    public const int MaxDailyDays = 62;
+
+    /// <summary>
+    /// What one <paramref name="from"/> is worth in <paramref name="to"/> each day from <paramref name="start"/> to
+    /// <paramref name="end"/>, with the rates in use: the last rate published up to the day (on a weekend or holiday,
+    /// the rate of the day before). Days before the first rate known are left out.
+    /// </summary>
+    public List<RateUse> Daily(string from, string to, DateOnly start, DateOnly end)
+    {
+        if (end.DayNumber - start.DayNumber + 1 > MaxDailyDays) throw new ArgumentException($"At most {MaxDailyDays} days of rates at once.");
+        var source = Source;
+        var list = new List<RateUse>();
+        for (var d = start; d <= end; d = d.AddDays(1))
+            if (Convert(source, 1m, from, to, d) is { } c)
+                list.Add(new RateUse(d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), c.RateDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), c.Rate));
+        return list;
+    }
+
     public RatesStatus Status(RateSource source)
     {
         var (raw, previous) = Loaded(source);

@@ -28,7 +28,7 @@ public sealed class HolidaysFileException(string message) : Exception(message);
 /// holidays of the checked calendars, together, are shown on the calendar and are not business days; nor are the
 /// weekend days chosen (Saturday and Sunday by default).
 /// </summary>
-public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
+public sealed class Holidays(Database db, Func<string?>? weekendSetting = null, Func<string?>? hoursSetting = null)
 {
     /// <summary>A calendar is downloaded again when its last download is this many days old (holidays change rarely).</summary>
     public const int RefreshDays = 30;
@@ -36,8 +36,12 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null)
     /// <summary>The weekend days when none were chosen: Saturday and Sunday.</summary>
     public static readonly IReadOnlySet<DayOfWeek> DefaultWeekend = new HashSet<DayOfWeek> { DayOfWeek.Saturday, DayOfWeek.Sunday };
 
-    /// <summary>The hours of a working week, shared by its working days (8 a day from Monday to Friday).</summary>
+    /// <summary>The hours of a working week when none were entered, shared by its working days (8 a day from Monday to Friday).</summary>
     public const decimal HoursPerWeek = 40m;
+
+    /// <summary>The hours worked in a week (Settings > General > Analytics), <see cref="HoursPerWeek"/> when none were entered.</summary>
+    public decimal WeekHours() =>
+        decimal.TryParse(hoursSetting?.Invoke(), NumberStyles.Number, CultureInfo.InvariantCulture, out var h) && h > 0 && h <= 168 ? h : HoursPerWeek;
 
     /// <summary>A calendar file larger than this is refused (a calendar of thirty years is under 100 KB).</summary>
     public const int MaxDownloadBytes = 8 * 1024 * 1024;

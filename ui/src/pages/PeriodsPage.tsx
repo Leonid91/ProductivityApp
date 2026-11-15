@@ -3,6 +3,8 @@ import { Box, Button, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { type Dayjs } from 'dayjs'
 import Add from '@mui/icons-material/AddRounded'
+import UnfoldLess from '@mui/icons-material/UnfoldLessRounded'
+import UnfoldMore from '@mui/icons-material/UnfoldMoreRounded'
 import UploadFile from '@mui/icons-material/UploadFileRounded'
 import { api, type PeriodIndex, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
@@ -11,6 +13,7 @@ import { holding, loadCharts, PeriodCard, periodId, type PeriodView } from '../c
 import { TransactionDialog, pickerFormats } from '../components/TransactionDialog'
 import { EmptyState } from '../components/common'
 import { pace, useRealHeights } from '../pace'
+import { setEverything, useAnythingOpen } from '../folds'
 
 interface Period { from: string; to: string; key: string; count?: number }
 interface Item { key: string; p: Period; granularity: 'month' | 'year' | 'range' }
@@ -76,8 +79,10 @@ export function PeriodsPage() {
   // The periods follow the button in the background: the button answers at once, the periods of the old kind are
   // replaced a little at a time (the screen keeps moving).
   const listMode = useDeferredValue(mode)
-  // Second layer, the same for every kind of period: its summary (balances), statements (tables) or analytics (charts).
-  const [view, setView] = useState<'summary' | 'statements' | 'analytics'>('statements')
+  // Second layer, the same for every kind of period: its statements (tables) or analytics (charts). Every period folds
+  // down to its summary (see folds), bank by bank.
+  const [view, setView] = useState<'statements' | 'analytics'>('statements')
+  const anythingOpen = useAnythingOpen()
   // Analytics in two parts: the charts of the spending and income (General), the money moved between accounts (Transfers).
   const [analytics, setAnalytics] = useState<'general' | 'transfers'>('general')
   // The parts of the analytics sit under the Analytics button, on a line of their own.
@@ -149,7 +154,7 @@ export function PeriodsPage() {
   const empty = index !== null && index.months.length === 0
 
   // The period at the top of the screen stays where it is, whatever changes height above it: periods loading or
-  // letting go of their data, the view switched (Summary, Statements, Analytics). Scrolling never jumps back, even
+  // letting go of their data, the view switched (Statements, Analytics), a period or bank folded or unfolded. Scrolling never jumps back, even
   // at the bottom of the page where the browser itself pulls the page up when it gets shorter.
   const list = useRef<HTMLDivElement>(null)
   useRealHeights(list, empty)
@@ -214,7 +219,7 @@ export function PeriodsPage() {
   }, [empty])
 
   return (
-    <Box sx={{ maxWidth: 1180, mx: 'auto', '--sticky-top': `${barHeight}px`, overflowAnchor: 'none' }}>
+    <Box sx={{ maxWidth: 1480, mx: 'auto', '--sticky-top': `${barHeight}px`, overflowAnchor: 'none' }}>
       <Box
         ref={bar}
         sx={{
@@ -235,9 +240,9 @@ export function PeriodsPage() {
         )}
         <Box sx={{ flex: 1 }} />
         <Button variant="contained" startIcon={<Add />} onClick={() => setAdding(true)}>Add operation</Button>
-        <Box sx={{ flexBasis: '100%' }}>
+        <Box sx={{ flexBasis: '100%', display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+          <Box sx={{ flex: 1 }}>
           <ToggleButtonGroup data-period-view exclusive size="small" value={view} onChange={(_, v) => v && setView(v)}>
-            <ToggleButton value="summary">Summary</ToggleButton>
             <ToggleButton value="statements">Statements</ToggleButton>
             <ToggleButton ref={analyticsButton} value="analytics">Analytics</ToggleButton>
           </ToggleButtonGroup>
@@ -249,6 +254,11 @@ export function PeriodsPage() {
               </ToggleButtonGroup>
             </Box>
           )}
+          </Box>
+          {/* In the bar that stays at the top of the screen: every period and bank folded to its summary, or all unfolded. */}
+          <Button data-fold-everything variant="outlined" size="small" startIcon={anythingOpen ? <UnfoldLess /> : <UnfoldMore />} onClick={() => setEverything(!anythingOpen)}>
+            {anythingOpen ? 'Fold everything' : 'Unfold everything'}
+          </Button>
         </Box>
       </Box>
 

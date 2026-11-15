@@ -5,7 +5,8 @@ import {
 import ExpandMore from '@mui/icons-material/ExpandMoreRounded'
 import Check from '@mui/icons-material/CheckRounded'
 import FilterAlt from '@mui/icons-material/FilterAltRounded'
-import { api, type TransactionView } from '../api'
+import { api, type TransactionInput, type TransactionView } from '../api'
+import { AmountCell, AmountMenu, DateCell, NO_AMOUNT_FILTER, amountFiltering, amountPasses, byAmount, type AmountSort } from './amounts'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample, moneyBeside, plural } from '../format'
 import { CategoryIcon } from './CategoryIcon'
@@ -19,9 +20,22 @@ import { ROW_EDIT_WIDTH, RowActions } from './RowActions'
 
 const NONE_HIDDEN = new Set<string>()
 
-export function HeaderButton({ label, active, onClick }: { label: string; active?: boolean; onClick: (e: React.MouseEvent<HTMLElement>) => void }) {
+/**
+ * Saves an operation with part of it changed (its date, its amount...), everything else as it is. One shown converted
+ * to another currency is read first as its bank wrote it: its own amount is the one changed.
+ */
+export async function saveOperation(t: TransactionView, currency: string, patch: Partial<TransactionInput>) {
+  const base = t.originalCurrency || t.currency !== currency ? await api.tx.get(t.id) : t
+  const input: TransactionInput = {
+    date: base.date, amount: base.amount, brand: base.brand, categoryId: base.categoryId, accountId: base.accountId,
+    note: base.note || null, earned: base.earned ?? null, ...patch,
+  }
+  await api.tx.update(t.id, input, false)
+}
+
+export function HeaderButton({ label, active, onClick, right = false }: { label: string; active?: boolean; onClick: (e: React.MouseEvent<HTMLElement>) => void; right?: boolean }) {
   return (
-    <button className={active ? 'p-head-button p-on' : 'p-head-button'} onClick={onClick}>
+    <button className={active ? 'p-head-button p-on' : 'p-head-button'} onClick={onClick} style={right ? { marginLeft: 0, marginRight: -6 } : undefined}>
       {label}
       {active ? <Glyph icon={FilterAlt} size={15} style={{ marginLeft: 2 }} /> : <Glyph icon={ExpandMore} size={18} />}
     </button>
@@ -39,7 +53,7 @@ function useLazy<T>(make: () => T, deps: unknown[]): () => T {
 
 const NO_CHOICES: Choice[] = []
 
-function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: () => string[]; onSaved: (changed: number, brand: string) => void }) {
+export function BrandCell({ tx, brands, onSaved, wrap = false }: { tx: TransactionView; brands: () => string[]; onSaved: (changed: number, brand: string) => void; wrap?: boolean }) {
   const { fail } = useApp()
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(tx.brand)
@@ -88,7 +102,7 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: () =>
   }
   return (
     <div className="p-brand-box">
-      <div className="p-brand" onClick={() => setEditing(true)}>
+      <div className={wrap ? 'p-brand p-wrap' : 'p-brand'} onClick={() => setEditing(true)}>
         {tx.brand}
       </div>
     </div>
@@ -96,7 +110,7 @@ function BrandCell({ tx, brands, onSaved }: { tx: TransactionView; brands: () =>
 }
 
 /** What the lines of a table do: the table's own functions. */
-interface RowActs { setCategory: (t: TransactionView, id: string) => void; learned: (changed: number, what: string) => void; onEdit: (t: TransactionView) => void; brands: () => string[] }
+interface RowActs { setCategory: (t: TransactionView, id: string) => void; learned: (changed: number, what: string) => void; onEdit: (t: TransactionView) => void; brands: () => string[]; update: (t: TransactionView, patch: Partial<TransactionInput>) => void }
 
 /** One line of the table (drawn again only when its operation or the table's settings change). */
 const TxRow = memo(function TxRow({ t, currency, frequency, act }: { t: TransactionView; currency: string; frequency: boolean; act: RowActs }) {
@@ -105,18 +119,21 @@ const TxRow = memo(function TxRow({ t, currency, frequency, act }: { t: Transact
   const transfer = category(t.categoryId).kind === 'transfer'
   return (
     <tr className="row">
-      <td className="tnum" style={{ color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}>{formatDate(t.date, settings.dateFormat)}</td>
+      <td className="tnum" style={{ color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}><DateCell date={t.date} label={formatDate(t.date, settings.dateFormat)} onPick={(date) => act.update(t, { date })} /></td>
       <td><CategoryPill id={t.categoryId} onChange={(id) => act.setCategory(t, id)} /></td>
       <td><BrandCell tx={t} brands={act.brands} onSaved={act.learned} /></td>
       <td><TagCell operationId={t.id} own={t.ownTags} all={t.tags} categoryName={category(t.categoryId).name} /></td>
       {frequency && <td style={{ color: theme.palette.text.secondary }}>{t.recurring}</td>}
       <td style={{ textAlign: 'right' }} data-amount>
-        {t.currency !== currency ? (
-          // No rate for its day: in its own currency, outside the totals.
-          <span className="p-muted" title={`No ${t.currency} rate for this day: left out of the totals`}>
-            {moneyBeside(t.amount, t.currency, currency, { sign: true })}
-          </span>
-        ) : <Money value={t.amount} currency={currency} sign muted={transfer} />}
+        {/* Typed again in place: an amount converted from another currency is typed as its bank wrote it. */}
+        <AmountCell value={t.amount} editValue={t.original ?? undefined} onSave={(amount) => act.update(t, { amount })}>
+          {t.currency !== currency ? (
+            // No rate for its day: in its own currency, outside the totals.
+            <span className="p-muted" title={`No ${t.currency} rate for this day: left out of the totals`}>
+              {moneyBeside(t.amount, t.currency, currency, { sign: true })}
+            </span>
+          ) : <Money value={t.amount} currency={currency} sign muted={transfer} />}
+        </AmountCell>
         {t.originalCurrency && t.original != null && (
           <div data-original className="p-body1 tnum p-original" title={t.rate ? `1 ${t.originalCurrency} = ${t.rate} ${currency}` : undefined}>
             {moneyBeside(t.original, t.originalCurrency, currency, { sign: true })}
@@ -140,7 +157,7 @@ export const Pager = memo(function Pager({ count, page, onChange }: { count: num
  * brands and tags each have a filter (all, none, one or any of them); the dates also their format and order.
  * Drawn again only when what it shows changes.
  */
-export const TransactionTable = memo(function TransactionTable({ keep, transactions, currency, paged, onEdit, frequency = false, empty = 'No operations in this period' }: {
+export const TransactionTable = memo(function TransactionTable({ keep, transactions, currency, paged, onEdit, frequency = false, empty = 'No operations in this period', noun = 'operation' }: {
   /** Where the table's filters, order and page are kept while the period is away from the screen. */
   keep: string
   transactions: TransactionView[]
@@ -150,6 +167,8 @@ export const TransactionTable = memo(function TransactionTable({ keep, transacti
   /** Adds the "Comes back" column (recurring payments and income). */
   frequency?: boolean
   empty?: string
+  /** What one line is, for the count under the table ("recurring payment": 12 recurring payments). */
+  noun?: string
 }) {
   const { settings, setSetting, info, category, tag, notify, fail, dataChanged, askScope } = useApp()
   const [dateMenu, setDateMenu] = useState<HTMLElement | null>(null)
@@ -163,6 +182,9 @@ export const TransactionTable = memo(function TransactionTable({ keep, transacti
   const [hiddenBrands, setHiddenBrands] = useKept(keep + ':brands', NONE_HIDDEN)
   const [hiddenDates, setHiddenDates] = useKept(keep + ':dates', NONE_HIDDEN)
   const [page, setPage] = useKept(keep + ':page', 1)
+  const [amountMenu, setAmountMenu] = useState<HTMLElement | null>(null)
+  const [amountFilter, setAmountFilter] = useKept(keep + ':amount', NO_AMOUNT_FILTER)
+  const [amountSort, setAmountSort] = useKept<AmountSort>(keep + ':amountSort', 'none')
   const pageSize = 25
 
   // The values of each filter (with how many operations have them) are worked out only when its menu opens or while
@@ -185,18 +207,20 @@ export const TransactionTable = memo(function TransactionTable({ keep, transacti
   const brands = useLazy(() => allBrands().map((c) => c.key), [allBrands])
 
   // The operations the filters let through (all of them when no filter hides anything).
-  const filtering = hiddenCategories.size > 0 || hiddenBrands.size > 0 || hiddenDates.size > 0 || hiddenTags.size > 0
+  const filtering = hiddenCategories.size > 0 || hiddenBrands.size > 0 || hiddenDates.size > 0 || hiddenTags.size > 0 || amountFiltering(amountFilter)
   const rows = useMemo(() => !filtering ? transactions
-    : transactions.filter((t) => !hiddenCategories.has(t.categoryId) && !hiddenBrands.has(t.brand) && !hiddenDates.has(t.date) && shownByTags(t.tags, hiddenTags)),
-  [transactions, filtering, hiddenCategories, hiddenBrands, hiddenDates, hiddenTags])
+    : transactions.filter((t) => !hiddenCategories.has(t.categoryId) && !hiddenBrands.has(t.brand) && !hiddenDates.has(t.date) && shownByTags(t.tags, hiddenTags) && amountPasses(amountFilter, t.amount)),
+  [transactions, filtering, hiddenCategories, hiddenBrands, hiddenDates, hiddenTags, amountFilter])
 
   const pages = Math.max(1, Math.ceil(rows.length / pageSize))
   // The lines of the page shown, newest first or oldest first: only those are taken from the list.
   const visible = useMemo(() => {
     const n = rows.length
     const [start, end] = paged ? [(Math.min(page, pages) - 1) * pageSize, Math.min(page, pages) * pageSize] : [0, n]
+    // Ordered by amount: the whole list sorted, then the page taken from it.
+    if (amountSort !== 'none') return byAmount(rows, amountSort, (t) => t.amount).slice(start, end)
     return newestFirst ? rows.slice(Math.max(0, n - end), n - start).reverse() : rows.slice(start, end)
-  }, [rows, paged, page, pages, newestFirst])
+  }, [rows, paged, page, pages, newestFirst, amountSort])
 
   // The lines appear five at a time, paced to the screen with every other piece of the page (see pace).
   const table = useRef<HTMLTableElement>(null)
@@ -221,15 +245,27 @@ export const TransactionTable = memo(function TransactionTable({ keep, transacti
     }
   }
 
+  // A date or an amount changed in place: the operation saved with it, as its bank wrote it (not converted).
+  const update = async (t: TransactionView, patch: Partial<TransactionInput>) => {
+    try {
+      await saveOperation(t, currency, patch)
+      notify('Operation updated')
+      dataChanged()
+    } catch (e) {
+      fail(e)
+    }
+  }
+
   // What a line does (change its category, its brand, open it), the same functions from one drawing to the next: a
   // line is drawn again only when it changes.
-  const latest = useRef({ setCategory, learned, onEdit, brands })
-  useLayoutEffect(() => { latest.current = { setCategory, learned, onEdit, brands } })
+  const latest = useRef({ setCategory, learned, onEdit, brands, update })
+  useLayoutEffect(() => { latest.current = { setCategory, learned, onEdit, brands, update } })
   const act = useMemo<RowActs>(() => ({
     setCategory: (t, id) => void latest.current.setCategory(t, id),
     learned: (n, what) => latest.current.learned(n, what),
     onEdit: (t) => latest.current.onEdit(t),
     brands: () => latest.current.brands(),
+    update: (t, patch) => void latest.current.update(t, patch),
   }), [])
 
   // A filter changed: back to the first page.
@@ -254,7 +290,7 @@ export const TransactionTable = memo(function TransactionTable({ keep, transacti
             <th><HeaderButton label="Brand Name" active={hiding(hiddenBrands, brandChoices)} onClick={(e) => { setBrandMenu(e.currentTarget); setBrandMade(true) }} /></th>
             <th><HeaderButton label="Tags" active={hiding(hiddenTags, tagFilter)} onClick={(e) => { setTagMenu(e.currentTarget); setTagMade(true) }} /></th>
             {frequency && <th>Comes back</th>}
-            <th className="p-right">Amount ({currency})</th>
+            <th className="p-right"><HeaderButton right label={`Amount (${currency})`} active={amountFiltering(amountFilter) || amountSort !== 'none'} onClick={(e) => setAmountMenu(e.currentTarget)} /></th>
             <th />
           </tr>
         </thead>
@@ -269,12 +305,14 @@ export const TransactionTable = memo(function TransactionTable({ keep, transacti
           )}
         </tbody>
       </table>
-      {paged && pages > 1 && drawnRows >= visible.length && (
+      {/* How many lines the table has (with its filters), and its pages. */}
+      {drawnRows >= visible.length && (
         <div className="p-pager">
-          <p className="p-body2">{plural(rows.length, 'operation')}</p>
-          <Pager count={pages} page={Math.min(page, pages)} onChange={setPage} />
+          <p className="p-body2" data-table-count>{plural(rows.length, noun)}</p>
+          {paged && pages > 1 && <Pager count={pages} page={Math.min(page, pages)} onChange={setPage} />}
         </div>
       )}
+      <AmountMenu anchor={amountMenu} onClose={() => setAmountMenu(null)} filter={amountFilter} setFilter={(f) => { setAmountFilter(f); setPage(1) }} sort={amountSort} setSort={(s) => { setAmountSort(s); setPage(1) }} />
 
       {dateMade && <Menu anchorEl={dateMenu} open={dateMenu !== null} onClose={() => setDateMenu(null)} slotProps={{ paper: { sx: { maxHeight: 560 } } }}>
         {info.dateFormats.map((f) => (

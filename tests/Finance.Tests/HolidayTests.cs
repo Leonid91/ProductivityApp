@@ -346,11 +346,12 @@ public class HolidayTests
     }
 
     [Fact]
-    public void The_net_salary_per_hour_and_per_year_from_the_business_days_in_the_display_currency()
+    public void The_net_salary_per_day_hour_and_year_from_the_working_days_holidays_paid_in_the_display_currency()
     {
         using var s = new TempStore();
         var weekend = "6,7";
-        var h = new Holidays(s.Db, () => weekend);
+        string? hours = null;
+        var h = new Holidays(s.Db, () => weekend, () => hours);
         h.Save("ca", Utf8(FederalJson(2026)), Downloaded);
         h.Save("qc", Utf8(QuebecJson(2026)), Downloaded);
         var bank = s.Db.AddBank(new Bank { Name = "Banque Exemple", System = BankingSystem.NorthAmerica, Currency = "CAD" });
@@ -363,19 +364,24 @@ public class HolidayTests
         rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2026-12-01,1.5000,"));
         SalaryRate Salary(string currency) => s.Summaries.Report(new(2026, 12, 1), new(2026, 12, 31), Granularity.Month, currency, rates, h).Salary!;
 
-        // 4,000 of salary (not the refund) over December's 21 business days of 8 hours: 4,000 / 168 = 23.81 an hour.
+        // 4,000 of salary (not the refund) over December's 23 days Monday to Friday: Christmas and the day off for
+        // Boxing Day are paid, so they count. 4,000 / 23 = 173.91 a day; 8 hours a day: 4,000 / 184 = 21.74 an hour.
         var dec = Salary("CAD");
-        Assert.Equal((4000m, 21, 8m, 23.81m), (dec.Net, dec.BusinessDays, dec.HoursPerDay, dec.PerHour));
-        // 2026: 261 days Monday to Friday, less New Year's Day, Saint-Jean-Baptiste, Remembrance Day, Christmas and the
-        // day off for Boxing Day: 256. 4,000 / 21 x 256 = 48,761.90 a year.
-        Assert.Equal((256m, 48761.90m), (dec.YearBusinessDays, dec.PerYear));
+        Assert.Equal((4000m, 23, 8m, 173.91m, 21.74m), (dec.Net, dec.WorkingDays, dec.HoursPerDay, dec.PerDay, dec.PerHour));
+        // 2026: 261 days Monday to Friday, holidays included. 4,000 / 23 x 261 = 45,391.30 a year.
+        Assert.Equal((261m, 45391.30m), (dec.YearWorkingDays, dec.PerYear));
         // In euros: every salary converted at its day's rate (1,333.33 each), the same days.
         var eur = Salary("EUR");
-        Assert.Equal((2666.66m, 15.87m), (eur.Net, eur.PerHour));
-        // A four-day week (Friday to Sunday off): 40 hours over 4 days, 10 a day; December's 18 business days.
+        Assert.Equal((2666.66m, 115.94m, 14.49m), (eur.Net, eur.PerDay, eur.PerHour));
+        // 37.5 hours a week entered: 7.5 a day, 4,000 / 172.5 = 23.19 an hour; the daily pay is the same.
+        hours = "37.5";
+        var shorter = Salary("CAD");
+        Assert.Equal((7.5m, 173.91m, 23.19m, 37.5m), (shorter.HoursPerDay, shorter.PerDay, shorter.PerHour, shorter.HoursPerWeek));
+        hours = null;
+        // A four-day week (Friday to Sunday off): 40 hours over 4 days, 10 a day; December's 19 days Monday to Thursday.
         weekend = "5,6,7";
         var four = Salary("CAD");
-        Assert.Equal((18, 10m, 22.22m), (four.BusinessDays, four.HoursPerDay, four.PerHour));
+        Assert.Equal((19, 10m, 210.53m, 21.05m), (four.WorkingDays, four.HoursPerDay, four.PerDay, four.PerHour));
         // No salary in a period: nothing said.
         Assert.Null(s.Summaries.Report(new(2026, 11, 1), new(2026, 11, 30), Granularity.Month, "CAD", rates, h).Salary);
     }

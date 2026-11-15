@@ -16,6 +16,7 @@ import { FileBrowser } from '../components/FileBrowser'
 import { ConfirmDialog, PageHeader, SectionCard } from '../components/common'
 import { useRowOrder } from '../components/order'
 import { ROW_ACTIONS_WIDTH, RowActions } from '../components/RowActions'
+import { TextCell } from '../components/amounts'
 
 /** An imported statement changed from its pencil: the bank and the name of its account, and the account's currency. */
 function StatementDialog({ statement, onClose }: { statement: StatementInfo | null; onClose: () => void }) {
@@ -306,8 +307,10 @@ export function ImportPage() {
               {templateOrder.rows.map((t) => (
                 <TableRow key={t.id} hover {...templateOrder.rowProps(t)}>
                   {templateOrder.handle(t)}
-                  <TableCell>{t.name}</TableCell>
-                  <TableCell sx={{ color: 'text.secondary' }}>“{t.matchText}”</TableCell>
+                  <TableCell><TextCell value={t.name} label="Template name" onSave={(name) => void api.templates.save({ ...t, name }).then(() => { notify('Template saved'); reloadLists() }, fail)} /></TableCell>
+                  <TableCell sx={{ color: 'text.secondary' }}>
+                    <TextCell value={t.matchText} label="Recognised by" maxLength={200} onSave={(matchText) => void api.templates.save({ ...t, matchText }).then(() => { notify('Template saved'); reloadLists() }, fail)}>“{t.matchText}”</TextCell>
+                  </TableCell>
                   <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
                     <RowActions editLabel={`Edit the template ${t.name}`} onEdit={() => setEditingTemplate(t)} onDelete={() => setConfirm({
                       title: `Delete the template ${t.name}?`,

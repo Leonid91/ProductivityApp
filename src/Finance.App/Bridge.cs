@@ -23,8 +23,18 @@ internal sealed class Bridge
     private readonly Dictionary<string, Func<JsonElement, Task<object?>>> _methods = new(StringComparer.Ordinal);
     private readonly ActionLog _actions;
 
-    /// <summary>Requests not written to the log: the log's own reading and the window's entries (written as they are).</summary>
-    private static readonly HashSet<string> Unlogged = ["logs.read", "logs.entry", "logs.write"];
+    /// <summary>
+    /// Requests that only read (or move the window by hand): not written to the log when they succeed, so it holds the
+    /// actions (what changes something) and every failure. The log's own requests are never written.
+    /// </summary>
+    private static readonly HashSet<string> Reads = [
+        "logs.read", "logs.entry", "logs.write", "logs.watch", "app.init", "app.ready", "window.drag", "window.resize",
+        "periods.index", "periods.report", "periods.operations", "periods.summary",
+        "holidays.calendars", "holidays.presets", "holidays.total", "holidays.list",
+        "rates.status", "rates.sources", "rates.banks", "rates.currencies", "rates.pair",
+        "tx.get", "tx.sameOnDay", "brands.list", "tags.list", "banks.list", "accounts.list", "statements.list", "templates.list",
+        "fs.places", "fs.list", "report.defaults", "import.page", "import.preview"];
+    private static readonly HashSet<string> Unlogged = ["logs.read", "logs.entry", "logs.write", "logs.watch"];
 
     public Bridge(CoreWebView2 web, Control ui, ActionLog actions)
     {
@@ -74,7 +84,7 @@ internal sealed class Bridge
             var reply = JsonSerializer.Serialize(new { id, ok = true, result }, Json);
             Reply(reply);
             // In full: the request as received and the answer as sent.
-            if (!Unlogged.Contains(method)) _actions.Write("info", "engine", method, DateTime.Now, Started(started), "\nrequest: ", raw, "\nanswer: ", reply);
+            if (!Reads.Contains(method)) _actions.Write("info", "engine", method, DateTime.Now, Started(started), "\nrequest: ", raw, "\nanswer: ", reply);
         }
         catch (Exception ex)
         {

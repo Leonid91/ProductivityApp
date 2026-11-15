@@ -931,3 +931,56 @@ real app with `tools/e2e/perf.mjs`.
   clearing, moving, older log, restart); the end-to-end check reads the raw entries (a click, a whole request and
   answer, a failure's stack, a handled download failure's exception), opens a long entry, presses a key with the page open, clears the logs from under the
   table and moves the file through the interface.
+
+## November 14th, 2026 - Periods fold to their summaries, tables edited in place - Commit 40
+
+### Added
+- Periods: every month (year, period) folds down to its summary, and every bank in it. Folded, a period shows the
+  summary of every bank together: Earnings, Expenses, Balance and, under the balance, Expenses / earnings (whether
+  there is one bank or several). Unfolded: that summary first ("All banks"), then each bank folded to its own summary;
+  a bank unfolds to its tables or charts. "Unfold everything" / "Fold everything", in the bar that stays at the top of
+  the screen. This replaces the Summary view. Periods start folded.
+- Every table of the statements folds from its heading, which says how many operations it holds ("7 operations"); its
+  title stays selectable. The table of other spending is named "Non-recurring expenses", with its total. Under every
+  table, how many lines it shows with its filters, named ("44 non-recurring expenses", "5 recurring payments",
+  "3 income operations", "7 money movements").
+- Amount column of every table of operations: ordered by date (as before), smallest amount first or largest first;
+  filtered greater than, less than or exactly a value (amounts compared by size: 24.14 for −24.14).
+- Tables edited in place as well as with the pencil: dates (a calendar opens), amounts (typed; without a sign the sign
+  stays; an amount converted from another currency is typed as its bank wrote it), descriptions of transfers, names
+  of categories, tags and column templates (brands in Definitions stay as they were).
+- Tags in tables: each tag its own pill with a small cross that takes it off the operation.
+- Analytics: Income and expenses per day (per month beyond a month), two bars side by side, income green and
+  expenses red, each ticked on or off. Under the Income chart, the net salary (the salary alone) per working day,
+  per hour and per year: every day but the weekend is a working day (holidays are paid), hours from Settings.
+- Expenses per category: "Selected total" (the categories ticked, added together; changes with the ticks) and "Total"
+  (every expense, unticked at first, never added to the selected total); a point per month beyond a month.
+- Calendar: an Exchange rate card under the day: two currencies found as they are typed, an arrow turned by a click
+  (CAD → EUR: one CAD in EUR; ← one EUR in CAD); the rate of the chosen day, and every day's on the calendar, from the
+  central bank chosen in Settings.
+- Settings > General: an Analytics card (hours worked per week, 40 at first); a Logs card under Data opens the logs
+  (they left the left menu). "Show all data in pie charts" split in two: Expenses per category pie (on at first),
+  Expenses per brand pie (off at first).
+
+### Fixed
+- Categories: a new subcategory was drawn at the bottom of the list (under the last category, Medical emergencies)
+  instead of under its parent, once rows had been dragged: the tree was sorted flat by the saved order. Every level
+  keeps its parent now.
+- Escape in the amount filter's field now closes its menu.
+
+### Changed
+- Earnings, then Expenses, then Balance everywhere (periods, calendar, PDF report).
+- Recurring payments, rent excluded: under the recurring payments table. Analytics no longer repeats the totals, nor
+  the two ratio boxes.
+- The transfers table: its header has the colour of its box; descriptions in full, on several lines.
+- Calendar: the month's totals as small boxes in the periods' colours; the day no longer repeats what it spent.
+- Logs: the actions (what changes something), pages opened, messages, every failure and error; no longer every click,
+  key, scroll, or request that only reads.
+- Wider pages (periods and calendar); a thicker, darker scrollbar.
+- Bars of a period longer than a month are months (no longer days up to 62 days, years beyond 3 years).
+- Brand and category pies: checked with real data that every expense is in both once (a part of Groceries missing
+  from the main shop's slice is another shop, a slice of its own). A unit test keeps it so for any data.
+- Tests: 275 unit tests (salary per day and hour with holidays paid and the hours set, pair of rates day by day,
+  both pies counting every expense once), `npm test` in ui (selected total and total; shown to fail when the selected
+  total is counted into the total). The real app checked off-screen on a copy of real data: 40 of 40. The
+  end-to-end suite (tools/e2e/run.mjs) was not updated for the folded periods and was not run.

@@ -12,6 +12,7 @@ import { ConfirmDialog, SectionCard, useCategoryColor, useCategorySections } fro
 import { useRowOrder, type TreeEntry } from '../components/order'
 import { TagSelect } from '../components/tags'
 import { RowActions, quietEdit } from '../components/RowActions'
+import { TextCell } from '../components/amounts'
 
 export const palette = ['#e53935', '#d81b60', '#8e24aa', '#5e35b1', '#3949ab', '#1e88e5', '#0288d1', '#00897b', '#43a047', '#689f38', '#afb42b', '#f9a825', '#fb8c00', '#f4511e', '#6d4c41', '#757575']
 
@@ -125,7 +126,16 @@ export function CategoriesPanel() {
   const keyOf = useCallback((e: TreeEntry) => e.c.id, [])
   const parentOf = useMemo(() => new Map(tree.map((e) => [e.c.id, e.c.parentId])), [tree])
   // Rows are moved among the categories of the same parent; "Inside" moves one to another parent.
-  const order = useRowOrder('categories', tree, keyOf, (a, b) => parentOf.get(a) === parentOf.get(b))
+  const order = useRowOrder('categories', tree, keyOf, (a, b) => parentOf.get(a) === parentOf.get(b), true)
+
+  const rename = async (c: Category, name: string) => {
+    try {
+      setCategories(await api.categories.update({ id: c.id, name, parentId: c.parentId, color: c.color }))
+      notify(`${name} saved`)
+    } catch (e) {
+      fail(e)
+    }
+  }
 
   const remove = async (c: Category) => {
     try {
@@ -168,7 +178,9 @@ export function CategoriesPanel() {
                         <Box sx={{ width: 30, height: 30, borderRadius: '10px', display: 'grid', placeItems: 'center', flex: '0 0 30px', bgcolor: color ? `${color}22` : 'action.hover' }}>
                           <CategoryIcon name={c.icon} sx={{ fontSize: 17, color: color ?? 'text.secondary' }} />
                         </Box>
-                        <Typography variant="body2" sx={{ fontWeight: depth === 0 ? 600 : 520, color: color ?? 'text.primary' }}>{c.name}</Typography>
+                        <TextCell value={c.name} label="Category name" onSave={(name) => void rename(c, name)}>
+                          <Typography variant="body2" component="span" sx={{ fontWeight: depth === 0 ? 600 : 520, color: color ?? 'text.primary' }}>{c.name}</Typography>
+                        </TextCell>
                       </Box>
                     </TableCell>
                     <TableCell padding="none" align="right" sx={{ whiteSpace: 'nowrap', pr: 0.5 }}>

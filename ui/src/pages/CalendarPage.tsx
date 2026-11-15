@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Box, Button, IconButton, Typography, useTheme } from '@mui/material'
+import { Autocomplete, Box, Button, IconButton, TextField, Tooltip, Typography, useTheme } from '@mui/material'
+import East from '@mui/icons-material/EastRounded'
+import West from '@mui/icons-material/WestRounded'
 import ChevronLeft from '@mui/icons-material/ChevronLeftRounded'
 import ChevronRight from '@mui/icons-material/ChevronRightRounded'
 import Add from '@mui/icons-material/AddRounded'
@@ -10,9 +12,9 @@ import classicThemePlugin from '@fullcalendar/react/themes/classic'
 import '@fullcalendar/react/skeleton.css'
 import '@fullcalendar/react/themes/classic/theme.css'
 import '@fullcalendar/react/themes/classic/palette.css'
-import { api, globalTransactions, type Holiday, type PeriodSummary, type TransactionView } from '../api'
+import { api, globalTransactions, type Holiday, type PeriodSummary, type RateUse, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { daysInMonth, iso, money, moneyBeside, monthName, parts, today } from '../format'
+import { daysInMonth, formatDate, iso, money, moneyBeside, monthName, parts, today } from '../format'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { Money, useCategoryColor } from '../components/common'
 import { TransactionDialog } from '../components/TransactionDialog'
@@ -24,13 +26,85 @@ function addDays(day: string, n: number): string {
   return iso(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate())
 }
 
+
+/** The month's totals as small boxes, in the colours of the periods: earnings, expenses, balance. */
+function MonthTotal({ label, value, color, bg }: { label: string; value: string; color?: string; bg: string }) {
+  return (
+    <Box data-month-total={label} sx={{ borderRadius: '12px', px: 1.25, py: 0.5, bgcolor: bg, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
+      <Typography sx={{ fontSize: 11.5, fontWeight: 520, color: 'text.secondary' }}>{label}</Typography>
+      <Typography className="tnum" sx={{ fontSize: 15, fontWeight: 650, letterSpacing: '-0.01em', color }}>{value}</Typography>
+    </Box>
+  )
+}
+
+/** "CAD>EUR": what one CAD is worth in EUR; "CAD<EUR": what one EUR is worth in CAD (the arrow turned). */
+function parsePair(setting: string | undefined, currency: string): { left: string; right: string; forward: boolean } {
+  const m = /^([A-Z]{3})([<>])([A-Z]{3})$/.exec(setting ?? '')
+  if (m) return { left: m[1], right: m[3], forward: m[2] === '>' }
+  return { left: currency, right: currency === 'EUR' ? 'USD' : 'EUR', forward: true }
+}
+
+const rateText = (r: number) => r.toLocaleString('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+
+/**
+ * The exchange rate of two currencies, chosen in lists that find a currency as it is typed; the arrow between them
+ * says which way (CAD → EUR: one CAD in EUR), turned by a click. The rate of the day chosen is written here, and every
+ * day's on the calendar. The rates are those of the central bank chosen in Settings.
+ */
+function RatesCard({ pair, currencies, onPair, rates, day, source }: {
+  pair: { left: string; right: string; forward: boolean }
+  currencies: string[]
+  onPair: (p: { left: string; right: string; forward: boolean }) => void
+  rates: Map<string, RateUse>
+  day: string
+  source: string
+}) {
+  const { settings } = useApp()
+  const [from, to] = pair.forward ? [pair.left, pair.right] : [pair.right, pair.left]
+  const r = rates.get(day)
+  const pick = (side: 'left' | 'right') => (
+    <Autocomplete
+      data-rate-currency={side}
+      size="small"
+      disableClearable
+      autoHighlight
+      options={currencies}
+      value={pair[side]}
+      onChange={(_, v) => { if (v) onPair({ ...pair, [side]: v }) }}
+      sx={{ flex: 1, minWidth: 0 }}
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      renderInput={(params) => <TextField {...params} slotProps={{ ...params.slotProps, htmlInput: { ...params.slotProps.htmlInput, 'aria-label': side === 'left' ? 'First currency' : 'Second currency' } }} />}
+    />
+  )
+  return (
+    <Box data-rates-card sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: 3 }}>
+      <Typography variant="h6" sx={{ mb: 1.5 }}>Exchange rate</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        {pick('left')}
+        <Tooltip title={`Show what one ${pair.forward ? pair.right : pair.left} is worth in ${pair.forward ? pair.left : pair.right}`}>
+          <IconButton data-rate-direction={pair.forward ? 'forward' : 'back'} aria-label="Turn the rate around" onClick={() => onPair({ ...pair, forward: !pair.forward })}>
+            {pair.forward ? <East /> : <West />}
+          </IconButton>
+        </Tooltip>
+        {pick('right')}
+      </Box>
+      <Typography data-rate-of-day className="tnum" sx={{ mt: 2, fontSize: 20, fontWeight: 650, letterSpacing: '-0.01em' }}>
+        {from === to ? `1 ${from} = 1 ${to}` : r ? `1 ${from} = ${rateText(r.rate)} ${to}` : 'No rate for this day'}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+        {r && r.rateDay !== r.day ? `Rate published on ${formatDate(r.rateDay, settings.dateFormat)}. ` : ''}{source}
+      </Typography>
+    </Box>
+  )
+}
+
 /**
  * Month calendar of every bank together, in the global display currency: what went out and came in each day; a day
  * opens its operations (an amount converted from another currency shows the amount the bank wrote). The holidays of
  * the checked calendars (Definitions > Holidays) are written on their day.
  */
 export function CalendarPage() {
-  const { settings, dataVersion, fail, category } = useApp()
+  const { settings, setSetting, dataVersion, fail, category } = useApp()
   const colorOf = useCategoryColor()
   // Settings: transfers and card statement payments hidden by default, investments shown.
   const hideMoves = settings.calendarHideTransfers === 'true'
@@ -47,6 +121,23 @@ export function CalendarPage() {
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
   const currency = settings.currency
+  // The exchange rate of two currencies, day by day, with the rates of the central bank chosen in Settings.
+  const pair = parsePair(settings.calendarRates, currency)
+  const [currencies, setCurrencies] = useState<string[]>([])
+  const [rates, setRates] = useState<Map<string, RateUse>>(new Map())
+  const [source, setSource] = useState('')
+  const [rateFrom, rateTo] = pair.forward ? [pair.left, pair.right] : [pair.right, pair.left]
+  useEffect(() => {
+    api.rates.currencies().then(setCurrencies, fail)
+    api.rates.status().then((s) => setSource(s.source ? `Rates of ${s.source}.` : ''), fail)
+  }, [dataVersion, fail])
+  useEffect(() => {
+    const from = iso(month.y, month.m, 1)
+    const to = iso(month.y, month.m, daysInMonth(month.y, month.m))
+    if (rateFrom === rateTo) { setRates(new Map()); return }
+    api.rates.pair(rateFrom, rateTo, addDays(from, -7), addDays(to, 7)).then((list) => setRates(new Map(list.map((r) => [r.day, r]))), () => setRates(new Map()))
+  }, [month, rateFrom, rateTo, dataVersion])
+  const setPair = (p: { left: string; right: string; forward: boolean }) => void setSetting('calendarRates', `${p.left}${p.forward ? '>' : '<'}${p.right}`)
 
   // Start on the latest month that has data, in any bank.
   useEffect(() => {
@@ -88,8 +179,10 @@ export function CalendarPage() {
   const events = useMemo(() => {
     // Holidays first in their day, then what came in, went out and moved.
     const off = merged.map((h, i) => ({ id: `h${i}`, start: h.day, allDay: true, title: h.name, order: 0, extendedProps: { kind: 'holiday', location: h.locations.join(', ') } }))
-    if (!summary) return off
-    return [...off, ...summary.series.flatMap((b) => {
+    // The exchange rate of the day, last.
+    const rated = [...rates.values()].map((r) => ({ id: 'r' + r.day, start: r.day, allDay: true, title: `${r.rate.toLocaleString('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ${rateTo}`, order: 2, extendedProps: { kind: 'rate' } }))
+    if (!summary) return [...off, ...rated]
+    return [...off, ...rated, ...summary.series.flatMap((b) => {
       const moved = (hideMoves ? 0 : b.moved) + (hideCard ? 0 : b.cardPaid) + (hideInvest ? 0 : b.invested)
       return [
         ...(b.earnings > 0 ? [{ id: 'i' + b.key, start: b.key, allDay: true, title: money(b.earnings, currency, { sign: true }), extendedProps: { kind: 'in' } }] : []),
@@ -97,7 +190,7 @@ export function CalendarPage() {
         ...(moved > 0 ? [{ id: 'm' + b.key, start: b.key, allDay: true, title: '⇄ ' + money(moved, currency), extendedProps: { kind: 'move' } }] : []),
       ].map((e) => ({ ...e, order: 1 }))
     })]
-  }, [summary, merged, currency, hideCard, hideMoves, hideInvest])
+  }, [summary, merged, currency, hideCard, hideMoves, hideInvest, rates, rateTo])
   const holidayDays = useMemo(() => new Set(holidays.map((h) => h.day)), [holidays])
   const dayHolidays = merged.filter((h) => h.day === day)
 
@@ -114,7 +207,6 @@ export function CalendarPage() {
 
   const d = parts(day)
   const dayTitle = new Date(Date.UTC(d.y, d.m - 1, d.d)).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
-  const spent = dayTx.filter((t) => t.amount < 0 && category(t.categoryId).kind !== 'transfer').reduce((s, t) => s - t.amount, 0)
 
   const vars = {
     '--fc-classic-background': theme.palette.background.paper,
@@ -132,16 +224,18 @@ export function CalendarPage() {
   } as React.CSSProperties
 
   return (
-    <Box sx={{ maxWidth: 1280, mx: 'auto', pt: 3, pb: 6, display: 'flex', gap: 3, alignItems: 'flex-start' }}>
+    <Box sx={{ maxWidth: 1480, mx: 'auto', pt: 3, pb: 6, display: 'flex', gap: 3, alignItems: 'flex-start' }}>
       <Box sx={{ flex: 1, minWidth: 0, border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
           <Typography variant="h5" sx={{ flex: 1 }}>{monthName(month.m)} {month.y}</Typography>
           {/* The month's totals, every bank together in the display currency. */}
           {summary && (
-            <Box data-month-totals className="tnum" sx={{ display: 'flex', alignItems: 'baseline', gap: 2.25, mr: 1.5, fontSize: 14, color: 'text.secondary', whiteSpace: 'nowrap' }}>
-              <span>Spent <Box component="b" sx={{ color: 'text.primary', fontWeight: 650 }}>{money(summary.expenses, currency)}</Box></span>
-              <span>Earned <Box component="b" sx={{ color: theme.palette.money.positive, fontWeight: 650 }}>{money(summary.earnings, currency)}</Box></span>
-              <span>Balance <Box component="b" sx={{ fontWeight: 650, color: summary.balance > 0 ? theme.palette.money.positive : summary.balance < 0 ? theme.palette.money.negative : 'text.primary' }}>{money(summary.balance, currency, { sign: true })}</Box></span>
+            <Box data-month-totals sx={{ display: 'flex', alignItems: 'center', gap: 1, mr: 1.5 }}>
+              <MonthTotal label="Earnings" value={money(summary.earnings, currency)} bg={theme.palette.money.incomeSoft} />
+              <MonthTotal label="Expenses" value={money(summary.expenses, currency)} bg={theme.palette.money.expenseSoft} />
+              <MonthTotal label="Balance" value={money(summary.balance, currency, { sign: true })}
+                color={summary.balance > 0 ? theme.palette.money.positive : summary.balance < 0 ? theme.palette.money.negative : theme.palette.money.zero}
+                bg={summary.balance === 0 ? theme.palette.surface.sunken : summary.balance > 0 ? theme.palette.money.positiveStrong : theme.palette.money.negativeStrong} />
             </Box>
           )}
           <Button size="small" variant="outlined" onClick={() => { const t = parts(today()); setMonth({ y: t.y, m: t.m }); setDay(today()) }}>Today</Button>
@@ -184,6 +278,10 @@ export function CalendarPage() {
               >
                 {arg.event.title}
               </Box>
+            ) : arg.event.extendedProps.kind === 'rate' ? (
+              <Box data-day-rate={arg.event.startStr.slice(0, 10)} className="tnum" sx={{ width: '100%', px: 0.75, fontSize: 11, fontWeight: 520, textAlign: 'right', color: 'text.secondary' }}>
+                {arg.event.title}
+              </Box>
             ) : (
               <Box
                 className="tnum"
@@ -205,7 +303,8 @@ export function CalendarPage() {
         </Box>
       </Box>
 
-      <Box sx={{ width: 360, flex: '0 0 360px', border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: 3, position: 'sticky', top: 24 }}>
+      <Box sx={{ width: 360, flex: '0 0 360px', position: 'sticky', top: 24, display: 'grid', gap: 3 }}>
+      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
           <Typography variant="h6" sx={{ flex: 1 }}>{dayTitle}</Typography>
           <IconButton aria-label="Add operation" onClick={() => setAdding(true)}><Add /></IconButton>
@@ -215,9 +314,7 @@ export function CalendarPage() {
             {h.name} <Box component="span" sx={{ color: 'text.secondary', fontWeight: 450 }}>· {h.locations.join(', ')}</Box>
           </Typography>
         ))}
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }} className="tnum">
-          {dayTx.length === 0 ? 'No operations' : `${money(spent, currency)} spent`}
-        </Typography>
+        {dayTx.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>No operations</Typography> : <Box sx={{ mb: 1.5 }} />}
         <Box sx={{ display: 'grid', gap: 0.5 }}>
           {dayTx.map((t) => {
             const c = category(t.categoryId)
@@ -250,6 +347,8 @@ export function CalendarPage() {
             )
           })}
         </Box>
+      </Box>
+      <RatesCard pair={pair} currencies={currencies} onPair={setPair} rates={rates} day={day} source={source} />
       </Box>
 
       <TransactionDialog open={editing !== null || adding} tx={editing} brands={brands} defaultDate={day} onClose={() => { setEditing(null); setAdding(false) }} />

@@ -181,11 +181,12 @@ export function CategoryPill({ id, onChange, disabled }: { id: string; onChange?
   )
 }
 
-export function ConfirmDialog({ open, title, body, confirm, danger, onClose, onConfirm }: {
+export function ConfirmDialog({ open, title, body, confirm, cancel = 'Cancel', danger, onClose, onConfirm }: {
   open: boolean
   title: string
   body?: ReactNode
   confirm: string
+  cancel?: string
   danger?: boolean
   onClose: () => void
   onConfirm: () => void
@@ -195,7 +196,7 @@ export function ConfirmDialog({ open, title, body, confirm, danger, onClose, onC
       <DialogTitle>{title}</DialogTitle>
       {body && <DialogContent><Typography color="text.secondary">{body}</Typography></DialogContent>}
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
-        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={onClose}>{cancel}</Button>
         <Button variant="contained" color={danger ? 'error' : 'primary'} onClick={() => { onConfirm(); onClose() }}>{confirm}</Button>
       </DialogActions>
     </Dialog>

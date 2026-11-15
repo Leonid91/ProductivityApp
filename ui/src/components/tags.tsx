@@ -1,13 +1,17 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Autocomplete, Box, Checkbox, Chip, ListItemText, Menu, MenuItem, TextField, Tooltip, useTheme } from '@mui/material'
 import LocalOffer from '@mui/icons-material/LocalOfferOutlined'
+import Close from '@mui/icons-material/CloseRounded'
 import { api, type Tag } from '../api'
 import { useApp } from '../AppContext'
 import { soft } from './common'
-import { Mark } from './plain'
+import { Glyph, Mark } from './plain'
 
-/** A tag as a small pill in its colour (or neutral). Faded when it comes from the operation's category. */
-export function TagChip({ tag, inherited = false }: { tag: Tag; inherited?: boolean }) {
+/**
+ * A tag as a small pill in its colour (or neutral). Faded when it comes from the operation's category. With onRemove,
+ * a small cross on it takes it off.
+ */
+export function TagChip({ tag, inherited = false, onRemove }: { tag: Tag; inherited?: boolean; onRemove?: () => void }) {
   const theme = useTheme()
   const dark = theme.palette.mode === 'dark'
   const color = tag.color
@@ -17,13 +21,19 @@ export function TagChip({ tag, inherited = false }: { tag: Tag; inherited?: bool
   return (
     <span className={inherited ? 'p-tag p-inherited' : 'p-tag'} data-tag={tag.name} style={vars as CSSProperties}>
       {tag.name}
+      {onRemove && (
+        <button className="p-tag-x" data-tag-remove={tag.name} aria-label={`Remove ${tag.name}`} title={`Remove ${tag.name}`} onClick={(e) => { e.stopPropagation(); onRemove() }}>
+          <Glyph icon={Close} size={12} />
+        </button>
+      )}
     </span>
   )
 }
 
 /**
- * The Tag column of an operation: its tags as pills; clicking opens the list of tags, each ticked on or off for this
- * operation. Tags that come from its category are shown ticked and greyed (they are changed on the category).
+ * The Tag column of an operation: its tags, each a pill of its own with a cross that takes it off; clicking beside them
+ * opens the list of tags, each ticked on or off for this operation. Tags that come from its category are shown with a
+ * dashed border, without a cross, and ticked and greyed in the list (they are changed on the category).
  */
 export function TagCell({ operationId, own, all, categoryName }: { operationId: number; own: number[]; all: number[]; categoryName: string }) {
   const { tags, tag, setTagData, fail } = useApp()
@@ -48,10 +58,12 @@ export function TagCell({ operationId, own, all, categoryName }: { operationId: 
   }
   return (
     <>
-      <button className="p-tags" data-tag-cell={operationId} aria-label="Tags" onClick={(e) => { setAnchor(e.currentTarget); setMenuMade(true) }}>
-        {shown.map((t) => <TagChip key={t.id} tag={t} inherited={!ownSet.has(t.id)} />)}
+      <div className="p-tags" role="button" tabIndex={0} data-tag-cell={operationId} aria-label="Tags"
+        onClick={(e) => { setAnchor(e.currentTarget); setMenuMade(true) }}
+        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setAnchor(e.currentTarget); setMenuMade(true) } }}>
+        {shown.map((t) => <TagChip key={t.id} tag={t} inherited={!ownSet.has(t.id)} onRemove={ownSet.has(t.id) ? () => void toggle(t.id) : undefined} />)}
         {shown.length === 0 && <Mark icon={LocalOffer} color={theme.palette.text.disabled} className="tag-add" />}
-      </button>
+      </div>
       {/* Made the first time it opens (a table holds hundreds of these), kept after so it closes as it always did. */}
       {menuMade && <Menu anchorEl={anchor} open={anchor !== null} onClose={() => setAnchor(null)} slotProps={{ paper: { sx: { minWidth: 240, maxHeight: 420 } } }}>
         {tags.length === 0 && (

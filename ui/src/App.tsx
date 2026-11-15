@@ -14,8 +14,6 @@ import LightMode from '@mui/icons-material/LightModeOutlined'
 import DarkMode from '@mui/icons-material/DarkModeOutlined'
 import Settings from '@mui/icons-material/SettingsRounded'
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
-import ReceiptLong from '@mui/icons-material/ReceiptLongRounded'
-import ReceiptLongOutlined from '@mui/icons-material/ReceiptLongOutlined'
 import { api, type InitInfo } from './api'
 import { AppProvider, useApp, type Page } from './AppContext'
 import { makeTheme } from './theme'
@@ -30,7 +28,6 @@ const LogsPage = lazy(() => import('./pages/LogsPage').then((m) => ({ default: m
 
 const nav: { page: Page; label: string; icon: React.ReactNode; active: React.ReactNode }[] = [
   { page: 'periods', label: 'Periods', icon: <DonutLargeOutlined />, active: <DonutLarge /> },
-  { page: 'logs', label: 'Logs', icon: <ReceiptLongOutlined />, active: <ReceiptLong /> },
   { page: 'calendar', label: 'Calendar', icon: <CalendarMonthOutlined />, active: <CalendarMonth /> },
   { page: 'import', label: 'Import', icon: <UploadFileOutlined />, active: <UploadFile /> },
 ]
@@ -92,7 +89,8 @@ function Shell() {
               {dark ? <LightMode /> : <DarkMode />}
             </IconButton>
           </Tooltip>
-          <RailItem label="Settings" icon={page === 'settings' ? <Settings /> : <SettingsOutlined />} selected={page === 'settings'} onClick={() => go('settings')} />
+          {/* The logs are opened from Settings: Settings stays marked while they are shown. */}
+          <RailItem label="Settings" icon={page === 'settings' || page === 'logs' ? <Settings /> : <SettingsOutlined />} selected={page === 'settings' || page === 'logs'} onClick={() => go('settings')} />
         </Box>
         <Box
           ref={scroller}

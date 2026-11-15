@@ -352,6 +352,24 @@ public class ImportOverlapTests
         return (northwind, s.Bank, exemple);
     }
 
+    [Fact]
+    public void The_rate_of_a_currency_pair_each_day_both_ways_the_last_published_on_days_without_one()
+    {
+        using var s = new TempStore();
+        var rates = new ExchangeRates(s.Db);
+        rates.Save(RateSource.Ecb, Encoding.UTF8.GetBytes("Date,CAD,USD,\n2026-10-12,1.6000,1.2000,\n2026-10-09,1.5000,1.0000,\n"));
+        Assert.Equal(["CAD", "EUR", "USD"], rates.Currencies());
+        // Friday 9: 1 CAD = 1 / 1.5 EUR; the weekend keeps Friday's rate (published on the 9th); Monday 12 its own.
+        var days = rates.Daily("CAD", "EUR", new(2026, 10, 8), new(2026, 10, 12));
+        Assert.Equal(["2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"], days.Select(d => d.Day));
+        Assert.Equal([0.666667m, 0.666667m, 0.666667m, 0.625m], days.Select(d => d.Rate));
+        Assert.Equal("2026-10-09", days[2].RateDay);
+        // The other way, and between two currencies other than the euro (through it): 1 USD = 1.6 / 1.2 CAD on the 12th.
+        Assert.Equal(1.5m, rates.Daily("EUR", "CAD", new(2026, 10, 9), new(2026, 10, 9)).Single().Rate);
+        Assert.Equal(1.333333m, rates.Daily("USD", "CAD", new(2026, 10, 12), new(2026, 10, 12)).Single().Rate);
+        Assert.Throws<ArgumentException>(() => rates.Daily("CAD", "EUR", new(2026, 1, 1), new(2026, 12, 31)));
+    }
+
     /// <summary>Invented rates in the European Central Bank's layout (units per euro), newest first.</summary>
     private static ExchangeRates Rates(TempStore s, string csv = "Date,CAD,\n2026-10-12,1.6100,\n2026-10-09,1.6000,\n2026-10-08,1.6000,\n2026-10-07,1.5900,\n")
     {

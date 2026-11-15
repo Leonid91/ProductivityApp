@@ -94,6 +94,9 @@ internal static class Api
         });
         // The sources the person defined (Definitions > Exchange rates): name and address of the file of rates.
         b.Register("rates.sources", _ => s.Rates.Views());
+        // The currencies of the rates in use, and the rate of one currency in another day by day (the calendar).
+        b.Register("rates.currencies", _ => s.Rates.Currencies());
+        b.Register("rates.pair", p => s.Rates.Daily(p.Get<string>("from"), p.Get<string>("to"), ParseDate(p.Get<string>("start")), ParseDate(p.Get<string>("end"))));
         // The central banks whose files the app reads (the choices of a new line of the table).
         b.Register("rates.banks", _ => CentralBank.All);
         b.Register("rates.saveSource", p =>
@@ -409,7 +412,8 @@ internal static class Api
         p.Opt<Granularity?>("granularity") ?? Granularity.Month, s.Setting("currency"), s.Rates, s.Holidays);
 
     private static ReportBuilder.Options ReportOptions(AppServices s) => new(
-        PieShowAll: s.Setting("pieShowAll") != "false",
+        PieShowAll: s.Setting("pieShowAllCategories") != "false",
+        BrandPieShowAll: s.Setting("pieShowAllBrands") == "true",
         Transfers: s.Setting("periodTransfers"),
         TopLevelCategories: s.Setting("chartsTopLevel") != "false");
 

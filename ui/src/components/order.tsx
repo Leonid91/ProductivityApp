@@ -48,11 +48,13 @@ export function categoryTree(categories: Category[], saved: string[]): TreeEntry
  * Rows the person can reorder by dragging their handle; the order is saved. canDrop limits where a row may go
  * (categories: only among the categories of the same parent).
  */
-export function useRowOrder<T>(name: string, items: T[], keyOf: (t: T) => string, canDrop?: (from: string, to: string) => boolean) {
+export function useRowOrder<T>(name: string, items: T[], keyOf: (t: T) => string, canDrop?: (from: string, to: string) => boolean, inOrder = false) {
   const { settings, setSetting } = useApp()
   const theme = useTheme()
   const saved = useMemo(() => savedOrder(settings, name), [settings, name])
-  const rows = useMemo(() => ordered(items, saved, keyOf), [items, saved, keyOf])
+  // Items already in the saved order (a tree, ordered level by level) are kept as they are: sorted flat, a category
+  // never moved would leave its parent for the end of the list.
+  const rows = useMemo(() => (inOrder ? items : ordered(items, saved, keyOf)), [items, saved, keyOf, inOrder])
   const [drag, setDrag] = useState<string | null>(null)
   const [over, setOver] = useState<string | null>(null)
 
