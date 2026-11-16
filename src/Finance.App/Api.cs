@@ -5,7 +5,6 @@ using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Parsing;
 using ProductivityApp.Finance.Reports;
 using ProductivityApp.Finance.Services;
-using ProductivityApp.Finance.Text;
 
 namespace ProductivityApp.Host;
 

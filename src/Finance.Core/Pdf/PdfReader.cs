@@ -39,12 +39,12 @@ public static partial class PdfReader
                 if (words.Count < MinWordsForTextLayer && page.GetImages().Any())
                 {
                     needOcr.Add(pages.Count);
-                    var image = page.GetImages().OrderByDescending(i => i.Bounds.Width * i.Bounds.Height).First();
-                    var covers = image.Bounds.Width * image.Bounds.Height >= 0.6 * page.Width * page.Height;
+                    var image = page.GetImages().OrderByDescending(i => i.BoundingBox.Width * i.BoundingBox.Height).First();
+                    var covers = image.BoundingBox.Width * image.BoundingBox.Height >= 0.6 * page.Width * page.Height;
                     byte[]? bytes = image.TryGetPng(out var png) ? png
                         : image.RawBytes.Length > 3 && image.RawBytes[0] == 0xFF && image.RawBytes[1] == 0xD8 ? image.RawBytes.ToArray() : null;
                     if (covers && bytes is not null)
-                        scans[pages.Count] = (bytes, image.Bounds.Left, h - image.Bounds.Top, image.Bounds.Width, image.Bounds.Height);
+                        scans[pages.Count] = (bytes, image.BoundingBox.Left, h - image.BoundingBox.Top, image.BoundingBox.Width, image.BoundingBox.Height);
                 }
                 pages.Add(new PageWords { Number = page.Number, Width = page.Width, Height = page.Height, Words = words });
             }

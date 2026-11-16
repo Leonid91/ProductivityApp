@@ -87,7 +87,7 @@ public static partial class MoneyFiles
         };
     }
 
-    public static StatementParse ParseQif(byte[] bytes, string fileName, string defaultCurrency, AccountKind? forcedKind)
+    public static StatementParse ParseQif(byte[] bytes, string defaultCurrency, AccountKind? forcedKind)
     {
         var text = CsvStatementReader.Decode(bytes);
         var type = Regex.Match(text, @"!Type:(\w+)", RegexOptions.IgnoreCase) is { Success: true } tm ? tm.Groups[1].Value.ToUpperInvariant() : "BANK";

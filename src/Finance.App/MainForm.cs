@@ -18,7 +18,10 @@ internal sealed class MainForm : Form
     private readonly AppServices _services;
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private Bridge? _bridge;
+#if DEBUG
+    /// <summary>The Vite dev server the interface is loaded from (--dev-url, debug builds only).</summary>
     private static string? _devOrigin;
+#endif
     private FormWindowState _lastState = FormWindowState.Normal;
 
     public MainForm(AppOptions options, AppServices services)
@@ -50,7 +53,11 @@ internal sealed class MainForm : Form
         Deactivate += (_, _) => services.Logs.Info("window", "Form.Deactivate", $"Bounds: {Bounds}\nWindowState: {WindowState}");
     }
 
+#if DEBUG
     public static bool IsDevSource(string source) => _devOrigin is not null && source.StartsWith(_devOrigin, StringComparison.OrdinalIgnoreCase);
+#else
+    public static bool IsDevSource(string source) => false;
+#endif
 
     private void PlaceWindow()
     {
@@ -279,7 +286,9 @@ internal sealed class MainForm : Form
         var path = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
         if (path.Length == 0) path = "index.html";
         var asm = typeof(MainForm).Assembly;
-        var stream = Assets.TryGetValue(path, out var resource) ? asm.GetManifestResourceStream(resource) : null;
+        // The icon the browser asks for by itself is the app's own.
+        var stream = path.Equals("favicon.ico", StringComparison.OrdinalIgnoreCase) ? asm.GetManifestResourceStream("app.ico")
+            : Assets.TryGetValue(path, out var resource) ? asm.GetManifestResourceStream(resource) : null;
         if (stream is null)
         {
             // Unknown paths fall back to the page itself; unknown files with an extension are a 404.

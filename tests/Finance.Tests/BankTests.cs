@@ -1,6 +1,5 @@
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Services;
-using ProductivityApp.Finance.Testing;
 using static ProductivityApp.Finance.Testing.StatementGenerator;
 
 namespace ProductivityApp.Finance.Tests;

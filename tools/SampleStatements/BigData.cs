@@ -83,7 +83,7 @@ internal static class Bench
         var dir = Path.Combine(Path.GetTempPath(), "finances-bench-" + Guid.NewGuid().ToString("N"));
         using (var db = new Database(Path.Combine(dir, "bench.db")))
         {
-            var tx = new TransactionService(db, () => "CAD");
+            var tx = new TransactionService(db);
             var imports = new ImportService(db, () => "CAD", tx);
             var summaries = new SummaryService(db);
             var rows = 0;

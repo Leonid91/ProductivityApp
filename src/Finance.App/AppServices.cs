@@ -1,5 +1,4 @@
 using System.Text.Json;
-using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Storage;
 
@@ -84,7 +83,7 @@ internal sealed class AppServices : IDisposable
         Db = new Database(Path.Combine(DbFolder, DbFile));
         Logs.Info("app", "Database.Open", $"path: {Path.Combine(DbFolder, DbFile)}\nsize: {new FileInfo(Path.Combine(DbFolder, DbFile)).Length} bytes");
         Summaries = new SummaryService(Db);
-        Transactions = new TransactionService(Db, () => Setting("currency"));
+        Transactions = new TransactionService(Db);
         Imports = new ImportService(Db, () => Setting("currency"), Transactions);
         Categories = new CategoryService(Db);
         Tags = new TagService(Db);

@@ -1,4 +1,3 @@
-using System.Globalization;
 using ProductivityApp.Finance.Services;
 
 namespace ProductivityApp.Finance.Tests;

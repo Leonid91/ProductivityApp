@@ -2,7 +2,6 @@ using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Reports;
 using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Storage;
-using ProductivityApp.Finance.Testing;
 using static ProductivityApp.Finance.Testing.StatementGenerator;
 
 namespace ProductivityApp.Finance.Tests;
@@ -21,7 +20,7 @@ public sealed class TempStore : IDisposable
     public TempStore()
     {
         Db = new Database(Path.Combine(_dir, "test.db"));
-        Transactions = new TransactionService(Db, () => "CAD");
+        Transactions = new TransactionService(Db);
         Imports = new ImportService(Db, () => "CAD", Transactions);
         Summaries = new SummaryService(Db);
     }

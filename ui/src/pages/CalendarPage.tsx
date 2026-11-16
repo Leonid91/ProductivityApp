@@ -5,18 +5,12 @@ import West from '@mui/icons-material/WestRounded'
 import ChevronLeft from '@mui/icons-material/ChevronLeftRounded'
 import ChevronRight from '@mui/icons-material/ChevronRightRounded'
 import Add from '@mui/icons-material/AddRounded'
-import FullCalendar from '@fullcalendar/react'
-import dayGridPlugin from '@fullcalendar/react/daygrid'
-import interactionPlugin from '@fullcalendar/react/interaction'
-import classicThemePlugin from '@fullcalendar/react/themes/classic'
-import '@fullcalendar/react/skeleton.css'
-import '@fullcalendar/react/themes/classic/theme.css'
-import '@fullcalendar/react/themes/classic/palette.css'
 import { api, globalTransactions, type Holiday, type PeriodSummary, type RateUse, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { daysInMonth, formatDate, iso, money, moneyBeside, monthName, parts, today } from '../format'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { Money, useCategoryColor } from '../components/common'
+import { MonthGrid, type DayEntry } from '../components/MonthGrid'
 import { TransactionDialog } from '../components/TransactionDialog'
 
 /** The day n days after an ISO day. */
@@ -176,21 +170,55 @@ export function CalendarPage() {
   // The weekend days chosen in Definitions > Holidays (ISO numbers, Monday 1 to Sunday 7), shaded.
   const weekend = useMemo(() => new Set((settings.weekendDays ?? '6,7').split(',').filter(Boolean).map(Number)), [settings.weekendDays])
   const isWeekend = (dow: number) => weekend.has(dow === 0 ? 7 : dow)
-  const events = useMemo(() => {
-    // Holidays first in their day, then what came in, went out and moved.
-    const off = merged.map((h, i) => ({ id: `h${i}`, start: h.day, allDay: true, title: h.name, order: 0, extendedProps: { kind: 'holiday', location: h.locations.join(', ') } }))
-    // The exchange rate of the day, last.
-    const rated = [...rates.values()].map((r) => ({ id: 'r' + r.day, start: r.day, allDay: true, title: `${r.rate.toLocaleString('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ${rateTo}`, order: 2, extendedProps: { kind: 'rate' } }))
+  const entries = useMemo((): DayEntry[] => {
+    // Holidays first in their day, then what came in, went out and moved; the exchange rate of the day last.
+    const off = merged.map((h, i): DayEntry => ({
+      key: `h${i}`, day: h.day, order: 0, text: h.name,
+      content: (
+        <Box
+          data-holiday={h.day}
+          title={`${h.name} · ${h.locations.join(', ')}`}
+          sx={{ width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 11.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'primary.main', bgcolor: dark ? 'rgba(106,165,236,.14)' : 'rgba(36,104,192,.08)' }}
+        >
+          {h.name}
+        </Box>
+      ),
+    }))
+    const rated = [...rates.values()].map((r): DayEntry => {
+      const text = `${r.rate.toLocaleString('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ${rateTo}`
+      return {
+        key: 'r' + r.day, day: r.day, order: 2, text,
+        content: <Box data-day-rate={r.day} className="tnum" sx={{ width: '100%', px: 0.75, fontSize: 11, fontWeight: 520, textAlign: 'right', color: 'text.secondary' }}>{text}</Box>,
+      }
+    })
+    // Income in green, spending in red, money moved between own accounts or invested in black.
+    const amount = (key: string, day: string, kind: 'in' | 'out' | 'move', text: string): DayEntry => ({
+      key, day, order: 1, text,
+      content: (
+        <Box
+          className="tnum"
+          sx={{
+            width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 12, fontWeight: 600, textAlign: 'right',
+            color: kind === 'in' ? theme.palette.money.positive : kind === 'out' ? theme.palette.money.negative : theme.palette.money.zero,
+            bgcolor: kind === 'in' ? (dark ? 'rgba(76,194,106,.12)' : 'rgba(0,99,0,.07)')
+              : kind === 'out' ? (dark ? 'rgba(239,107,107,.12)' : 'rgba(208,59,59,.07)')
+              : (dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)'),
+          }}
+        >
+          {text}
+        </Box>
+      ),
+    })
     if (!summary) return [...off, ...rated]
     return [...off, ...rated, ...summary.series.flatMap((b) => {
       const moved = (hideMoves ? 0 : b.moved) + (hideCard ? 0 : b.cardPaid) + (hideInvest ? 0 : b.invested)
       return [
-        ...(b.earnings > 0 ? [{ id: 'i' + b.key, start: b.key, allDay: true, title: money(b.earnings, currency, { sign: true }), extendedProps: { kind: 'in' } }] : []),
-        ...(b.expenses > 0 ? [{ id: 'e' + b.key, start: b.key, allDay: true, title: money(-b.expenses, currency), extendedProps: { kind: 'out' } }] : []),
-        ...(moved > 0 ? [{ id: 'm' + b.key, start: b.key, allDay: true, title: '⇄ ' + money(moved, currency), extendedProps: { kind: 'move' } }] : []),
-      ].map((e) => ({ ...e, order: 1 }))
+        ...(b.earnings > 0 ? [amount('i' + b.key, b.key, 'in', money(b.earnings, currency, { sign: true }))] : []),
+        ...(b.expenses > 0 ? [amount('e' + b.key, b.key, 'out', money(-b.expenses, currency))] : []),
+        ...(moved > 0 ? [amount('m' + b.key, b.key, 'move', '⇄ ' + money(moved, currency))] : []),
+      ]
     })]
-  }, [summary, merged, currency, hideCard, hideMoves, hideInvest, rates, rateTo])
+  }, [summary, merged, currency, hideCard, hideMoves, hideInvest, rates, rateTo, dark, theme])
   const holidayDays = useMemo(() => new Set(holidays.map((h) => h.day)), [holidays])
   const dayHolidays = merged.filter((h) => h.day === day)
 
@@ -207,21 +235,6 @@ export function CalendarPage() {
 
   const d = parts(day)
   const dayTitle = new Date(Date.UTC(d.y, d.m - 1, d.d)).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
-
-  const vars = {
-    '--fc-classic-background': theme.palette.background.paper,
-    '--fc-classic-border': theme.palette.divider,
-    '--fc-classic-strong-border': theme.palette.divider,
-    '--fc-classic-foreground': theme.palette.text.primary,
-    '--fc-classic-muted-foreground': theme.palette.text.secondary,
-    '--fc-classic-faint-foreground': theme.palette.text.disabled,
-    '--fc-classic-today': dark ? 'rgba(106,165,236,.10)' : 'rgba(36,104,192,.06)',
-    '--fc-classic-highlight': dark ? 'rgba(106,165,236,.16)' : 'rgba(36,104,192,.08)',
-    '--fc-classic-faint': dark ? 'rgba(255,255,255,.03)' : 'rgba(0,0,0,.02)',
-    '--fc-classic-muted': dark ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.04)',
-    '--fc-classic-event': 'transparent',
-    '--fc-classic-event-contrast': theme.palette.text.primary,
-  } as React.CSSProperties
 
   return (
     <Box sx={{ maxWidth: 1480, mx: 'auto', pt: 3, pb: 6, display: 'flex', gap: 3, alignItems: 'flex-start' }}>
@@ -242,65 +255,15 @@ export function CalendarPage() {
           <IconButton aria-label="Previous month" onClick={() => shift(-1)}><ChevronLeft /></IconButton>
           <IconButton aria-label="Next month" onClick={() => shift(1)}><ChevronRight /></IconButton>
         </Box>
-        <Box
-          data-color-scheme={dark ? 'dark' : 'light'}
-          style={vars}
-          sx={{
-            '& .fc': { fontFamily: 'inherit', fontSize: 13 },
-            '& .fc *': { borderColor: `${theme.palette.divider} !important` },
-          }}
-        >
-          <FullCalendar
-            key={`${month.y}-${month.m}`}
-            plugins={[dayGridPlugin, interactionPlugin, classicThemePlugin]}
-            initialView="dayGridMonth"
-            initialDate={iso(month.y, month.m, 1)}
-            headerToolbar={false}
-            firstDay={Number(settings.calendarFirstDay ?? 0)}
-            fixedWeekCount={false}
-            height="auto"
-            events={events}
-            eventDisplay="block"
-            eventOrder="order,title"
-            dayMaxEvents={false}
-            dateClick={(info) => setDay(info.dateStr.slice(0, 10))}
-            eventClick={(info) => { const s = info.event.startStr; if (s) setDay(s.slice(0, 10)) }}
-            dayCellClass={(arg) => {
-              const d = arg.date && iso(arg.date.getFullYear(), arg.date.getMonth() + 1, arg.date.getDate())
-              return [d === day ? 'selected-day' : '', d && holidayDays.has(d) ? 'holiday-day' : '', isWeekend(arg.dow) ? 'weekend-day' : ''].filter(Boolean).join(' ')
-            }}
-            dayHeaderClass={(arg) => (isWeekend(arg.dow) ? 'weekend-head' : '')}
-            eventContent={(arg) => arg.event.extendedProps.kind === 'holiday' ? (
-              <Box
-                data-holiday={arg.event.startStr.slice(0, 10)}
-                title={`${arg.event.title} · ${arg.event.extendedProps.location}`}
-                sx={{ width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 11.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'primary.main', bgcolor: dark ? 'rgba(106,165,236,.14)' : 'rgba(36,104,192,.08)' }}
-              >
-                {arg.event.title}
-              </Box>
-            ) : arg.event.extendedProps.kind === 'rate' ? (
-              <Box data-day-rate={arg.event.startStr.slice(0, 10)} className="tnum" sx={{ width: '100%', px: 0.75, fontSize: 11, fontWeight: 520, textAlign: 'right', color: 'text.secondary' }}>
-                {arg.event.title}
-              </Box>
-            ) : (
-              <Box
-                className="tnum"
-                sx={{
-                  width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 12, fontWeight: 600, textAlign: 'right',
-                  // Income in green, spending in red, money moved between own accounts or invested in black.
-                  color: arg.event.extendedProps.kind === 'in' ? theme.palette.money.positive
-                    : arg.event.extendedProps.kind === 'out' ? theme.palette.money.negative
-                    : theme.palette.money.zero,
-                  bgcolor: arg.event.extendedProps.kind === 'in' ? (dark ? 'rgba(76,194,106,.12)' : 'rgba(0,99,0,.07)')
-                    : arg.event.extendedProps.kind === 'out' ? (dark ? 'rgba(239,107,107,.12)' : 'rgba(208,59,59,.07)')
-                    : (dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)'),
-                }}
-              >
-                {arg.event.title}
-              </Box>
-            )}
-          />
-        </Box>
+        <MonthGrid
+          year={month.y}
+          month={month.m}
+          firstDay={Number(settings.calendarFirstDay ?? 0)}
+          entries={entries}
+          dayClass={(d, dow) => [d === day ? 'selected-day' : '', holidayDays.has(d) ? 'holiday-day' : '', isWeekend(dow) ? 'weekend-day' : ''].filter(Boolean).join(' ')}
+          headClass={(dow) => (isWeekend(dow) ? 'weekend-head' : '')}
+          onDay={setDay}
+        />
       </Box>
 
       <Box sx={{ width: 360, flex: '0 0 360px', position: 'sticky', top: 24, display: 'grid', gap: 3 }}>

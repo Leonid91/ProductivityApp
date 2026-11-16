@@ -31,15 +31,8 @@ public static partial class CsvStatementReader
     {
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
-        try
-        {
-            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
-        }
-        catch (DecoderFallbackException e)
-        {
-            ProductivityApp.Finance.Services.Diagnostics.Report("CsvStatementReader.Decode (not UTF-8: read as Windows-1252)", e);
-            return Encoding.GetEncoding(1252).GetString(bytes);
-        }
+        // Not UTF-8 (many banks export in Windows-1252): read as Windows-1252.
+        return System.Text.Unicode.Utf8.IsValid(bytes) ? Encoding.UTF8.GetString(bytes) : Encoding.GetEncoding(1252).GetString(bytes);
     }
 
     private static char DetectDelimiter(string text)

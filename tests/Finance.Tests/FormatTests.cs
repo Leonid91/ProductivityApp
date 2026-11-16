@@ -4,7 +4,6 @@ using System.Text;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Parsing;
 using ProductivityApp.Finance.Pdf;
-using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Testing;
 
 namespace ProductivityApp.Finance.Tests;
@@ -210,11 +209,11 @@ public class FormatTests
     }
 
     [Fact]
-    public void Unknown_files_are_refused_with_the_list_of_formats()
+    public async Task Unknown_files_are_refused_with_the_list_of_formats()
     {
         using var s = new TempStore();
-        var e = Assert.ThrowsAsync<InvalidDataException>(() => s.Imports.ParseAsync("notes.bin", [1, 2, 3, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13]));
-        Assert.Contains("Excel", e.Result.Message);
+        var e = await Assert.ThrowsAsync<InvalidDataException>(() => s.Imports.ParseAsync("notes.bin", [1, 2, 3, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13]));
+        Assert.Contains("Excel", e.Message);
     }
 
     [Fact]
@@ -258,7 +257,7 @@ public class FormatTests
         Assert.Equal("fees", c.Classify("Service charge MB-Email Money Trf", -1m).CategoryId);
         Assert.Equal("cash", c.Classify("ABM withdrawal Sample Mall 24-7 Sampletown ON", -60m).CategoryId);
         Assert.Equal(Categories.CardPayments, c.Classify("Credit Card/LOC payment", -95m).CategoryId);
-        Assert.Equal(Categories.CardPayments, c.Classify("PAYMENT-THANK YOU SCOTIABANK TRANSIT", 57.96m, account: AccountKind.CreditCard).CategoryId);
+        Assert.Equal(Categories.CardPayments, c.Classify("PAYMENT-THANK YOU SCOTIABANK TRANSIT", 57.96m).CategoryId);
         Assert.Equal("fees", c.Classify("ANNUAL FEE", -39m).CategoryId);
         // "Point of sale purchase" says nothing about the shop: two shops stay two merchants.
         var a = c.Classify("Point of sale purchase Example Furniture Brampton ON", -50m);

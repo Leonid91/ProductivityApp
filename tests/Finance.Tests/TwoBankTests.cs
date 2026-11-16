@@ -511,7 +511,7 @@ public class TwoBankTests
         Same(ofx);
         Assert.Equal(("EUR", a.Closing), (ofx.Currency, ofx.ClosingBalance));
         // Quicken: day/month dates and decimal commas ("-64,23" is minus sixty-four euros twenty-three).
-        Same(MoneyFiles.ParseQif(CaisseEpargneGenerator.Qif(a), "export.qif", "EUR", null));
+        Same(MoneyFiles.ParseQif(CaisseEpargneGenerator.Qif(a), "EUR", null));
     }
 
     [Fact]

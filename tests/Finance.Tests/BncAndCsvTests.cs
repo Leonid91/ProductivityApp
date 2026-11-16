@@ -181,7 +181,7 @@ public class BncAndCsvTests
         var na = new Classifier([], BankingSystem.NorthAmerica);
         Assert.Equal("groceries", na.Classify("Commerce Inconnu", -12m, "Epicerie").CategoryId);
         Assert.Equal(ValueSource.Bank, na.Classify("Commerce Inconnu", -12m, "Epicerie").CategorySource);
-        Assert.Equal("cardpayments", na.Classify("Paiement recu merci!", 120m, "Paiement carte de credit", AccountKind.CreditCard).CategoryId);
+        Assert.Equal("cardpayments", na.Classify("Paiement recu merci!", 120m, "Paiement carte de credit").CategoryId);
         Assert.Equal("cardpayments", na.Classify("PAIEMENT MASTERCARD", -120m).CategoryId);
         Assert.Equal("investments", na.Classify("Paiement de facture", -500m, "Investissements").CategoryId);
         Assert.Equal("otherincome", na.Classify("Paiement des interets", 3.17m, "Revenu d'interets").CategoryId);

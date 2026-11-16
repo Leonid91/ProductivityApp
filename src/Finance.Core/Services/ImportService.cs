@@ -207,7 +207,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         return MoneyFiles.Kind(bytes, fileName) switch
         {
             "OFX" => MoneyFiles.ParseOfx(bytes, defaultCurrency(), kind),
-            "QIF" => MoneyFiles.ParseQif(bytes, fileName, defaultCurrency(), kind),
+            "QIF" => MoneyFiles.ParseQif(bytes, defaultCurrency(), kind),
             _ => CsvStatementReader.Parse(bytes, fileName, defaultCurrency(), kind),
         };
     }
@@ -218,7 +218,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         var kind = draft.Kind ?? draft.Parse.Kind;
         draft.Rows = draft.Parse.Rows.Select((r, i) =>
         {
-            var c = classifier.Classify(r.Label, r.Amount, r.BankCategory, kind);
+            var c = classifier.Classify(r.Label, r.Amount, r.BankCategory);
             return new DraftRow
             {
                 Index = i, Date = r.Date, Label = r.Label, Amount = r.Amount, Balance = r.Balance, MerchantKey = c.MerchantKey, BankCategory = r.BankCategory,

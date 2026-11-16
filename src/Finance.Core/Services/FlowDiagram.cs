@@ -1,6 +1,5 @@
 using System.Text;
 using System.Globalization;
-using ProductivityApp.Finance.Model;
 
 namespace ProductivityApp.Finance.Services;
 
@@ -772,7 +771,7 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
             double ty = v.Vertical ? (Math.Sign(y3 - y0) is var sy && sy != 0 ? sy : 1) : 0;
             var r1 = Math.Clamp(Math.Sqrt((v.X - x0) * (v.X - x0) + (v.Y - y0) * (v.Y - y0)) * 0.45, 28, 160);
             var r2 = Math.Clamp(Math.Sqrt((x3 - v.X) * (x3 - v.X) + (y3 - v.Y) * (y3 - v.Y)) * 0.45, 28, 160);
-            var (a1, a2) = (Room(x0, y0, n0x, n0y, r1), Room(x3, y3, n3x, n3y, r2));
+            var (a1, a2) = (Room(x0, n0x, r1), Room(x3, n3x, r2));
             return new Route(new Bez(x0, y0, x0 + n0x * a1, y0 + n0y * a1, v.X - tx * r1, v.Y - ty * r1, v.X, v.Y),
                 new Bez(v.X, v.Y, v.X + tx * r2, v.Y + ty * r2, x3 + n3x * a2, y3 + n3y * a2, x3, y3));
         }
@@ -784,12 +783,12 @@ public sealed record FlowDiagram(double Width, double Height, List<DiagramNode> 
         var dist = Math.Sqrt((x3 - x0) * (x3 - x0) + (y3 - y0) * (y3 - y0));
         var reach = reachOut ?? Math.Clamp(dist * 0.45, 28, 180);
         // Never further out than the edge of the drawing (a curve bulges about three quarters of its reach).
-        return new Bez(x0, y0, x0 + n0x * Room(x0, y0, n0x, n0y, reach), y0 + n0y * Room(x0, y0, n0x, n0y, reach),
-            x3 + n3x * Room(x3, y3, n3x, n3y, reach), y3 + n3y * Room(x3, y3, n3x, n3y, reach), x3, y3);
+        return new Bez(x0, y0, x0 + n0x * Room(x0, n0x, reach), y0 + n0y * Room(x0, n0x, reach),
+            x3 + n3x * Room(x3, n3x, reach), y3 + n3y * Room(x3, n3x, reach), x3, y3);
     }
 
-    /// <summary>How far a curve may reach from (x, y) along (nx, ny): <paramref name="reach"/>, or less near a side edge of the drawing.</summary>
-    private static double Room(double x, double y, double nx, double ny, double reach)
+    /// <summary>How far a curve may reach from x along nx (across): <paramref name="reach"/>, or less near a side edge of the drawing.</summary>
+    private static double Room(double x, double nx, double reach)
     {
         var free = nx > 0.5 ? W - Margin - 4 - x : nx < -0.5 ? x - Margin - 4 : double.MaxValue;
         return Math.Max(12, Math.Min(reach, free / 0.75));

@@ -133,7 +133,7 @@ if (args.Length >= 2 && args[0] == "inspect")
     try
     {
         using var db = new ProductivityApp.Finance.Storage.Database(Path.Combine(dir, "inspect.db"));
-        var txs = new ProductivityApp.Finance.Services.TransactionService(db, () => "CAD");
+        var txs = new ProductivityApp.Finance.Services.TransactionService(db);
         var imports = new ProductivityApp.Finance.Services.ImportService(db, () => "CAD", txs);
         var draft = await imports.ParseAsync(Path.GetFileName(args[1]), await File.ReadAllBytesAsync(args[1]));
         if (args.Length == 3)

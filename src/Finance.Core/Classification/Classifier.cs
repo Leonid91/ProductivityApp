@@ -68,9 +68,10 @@ public sealed class Classifier
         return f;
     }
 
-    public Classification Classify(string rawLabel, decimal amount, string bankCategory = "", AccountKind account = AccountKind.Bank)
+    public Classification Classify(string rawLabel, decimal amount, string? bankCategory = "")
     {
-        var facts = Facts(rawLabel, bankCategory ?? "");
+        bankCategory ??= "";
+        var facts = Facts(rawLabel, bankCategory);
         var norm = facts.Norm;
         var key = facts.Key;
         var padded = facts.Padded;
@@ -134,7 +135,7 @@ public sealed class Classifier
         }
 
         // A known subscription stays a subscription even when the bank files it under a broad heading
-        // ("Electroniques et logiciels" for a monthly AI or software plan).
+        // ("Electroniques et logiciels" for a monthly software plan).
         if (category is null && amount < 0 && builtIn is not null && builtIn.Brand == brand && builtIn.CategoryId == "subscriptions"
             && BankCategories.Map(bankCategory, amount) is null or "shopping" or "entertainment")
         { category = builtIn.CategoryId; categorySource = ValueSource.BuiltIn; }

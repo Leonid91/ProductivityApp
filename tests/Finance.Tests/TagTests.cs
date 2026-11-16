@@ -1,6 +1,5 @@
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Services;
-using ProductivityApp.Finance.Testing;
 using static ProductivityApp.Finance.Testing.StatementGenerator;
 
 namespace ProductivityApp.Finance.Tests;
@@ -38,7 +37,7 @@ public class TagTests
 
         var op = s.Db.AllTransactions().First(t => t.Amount < 0);
         tags.SetOperationTags(op.Id, [trip.Id]);
-        Assert.Equal([trip.Id], Sum(s).Transactions.Single(t => t.Id == op.Id).Tags);
+        Assert.Equal([trip.Id], Sum(s).Transactions.Single(t => t.Id == op.Id).Tags!);
         tags.Delete(trip.Id);
         Assert.Empty(tags.All());
         Assert.Empty(Sum(s).Transactions.Single(t => t.Id == op.Id).Tags!);
@@ -61,8 +60,8 @@ public class TagTests
         s.Transactions.SetCategory(spent[1].Id, snacks.Id, allOfBrand: false);
         var sum = Sum(s);
         var byId = sum.Transactions.ToDictionary(t => t.Id);
-        Assert.Equal([essentials.Id], byId[spent[0].Id].Tags);
-        Assert.Equal([essentials.Id], byId[spent[1].Id].Tags);
+        Assert.Equal([essentials.Id], byId[spent[0].Id].Tags!);
+        Assert.Equal([essentials.Id], byId[spent[1].Id].Tags!);
         Assert.Empty(byId[spent[0].Id].OwnTags!); // the category's tag is not copied onto the operation
         Assert.DoesNotContain(sum.Transactions, t => t.Id != spent[0].Id && t.Id != spent[1].Id && t.Tags!.Length > 0);
         Assert.Equal(-(spent[0].Amount + spent[1].Amount), sum.TagPie.Single().Amount);

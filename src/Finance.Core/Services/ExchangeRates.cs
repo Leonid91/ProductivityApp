@@ -141,7 +141,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     public List<string> Currencies()
     {
         var source = Source;
-        return [.. Loaded(source).Raw.Keys.Append(source.Base).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+        return [.. Loaded(source).Raw.Keys.Concat(source.Base is { } b ? [b] : []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
     }
 
     /// <summary>The most days <see cref="Daily"/> gives at once (a calendar shows six weeks).</summary>
@@ -358,7 +358,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     }
 
     /// <summary>
-    /// Keeps a source's file of rates downloaded on <paramref name="day"/>, as it is, as the copy in use (see <see
+    /// Keeps a source's file of rates downloaded today, as it is, as the copy in use (see <see
     /// cref="DownloadStore.Save"/>); a file that does not give rates in its bank's layout is refused.
     /// </summary>
     public void Save(RateSource source, byte[] file) => Save(source, file, DateOnly.FromDateTime(DateTime.Now));

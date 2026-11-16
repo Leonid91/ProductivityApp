@@ -993,3 +993,39 @@ real app with `tools/e2e/perf.mjs`.
   fold buttons and no summary boxes: the charts of each bank, then of every bank together; the transfers' charts.
 - Tests: `npm test` in ui 3 of 3. The real app checked off-screen on a copy of real data: Statements folded,
   Analytics General and Transfers unfolded without summaries, Statements folded again on coming back (4 of 4).
+
+## November 15th, 2026 - A clean log, no dead code - Commit 42
+
+### Fixed
+- Calendar: the log recorded "ResizeObserver loop completed with undelivered notifications" as an error each time the
+  calendar's width changed (the window resized, the panel beside it changing). The calendar library (FullCalendar,
+  same in its latest version) measured its rows and week-day headers again and again while the browser was
+  reporting their sizes. The month is now a grid of the app's own, laid out by the browser without measuring, so
+  there is nothing left to report. It looks and behaves as before: checked against the previous version pixel by pixel
+  in six states (a month, a day picked, a six-week month, a narrow window with its smaller text and one-letter week
+  days, today, the other theme): identical. Every amount is still a button (Tab, then Enter or Space picks its day,
+  the same blue outline). A six-week month a few pixels taller than the window fits at once, as the old calendar ended
+  up doing after showing its scrollbar for a second.
+- The log recorded an error at every start: the window asked for its icon (favicon.ico) and got "404 Not Found". The
+  app's own icon is served.
+- Reading a CSV statement that is not in UTF-8 (Windows-1252, as many French banks export) wrote a "Caught exception"
+  warning to the log for every reading of the file: the encoding is now checked instead of tried and failed.
+- Exchange rates: a central bank without a base currency added an empty entry to the list of currencies.
+
+### Removed
+- Code that did nothing: parameters never read (the account kind given to the classifier, the default currency of
+  the operations service, a file name, two coordinates of the flow diagram), a helper left without callers, unneeded
+  imports, a misplaced description, the dev-server address in release builds (debug builds only).
+- FullCalendar and its temporal-polyfill dependency: the calendar's code went from 277 KB to 14 KB, the interface
+  from 1.98 MB to 1.72 MB.
+
+### Changed
+- Every project builds without a warning: the WebView2 package's WPF control (never used by the Windows Forms window,
+  and the cause of a WindowsBase version conflict) is no longer referenced; images of PDF pages are read with the PDF
+  library's current API; a test waits for its result instead of blocking.
+- Tests: 275 unit tests, `npm test` in ui 3 of 3. The real app driven off-screen on a copy of real data (every page,
+  Month, Year, All time and Custom, Statements and Analytics General and Transfers, folded and unfolded, the calendar
+  resized and clicked, 111 fictitious statements of every format read, exchange rates and holidays downloaded,
+  Settings, Logs, both themes): 0 warnings, 0 errors in its log. Every sample statement read by the previous and the
+  new engine: the same readings, line by line, brands and categories included. End-to-end suite (tools/e2e/run.mjs,
+  still not updated for the folded periods): the same 24 of 24 checks on the previous and the new build.

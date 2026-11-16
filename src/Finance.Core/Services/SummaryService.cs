@@ -220,12 +220,6 @@ public sealed class SummaryService(Database db)
     }
 
     /// <summary>
-    /// A period bank by bank, then every bank together, every amount in <paramref name="global"/> (the display
-    /// currency): an operation in another currency is converted at the rate of its day (<see cref="ExchangeRates"/>),
-    /// with every conversion shown. An operation without a rate for its day is listed in its own currency and left
-    /// out of the totals.
-    /// </summary>
-    /// <summary>
     /// The last reports made, kept while nothing they depend on changed (the operations, the settings, the rates, the
     /// holidays, the day): going back to a period, or scrolling back to it, shows it at once.
     /// </summary>
@@ -238,6 +232,12 @@ public sealed class SummaryService(Database db)
     /// <summary>Forgets the reports kept (to measure how long a report takes to make).</summary>
     public void ForgetReports() { lock (_reports) _reports.Clear(); }
 
+    /// <summary>
+    /// A period bank by bank, then every bank together, every amount in <paramref name="global"/> (the display
+    /// currency): an operation in another currency is converted at the rate of its day (<see cref="ExchangeRates"/>),
+    /// with every conversion shown. An operation without a rate for its day is listed in its own currency and left
+    /// out of the totals.
+    /// </summary>
     /// <remarks>The report returned is shared with the next callers asking for the same period: it is never changed.</remarks>
     public PeriodReport Report(DateOnly from, DateOnly to, Granularity g, string global, ExchangeRates rates, Holidays? holidays = null)
     {

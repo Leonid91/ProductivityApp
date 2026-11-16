@@ -1,7 +1,6 @@
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Parsing;
 using ProductivityApp.Finance.Pdf;
-using ProductivityApp.Finance.Testing;
 using ProductivityApp.Finance.Text;
 using static ProductivityApp.Finance.Testing.StatementGenerator;
 

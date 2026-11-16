@@ -8,13 +8,12 @@ namespace ProductivityApp.Finance.Services;
 public sealed record TransactionInput(string Date, decimal Amount, string Brand, string CategoryId, long? AccountId, string? Note, decimal? Earned = null);
 
 /// <summary>Manual changes to operations. Every brand or category correction teaches the dictionary.</summary>
-public sealed class TransactionService(Database db, Func<string> defaultCurrency)
+public sealed class TransactionService(Database db)
 {
     /// <summary>Operations are read with the banking system of their account's bank.</summary>
     public Classifier NewClassifier(BankingSystem system = BankingSystem.NorthAmerica) => new(db.BrandRules(), system);
 
     private BankingSystem SystemOf(long accountId) => db.Accounts().FirstOrDefault(a => a.Id == accountId)?.System ?? BankingSystem.NorthAmerica;
-
 
     /// <summary>
     /// Sets the category of one operation. With <paramref name="allOfBrand"/>, every operation of the same brand, past and
@@ -67,7 +66,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         // The brand may carry a learned category.
         if (t.CategorySource != ValueSource.User)
         {
-            var c = NewClassifier(SystemOf(t.AccountId)).Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount, t.BankCategory, KindOf(t.AccountId));
+            var c = NewClassifier(SystemOf(t.AccountId)).Classify(t.RawLabel.Length > 0 ? t.RawLabel : brand, t.Amount, t.BankCategory);
             if (c.CategoryId != t.CategoryId) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; db.UpdateTransaction(t); }
         }
         return ReapplyRules();
@@ -180,8 +179,6 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
         if (categoryId is not null && !Classifier.IsGenericLabel(label, t.BankCategory, system)) db.UpsertBrandCategory(brand, categoryId);
     }
 
-    private AccountKind KindOf(long accountId) => db.Accounts().FirstOrDefault(a => a.Id == accountId)?.Kind ?? AccountKind.Bank;
-
     private static void Apply(Transaction t, TransactionInput input, bool keepSources = false)
     {
         if (!DateOnly.TryParseExact(input.Date, "yyyy-MM-dd", out var date)) throw new ArgumentException("The date is not valid.");
@@ -238,7 +235,7 @@ public sealed class TransactionService(Database db, Func<string> defaultCurrency
                 var account = accounts.GetValueOrDefault(t.AccountId);
                 var system = account?.System ?? BankingSystem.NorthAmerica;
                 if (!classifiers.TryGetValue(system, out var classifier)) classifiers[system] = classifier = NewClassifier(system);
-                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount, t.BankCategory, account?.Kind ?? AccountKind.Bank);
+                var c = classifier.Classify(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand, t.Amount, t.BankCategory);
                 var dirty = false;
                 if (t.BrandSource != ValueSource.User && t.RawLabel.Length > 0 && c.Brand != t.Brand) { t.Brand = c.Brand; t.BrandSource = c.BrandSource; dirty = true; }
                 if (t.CategorySource != ValueSource.User && (c.CategoryId != t.CategoryId || t.CategorySource == ValueSource.Linked)) { t.CategoryId = c.CategoryId; t.CategorySource = c.CategorySource; dirty = true; }
