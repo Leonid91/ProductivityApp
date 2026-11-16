@@ -74,6 +74,8 @@ internal sealed class AppServices : IDisposable
         Logs = new ActionLog(dataDir);
         // Exceptions the engine catches and handles: written in full too.
         Diagnostics.Caught += (where, e) => Logs.Write("warning", "app", "Caught exception", DateTime.Now, "where: " + where + "\nexception: " + e);
+        // What the engine chose on its own (a text file read as Windows-1252): written too, as debug entries.
+        Diagnostics.Noted += (where, what) => Logs.Write("debug", "app", where, DateTime.Now, what);
         Logs.Info("app", "Start", started);
         Open();
     }

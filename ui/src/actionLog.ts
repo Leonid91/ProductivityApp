@@ -4,9 +4,9 @@
 // order.
 import { onBeforeSend, send } from './bridge'
 
-type Level = 'info' | 'warning' | 'error'
+type Level = 'debug' | 'info' | 'warning' | 'error'
 type Source = 'you' | 'app'
-interface Entry { at: number; level: Level; source: Source; action: string; detail: string }
+interface Entry { at: number; level: Level; source: Source; action: string; detail: string; stack: string }
 
 const queue: Entry[] = []
 let timer = 0
@@ -14,8 +14,22 @@ let page = 'periods'
 
 /** detail: text as it is, anything else as JSON. */
 export function record(action: string, detail: unknown = '', source: Source = 'you', level: Level = 'info') {
-  queue.push({ at: Date.now(), level, source, action, detail: typeof detail === 'string' ? detail : json(detail) })
+  queue.push({ at: Date.now(), level, source, action, detail: typeof detail === 'string' ? detail : json(detail), stack: callStack() })
   if (!timer) timer = window.setTimeout(flush, 150)
+}
+
+/** The interface's call stack where the entry is written (this file's own frames left out). */
+function callStack(): string {
+  // The browser keeps 10 frames by default: every frame is kept here.
+  const v8 = Error as ErrorConstructor & { stackTraceLimit: number }
+  const limit = v8.stackTraceLimit
+  v8.stackTraceLimit = Infinity
+  const stack = new Error().stack ?? ''
+  v8.stackTraceLimit = limit
+  // The first lines are this file's own (callStack, record): left out.
+  const lines = stack.split('\n').slice(1)
+  const first = lines.findIndex((l) => !/\b(callStack|record)\b/.test(l))
+  return lines.slice(first < 0 ? 0 : first).join('\n')
 }
 
 function json(value: unknown): string {

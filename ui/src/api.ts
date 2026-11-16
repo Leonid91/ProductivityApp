@@ -227,7 +227,7 @@ export interface RatesStatus {
  * and why its last download failed.
  */
 export interface RateSource {
-  id: string; name: string; format: string; url: string; base: string | null; latest: string | null; currencies: number
+  id: string; name: string; format: string; url: string; base: string; latest: string | null; currencies: number
   updatedAt: string | null; error: string | null; inUse: boolean
 }
 /** A central bank whose file the app reads: its file's layout (format), its currency and the address to start with. */
@@ -346,8 +346,11 @@ export interface BrandRule { id: number; merchantKey: string; brand: string; cat
 
 export interface TransactionInput { date: string; amount: number; brand: string; categoryId: string; accountId: number | null; note: string | null; earned?: number | null }
 
-/** An entry of the log: its number, who did it (you, app, engine, window), what, and its full details (more: cut here, read in full with logs.entry). */
-export interface LogEntry { n: number; time: string; level: 'info' | 'warning' | 'error'; source: string; action: string; detail: string; more: boolean; size: number }
+/**
+ * An entry of the log: its number, date (to the second), type, and its full details: who wrote it and what, everything
+ * about it, then the call stack of where it was written (more: cut here, read in full with logs.entry).
+ */
+export interface LogEntry { n: number; time: string; level: 'debug' | 'info' | 'warning' | 'error'; detail: string; more: boolean; size: number }
 
 export const api = {
   init: () => invoke<InitInfo>('app.init'),

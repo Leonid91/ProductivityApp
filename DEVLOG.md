@@ -1029,3 +1029,27 @@ real app with `tools/e2e/perf.mjs`.
   Settings, Logs, both themes): 0 warnings, 0 errors in its log. Every sample statement read by the previous and the
   new engine: the same readings, line by line, brands and categories included. End-to-end suite (tools/e2e/run.mjs,
   still not updated for the folded periods): the same 24 of 24 checks on the previous and the new build.
+
+## November 15th, 2026 - The log in three columns; closing the window without an error - Commit 43
+
+### Fixed
+- Closing the window while the Logs page was open could write an error to the log: "COMException (0x8007139F): The
+  group or resource is not in the correct state" in PostWebMessageAsJson. Writing "Form.FormClosing" (then
+  "Form.Deactivate") to the log told the open Logs page of new entries; that message waited in the window's queue and
+  was sent after the window had shut its browser control down. The window now stops telling the page of anything once
+  it closes, and every message to the page checks that the page is still there when it is sent (not when it is asked
+  for). A message that can no longer reach the page (an answer finished as the window closed) is written to the log
+  as a debug entry, with the call stack of what asked for it.
+- Exchange rates: a source's currency can no longer be missing (its bank's currency is the one); this replaces the
+  guard of Commit 42.
+
+### Changed
+- The log has three columns: the date to the second, the type (debug, info, warning or error) and the details: who
+  wrote it and what ("Engine: holidays.save"), everything about it, then always the full call stack of where it was
+  written (the interface's own for what the interface writes; an exception keeps its own as well). The log of an
+  earlier version is turned into these three columns when the app opens it (its entries say their call stack was not
+  recorded).
+- Logs page: Date, Type and Details; "Clear logs" at the top of the page, beside the pages.
+- A statement file read as Windows-1252 (not UTF-8) is written to the log as a debug entry, once per file.
+- Tests: 279 unit tests (three columns, date to the second, a call stack on every entry, debug entries, a log of five
+  columns turned into three, Windows-1252 read as written and written once to the log).

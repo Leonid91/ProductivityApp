@@ -31,9 +31,16 @@ public static partial class CsvStatementReader
     {
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
-        // Not UTF-8 (many banks export in Windows-1252): read as Windows-1252.
-        return System.Text.Unicode.Utf8.IsValid(bytes) ? Encoding.UTF8.GetString(bytes) : Encoding.GetEncoding(1252).GetString(bytes);
+        return IsWindows1252(bytes) ? Encoding.GetEncoding(1252).GetString(bytes) : Encoding.UTF8.GetString(bytes);
     }
+
+    /// <summary>
+    /// A text file without a byte order mark that is not valid UTF-8: written in Windows-1252, as many banks export
+    /// ("é" as the single byte E9). Read as such, every character as the bank wrote it.
+    /// </summary>
+    public static bool IsWindows1252(byte[] bytes) =>
+        !(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) && !(bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        && !System.Text.Unicode.Utf8.IsValid(bytes);
 
     private static char DetectDelimiter(string text)
     {

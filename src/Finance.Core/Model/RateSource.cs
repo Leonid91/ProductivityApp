@@ -27,7 +27,7 @@ public sealed record CentralBank(string Format, string Name, string Currency, st
 /// A central bank defined in Definitions > Exchange rates: which bank (<see cref="Format"/>, the layout of its file),
 /// the name shown, the address of its file of rates, and the currency the rates are against.
 /// </summary>
-public sealed record RateSource(string Id, string Name, string Url, string? Base, string Format)
+public sealed record RateSource(string Id, string Name, string Url, string Base, string Format)
 {
     public static readonly RateSource Ecb = From(CentralBank.Ecb, "ecb");
     public static readonly RateSource BankOfCanada = From(CentralBank.BankOfCanada, "boc");

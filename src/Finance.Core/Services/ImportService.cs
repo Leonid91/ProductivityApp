@@ -92,6 +92,9 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         {
             if (TableFiles.Kind(bytes, fileName) is null && MoneyFiles.Kind(bytes, fileName) is null && !CsvStatementReader.LooksLikeCsv(bytes, fileName))
                 throw new InvalidDataException("This file is not a statement the app can read: PDF, picture, CSV, Excel, OpenDocument, Word, OFX, QFX, QBO or QIF.");
+            // A text file (CSV, OFX, QIF, web page) that is not UTF-8 is read as Windows-1252: written to the log.
+            if (TableFiles.Kind(bytes, fileName) is null or "Web page" && CsvStatementReader.IsWindows1252(bytes))
+                Diagnostics.Note("ImportService.ParseAsync", $"{fileName}: not UTF-8, read as Windows-1252.");
             // One export of several accounts (one per currency, or per product named on each line): one draft per
             // account, each holding its own lines as a file of its own.
             var table = TableFiles.Kind(bytes, fileName) is not null ? TableFiles.Read(bytes, fileName)

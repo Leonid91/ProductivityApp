@@ -20,7 +20,7 @@ public sealed record RatesStatus(string SourceId, string Source, string Base, st
 /// of currencies, its own included, and the last day of rates: read from the downloaded data, null without it), and
 /// why its last download failed.
 /// </summary>
-public sealed record RateSourceView(string Id, string Name, string Format, string Url, string? Base, string? Latest, int Currencies,
+public sealed record RateSourceView(string Id, string Name, string Format, string Url, string Base, string? Latest, int Currencies,
     string? UpdatedAt, string? Error, bool InUse);
 
 /// <summary>A file or an address that does not give exchange rates; the message says why, in the person's words.</summary>
@@ -141,7 +141,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     public List<string> Currencies()
     {
         var source = Source;
-        return [.. Loaded(source).Raw.Keys.Concat(source.Base is { } b ? [b] : []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+        return [.. Loaded(source).Raw.Keys.Append(source.Base).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
     }
 
     /// <summary>The most days <see cref="Daily"/> gives at once (a calendar shows six weeks).</summary>
@@ -168,7 +168,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         var (raw, previous) = Loaded(source);
         var newest = Newest(raw);
         var oldest = raw.Values.Where(v => v.Length > 10).Select(v => v.TrimEnd(';')).Select(v => v[(v.LastIndexOf(';') + 1)..][..10]).DefaultIfEmpty().Min();
-        return new RatesStatus(source.Id, source.Name, source.Base ?? "", source.Url, db.GetSetting($"rates.{source.Id}.updatedAt"),
+        return new RatesStatus(source.Id, source.Name, source.Base, source.Url, db.GetSetting($"rates.{source.Id}.updatedAt"),
             newest, oldest, raw.Count + (raw.Count > 0 ? 1 : 0), db.GetSetting($"rates.{source.Id}.error") is { Length: > 0 } e ? e : null, previous);
     }
 

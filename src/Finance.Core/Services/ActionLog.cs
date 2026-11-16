@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 
@@ -7,23 +8,26 @@ namespace ProductivityApp.Finance.Services;
 /// <summary>
 /// The log of everything that happens: every action of the person in the window (the raw event), every request the
 /// window makes to the engine with its full parameters and full answer, every error with its full text and call stack,
-/// the window's own events. One line per entry in a text file (time, level, source, action, details separated by tabs),
-/// written on a thread of its own so nothing waits for the disk. The file lives in the data folder, or in the folder the
+/// the window's own events. One line per entry in a text file, three columns separated by tabs: the date to the second,
+/// the type (debug, info, warning, error) and the details: who wrote it and what ("Engine: holidays.save"), everything
+/// about it, then the full call stack of where it was written. Written on a thread of its own so nothing waits for the disk. The file lives in the data folder, or in the folder the
 /// person chose (Settings > Data > Log location).
 /// </summary>
 public sealed class ActionLog : IDisposable
 {
     public const string FileName = "app.log";
-    private const string TimeFormat = "yyyy-MM-dd HH:mm:ss.fff";
+    private const string TimeFormat = "yyyy-MM-dd HH:mm:ss";
+    /// <summary>The types of entry, from the least to the most serious.</summary>
+    public static readonly IReadOnlyList<string> Levels = ["debug", "info", "warning", "error"];
     /// <summary>A page of the log reads this much of each entry at most; the rest is read when asked (<see cref="ReadEntry"/>).</summary>
     private const int ShownBytes = 16 * 1024;
     private const int ShownChars = 4000;
 
     /// <summary>An entry; More: the details go on beyond what was read (read in full with <see cref="ReadEntry"/>).</summary>
-    public sealed record Entry(long N, string Time, string Level, string Source, string Action, string Detail, bool More, long Size);
+    public sealed record Entry(long N, string Time, string Level, string Detail, bool More, long Size);
 
     /// <summary>An entry waiting to be written: its details in parts, written one after the other (never joined in memory).</summary>
-    private sealed record Pending(DateTime Time, string Level, string Source, string Action, string[] Detail);
+    private sealed record Pending(DateTime Time, string Level, string Heading, string[] Detail, string Stack);
 
     private readonly string _dataDir;
     private readonly BlockingCollection<Pending> _queue = new();
@@ -59,16 +63,43 @@ public sealed class ActionLog : IDisposable
 
     // ---------------------------------------------------------------- writing
 
+    public void Debug(string source, string action, string detail = "") => Write("debug", source, action, DateTime.Now, detail);
+
     public void Info(string source, string action, string detail = "") => Write("info", source, action, DateTime.Now, detail);
 
     public void Error(string source, string action, string detail) => Write("error", source, action, DateTime.Now, detail);
 
-    /// <summary>An entry; its details may come in parts (a request and its answer), written one after the other as they are.</summary>
-    public void Write(string level, string source, string action, DateTime time, params string[] detail)
+    /// <summary>
+    /// An entry, with the call stack of the code that writes it; its details may come in parts (a request and its
+    /// answer), written one after the other as they are.
+    /// </summary>
+    public void Write(string level, string source, string action, DateTime time, params string[] detail) =>
+        WriteWithStack(level, source, action, time, CallStack(), detail);
+
+    /// <summary>An entry whose call stack was taken elsewhere (the window's own, for what the window writes).</summary>
+    public void WriteWithStack(string level, string source, string action, DateTime time, string stack, params string[] detail)
     {
-        try { _queue.Add(new Pending(time, level, source, action, detail)); Interlocked.Increment(ref _added); }
+        if (!Levels.Contains(level)) throw new ArgumentException($"Unknown type of log entry '{level}'.");
+        try { _queue.Add(new Pending(time, level, Heading(source, action), detail, stack)); Interlocked.Increment(ref _added); }
         catch (InvalidOperationException) { /* closing: nothing more is written */ }
     }
+
+    /// <summary>The call stack of the code that writes to the log (the log's own frames left out).</summary>
+    public static string CallStack()
+    {
+        var own = typeof(ActionLog).FullName!;
+        var frames = new StackTrace(1, true).GetFrames().SkipWhile(f => f.GetMethod()?.DeclaringType?.FullName?.StartsWith(own, StringComparison.Ordinal) == true);
+        return new StackTrace(frames).ToString().TrimEnd();
+    }
+
+    /// <summary>The first line of an entry's details: who wrote it and what ("Engine: holidays.save").</summary>
+    private static string Heading(string source, string action)
+    {
+        var who = source switch { "you" => "You", "app" => "App", "engine" => "Engine", "window" => "Window", _ => source };
+        return action.Length == 0 ? who : who + ": " + action;
+    }
+
+    private const string NoStack = "Call stack: not recorded (written before call stacks were logged)";
 
     /// <summary>One line per entry: backslashes, tabs and line breaks inside a value are written as \\, \t, \r and \n.</summary>
     private static string Clean(string value) =>
@@ -113,8 +144,10 @@ public sealed class ActionLog : IDisposable
                         foreach (var e in batch)
                         {
                             _starts.Add(_file.Position);
-                            Put(string.Join('\t', e.Time.ToString(TimeFormat, CultureInfo.InvariantCulture), Clean(e.Level), Clean(e.Source), Clean(e.Action), ""));
+                            Put(string.Join('\t', e.Time.ToString(TimeFormat, CultureInfo.InvariantCulture), e.Level, Clean(e.Heading)));
+                            if (e.Detail.Any(p => p.Length > 0)) Put(Clean("\n"));
                             foreach (var part in e.Detail) Put(Clean(part));
+                            Put(Clean("\nCall stack:\n" + (e.Stack.Length > 0 ? e.Stack : "(empty)")));
                             Put("\n");
                         }
                         _file.Flush();
@@ -173,7 +206,10 @@ public sealed class ActionLog : IDisposable
         Index();
     }
 
-    /// <summary>Lines from the time before this log (errors only, with their call stack on the lines after) become entries.</summary>
+    /// <summary>
+    /// A log written by an earlier version becomes entries of three columns: the five-column lines (time to the
+    /// millisecond, type, source, action, details) and, before them, error lines with their call stack on the lines after.
+    /// </summary>
     private void ConvertOlderLog()
     {
         if (_file!.Length == 0) return;
@@ -181,33 +217,47 @@ public sealed class ActionLog : IDisposable
         var head = new byte[Math.Min(64, (int)_file.Length)];
         _file.ReadExactly(head);
         var start = Encoding.UTF8.GetString(head);
-        if (start.Length > 24 && start[23] == '\t') return;
+        if (start.Length > 20 && start[19] == '\t') return;
+        var columns = start.Length > 24 && start[23] == '\t';
         _file.Seek(0, SeekOrigin.Begin);
         string text;
         using (var reader = new StreamReader(_file, Encoding.UTF8, true, 4096, leaveOpen: true)) text = reader.ReadToEnd();
         var lines = new List<string>();
-        string? time = null, where = null, message = null;
-        var stack = new StringBuilder();
-        void Flush()
+        if (columns)
         {
-            if (time is null) return;
-            lines.Add(string.Join('\t', time, "error", "app", Clean(where!), Clean(message + (stack.Length > 0 ? "\n" + stack.ToString().TrimEnd() : ""))));
-            stack.Clear();
-        }
-        foreach (var raw in text.Split('\n'))
-        {
-            var line = raw.TrimEnd('\r');
-            var m = System.Text.RegularExpressions.Regex.Match(line, @"^(\S+) \[([^\]]*)\] (.*)$");
-            if (m.Success && DateTime.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var t))
+            foreach (var line in text.Split('\n'))
             {
-                Flush();
-                time = t.ToString(TimeFormat, CultureInfo.InvariantCulture);
-                where = m.Groups[2].Value;
-                message = m.Groups[3].Value;
+                var f = line.TrimEnd('\r').Split('\t', 5);
+                if (f.Length < 5 || f[0].Length < 19) continue;
+                var level = Levels.Contains(f[1]) ? f[1] : "info";
+                lines.Add(string.Join('\t', f[0][..19], level, Clean(Heading(Unclean(f[2]), Unclean(f[3]))) + (f[4].Length > 0 ? Clean("\n") + f[4] : "") + Clean("\n" + NoStack)));
             }
-            else if (time is not null && line.Length > 0) stack.AppendLine(line);
         }
-        Flush();
+        else
+        {
+            string? time = null, where = null, message = null;
+            var stack = new StringBuilder();
+            void Flush()
+            {
+                if (time is null) return;
+                lines.Add(string.Join('\t', time, "error", Clean(Heading("app", where!) + "\n" + message + "\nCall stack:\n" + (stack.Length > 0 ? stack.ToString().TrimEnd() : "(empty)"))));
+                stack.Clear();
+            }
+            foreach (var raw in text.Split('\n'))
+            {
+                var line = raw.TrimEnd('\r');
+                var m = System.Text.RegularExpressions.Regex.Match(line, @"^(\S+) \[([^\]]*)\] (.*)$");
+                if (m.Success && DateTime.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var t))
+                {
+                    Flush();
+                    time = t.ToString(TimeFormat, CultureInfo.InvariantCulture);
+                    where = m.Groups[2].Value;
+                    message = m.Groups[3].Value;
+                }
+                else if (time is not null && line.Length > 0) stack.AppendLine(line);
+            }
+            Flush();
+        }
         var bytes = Encoding.UTF8.GetBytes(string.Concat(lines.Select(l => l + "\n")));
         _file.SetLength(0);
         _file.Write(bytes);
@@ -277,14 +327,14 @@ public sealed class ActionLog : IDisposable
         _file!.Seek(from, SeekOrigin.Begin);
         _file.ReadExactly(bytes);
         var line = Encoding.UTF8.GetString(bytes).TrimEnd('\n', '\r');
-        var f = line.Split('\t', 5);
-        if (f.Length < 5) return new Entry(n, "", "info", "", Unclean(line), "", take < size, size);
-        var detail = f[4];
+        var f = line.Split('\t', 3);
+        if (f.Length < 3) return new Entry(n, "", "info", Unclean(line), take < size, size);
+        var detail = f[2];
         var more = take < size || detail.Length > maxChars;
         if (detail.Length > maxChars) detail = detail[..maxChars];
         // A cut in the middle of a \n, \t or \\ written for the line: the half sign is left out.
         if (more && detail.EndsWith('\\') && (detail.Length - detail.TrimEnd('\\').Length) % 2 == 1) detail = detail[..^1];
-        return new Entry(n, f[0], f[1], f[2], Unclean(f[3]), Unclean(detail), more, size);
+        return new Entry(n, f[0], f[1], Unclean(detail), more, size);
     }
 
     // ---------------------------------------------------------------- clearing and moving

@@ -14,4 +14,13 @@ public static class Diagnostics
         try { Caught?.Invoke(where, e); }
         catch (Exception) { /* reporting must never change what the engine does */ }
     }
+
+    /// <summary>Raised with where and what the engine chose on its own (no failure), for the log's debug entries.</summary>
+    public static event Action<string, string>? Noted;
+
+    public static void Note(string where, string what)
+    {
+        try { Noted?.Invoke(where, what); }
+        catch (Exception) { /* reporting must never change what the engine does */ }
+    }
 }

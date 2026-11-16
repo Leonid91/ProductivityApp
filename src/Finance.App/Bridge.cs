@@ -51,12 +51,36 @@ internal sealed class Bridge
     /// <summary>Runs on a worker thread, for anything that reads files or PDFs.</summary>
     public void RegisterBackground(string method, Func<JsonElement, Task<object?>> handler) => _methods[method] = p => Task.Run(() => handler(p));
 
-    public void Emit(string name, object? data)
+    public void Emit(string name, object? data) => Post(JsonSerializer.Serialize(new { @event = name, data }, Json), "event " + name);
+
+    /// <summary>False once the window closes: its page goes with it (the browser control is shut down).</summary>
+    private bool _open = true;
+
+    /// <summary>The window is closing (called on its thread): nothing more is sent to the page.</summary>
+    public void Close() => _open = false;
+
+    /// <summary>
+    /// Sends a message to the page, from the window's thread. Whether the page is still there is checked when the message
+    /// is sent, not when it is asked for: an answer finished on a worker thread, or an event, may wait in the window's queue
+    /// while the window closes. Such a message has no page left to reach: it is written to the log (debug), not sent.
+    /// </summary>
+    private void Post(string json, string what)
     {
-        var json = JsonSerializer.Serialize(new { @event = name, data }, Json);
-        if (_ui.InvokeRequired) _ui.BeginInvoke(() => _web.PostWebMessageAsJson(json));
-        else _web.PostWebMessageAsJson(json);
+        // Who asked for it, read (to text) only if the message cannot be sent.
+        var asked = new System.Diagnostics.StackTrace(1, false);
+        void Send()
+        {
+            if (_open && !_ui.IsDisposed) _web.PostWebMessageAsJson(json);
+            else NotSent(what, asked);
+        }
+        if (!_ui.InvokeRequired) { Send(); return; }
+        try { _ui.BeginInvoke(Send); }
+        // The window is already gone (its handle destroyed): nothing can run on its thread any more.
+        catch (InvalidOperationException) when (_ui.IsDisposed || !_ui.IsHandleCreated) { NotSent(what, asked); }
     }
+
+    private void NotSent(string what, System.Diagnostics.StackTrace asked) =>
+        _actions.WriteWithStack("debug", "engine", "Not sent to the page", DateTime.Now, asked.ToString().TrimEnd(), what, ": the window was closed before it could be sent.");
 
     private async void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -82,7 +106,7 @@ internal sealed class Bridge
             // Work done on a worker thread is also turned into text there: the window's thread only passes the answer on.
             var result = await handler(args).ConfigureAwait(false);
             var reply = JsonSerializer.Serialize(new { id, ok = true, result }, Json);
-            Reply(reply);
+            Post(reply, "answer to " + method);
             // In full: the request as received and the answer as sent.
             if (!Reads.Contains(method)) _actions.Write("info", "engine", method, DateTime.Now, Started(started), "\nrequest: ", raw, "\nanswer: ", reply);
         }
@@ -91,7 +115,7 @@ internal sealed class Bridge
             var expected = ex is ArgumentException or InvalidOperationException or KeyNotFoundException or InvalidDataException or FileNotFoundException or DirectoryNotFoundException or UnauthorizedAccessException or IOException;
             var message = expected ? ex.Message : "Something went wrong. The details were written to the log.";
             var reply = JsonSerializer.Serialize(new { id, ok = false, error = new { message } }, Json);
-            Reply(reply);
+            Post(reply, "answer to " + (method.Length > 0 ? method : "an unreadable message"));
             // The full exception: its type, message, inner exceptions and call stack.
             if (!Unlogged.Contains(method) || !expected)
                 _actions.Write(expected ? "warning" : "error", "engine", method.Length > 0 ? method : "unreadable message", DateTime.Now,
@@ -101,12 +125,6 @@ internal sealed class Bridge
 
     private static string Started(DateTime t) => "started: " + t.ToString("yyyy-MM-dd HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
 
-    private void Reply(string json)
-    {
-        if (_ui.IsDisposed) return;
-        if (_ui.InvokeRequired) _ui.BeginInvoke(() => _web.PostWebMessageAsJson(json));
-        else _web.PostWebMessageAsJson(json);
-    }
 }
 
 internal static class JsonArgs

@@ -2,7 +2,10 @@ using ProductivityApp.Finance.Services;
 
 namespace ProductivityApp.Finance.Tests;
 
-/// <summary>The log of every action: one file, read newest first, cleared, moved to another folder.</summary>
+/// <summary>
+/// The log of every action: one file of three columns (date to the second, type, details with the call stack), read
+/// newest first, cleared, moved to another folder.
+/// </summary>
 public sealed class ActionLogTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "finances-log-tests-" + Guid.NewGuid().ToString("N"));
@@ -12,6 +15,23 @@ public sealed class ActionLogTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_dir, true); } catch (IOException) { }
+    }
+
+    /// <summary>The details of an entry without its first line (who and what) and its call stack.</summary>
+    private static string Body(ActionLog.Entry e)
+    {
+        var text = e.Detail.Replace("\r", "");
+        var start = text.IndexOf('\n') + 1;
+        var stack = text.LastIndexOf("\nCall stack:\n", StringComparison.Ordinal);
+        return start <= 0 || stack < start ? "" : text[start..stack];
+    }
+
+    private static string Heading(ActionLog.Entry e) => e.Detail.Split('\n')[0];
+
+    private string[] FileLines()
+    {
+        using var file = new FileStream(Path.Combine(_dir, ActionLog.FileName), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        return new StreamReader(file).ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
     }
 
     [Fact]
@@ -24,14 +44,44 @@ public sealed class ActionLogTests : IDisposable
         var (total, first) = log.Read(0, 100);
         Assert.Equal(250, total);
         Assert.Equal(100, first.Count);
-        Assert.Equal("button 250", first[0].Detail);
-        Assert.Equal("button 151", first[^1].Detail);
+        Assert.Equal("button 250", Body(first[0]));
+        Assert.Equal("button 151", Body(first[^1]));
         var (_, last) = log.Read(2, 100);
         Assert.Equal(50, last.Count);
-        Assert.Equal("button 50", last[0].Detail);
-        Assert.Equal("button 1", last[^1].Detail);
+        Assert.Equal("button 50", Body(last[0]));
+        Assert.Equal("button 1", Body(last[^1]));
         Assert.Empty(log.Read(3, 100).Entries);
-        Assert.All(first, e => { Assert.Equal("you", e.Source); Assert.Equal("Clicked", e.Action); Assert.Equal("info", e.Level); });
+        Assert.All(first, e => { Assert.Equal("You: Clicked", Heading(e)); Assert.Equal("info", e.Level); });
+    }
+
+    [Fact]
+    public void Every_line_has_three_columns_the_date_to_the_second_and_a_call_stack()
+    {
+        using var log = new ActionLog(_dir);
+        log.Debug("app", "Decode", "read as Windows-1252");
+        log.Info("engine", "settings.set", "{\"key\":\"theme\"}");
+        log.Write("warning", "app", "Caught exception", DateTime.Now, "where: here");
+        log.Error("app", "Exception (ui)", "System.Exception: boom");
+        log.Flush();
+
+        var lines = FileLines();
+        Assert.Equal(4, lines.Length);
+        Assert.All(lines, l =>
+        {
+            var f = l.Split('\t');
+            Assert.Equal(3, f.Length);
+            Assert.Matches(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", f[0]);
+            Assert.Contains(f[1], ActionLog.Levels);
+        });
+        Assert.Equal(["debug", "info", "warning", "error"], lines.Select(l => l.Split('\t')[1]));
+        // The call stack of the code that wrote each entry: this test, the log's own frames left out.
+        Assert.All(log.Read(0, 10).Entries, e =>
+        {
+            Assert.Contains("\nCall stack:\n", e.Detail);
+            var stack = e.Detail[(e.Detail.IndexOf("\nCall stack:\n", StringComparison.Ordinal) + 13)..];
+            Assert.Contains(nameof(Every_line_has_three_columns_the_date_to_the_second_and_a_call_stack), stack.Split('\n')[0]);
+        });
+        Assert.Throws<ArgumentException>(() => log.Write("verbose", "app", "x", DateTime.Now, ""));
     }
 
     [Fact]
@@ -44,11 +94,21 @@ public sealed class ActionLogTests : IDisposable
 
         var (total, entries) = log.Read(0, 10);
         Assert.Equal(2, total);
-        Assert.Equal("Boom: a\tb\n   at Somewhere()\n   at Elsewhere() C:\\path\\file.cs", entries[1].Detail);
+        Assert.Equal("Boom: a\tb\n   at Somewhere()\n   at Elsewhere() C:\\path\\file.cs", Body(entries[1]));
+        Assert.Equal("App: Error in bridge", Heading(entries[1]));
         Assert.Equal("error", entries[1].Level);
         // One line each in the file (read as a text editor does, while the app writes it).
-        using var file = new FileStream(Path.Combine(_dir, ActionLog.FileName), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        Assert.Equal(2, new StreamReader(file).ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
+        Assert.Equal(2, FileLines().Length);
+    }
+
+    [Fact]
+    public void A_stack_taken_elsewhere_is_written_as_given()
+    {
+        using var log = new ActionLog(_dir);
+        log.WriteWithStack("info", "app", "page", DateTime.Now, "    at go (https://finances.localhost/assets/index.js:1:200)", "{\"to\":\"logs\"}");
+        log.Flush();
+        var e = log.Read(0, 1).Entries[0];
+        Assert.Equal("App: page\n{\"to\":\"logs\"}\nCall stack:\n    at go (https://finances.localhost/assets/index.js:1:200)", e.Detail);
     }
 
     [Fact]
@@ -65,7 +125,7 @@ public sealed class ActionLogTests : IDisposable
         log.Flush();
         var (total, entries) = log.Read(0, 100);
         Assert.Equal(1, total);
-        Assert.Equal("after", entries[0].Detail);
+        Assert.Equal("after", Body(entries[0]));
     }
 
     [Fact]
@@ -82,7 +142,7 @@ public sealed class ActionLogTests : IDisposable
             Assert.False(File.Exists(Path.Combine(_dir, ActionLog.FileName)));
             log.Info("you", "Clicked", "after the move");
             log.Flush();
-            Assert.Equal(["after the move", "before the move"], log.Read(0, 10).Entries.Select(e => e.Detail));
+            Assert.Equal(["after the move", "before the move"], log.Read(0, 10).Entries.Select(Body));
             // A folder that already holds a log is refused.
             Directory.CreateDirectory(Path.Combine(_dir, "other"));
             File.WriteAllText(Path.Combine(_dir, "other", ActionLog.FileName), "");
@@ -101,6 +161,25 @@ public sealed class ActionLogTests : IDisposable
     }
 
     [Fact]
+    public void A_log_of_five_columns_becomes_three()
+    {
+        File.WriteAllText(Path.Combine(_dir, ActionLog.FileName),
+            "2026-11-15 22:39:10.298\tinfo\tengine\tlogs.clear\tstarted: 2026-11-15 22:39:10.298\\nrequest: {}\n" +
+            "2026-11-15 22:39:12.119\terror\tapp\tException (ui)\tSystem.Runtime.InteropServices.COMException (0x8007139F): not in the correct state\\r\\n   at A.B()\n");
+        using var log = new ActionLog(_dir);
+        log.Info("app", "Start");
+        log.Flush();
+        var (total, entries) = log.Read(0, 10);
+        Assert.Equal(3, total);
+        Assert.Equal("App: Start", Heading(entries[0]));
+        Assert.Equal(("2026-11-15 22:39:12", "error"), (entries[1].Time, entries[1].Level));
+        Assert.Equal("App: Exception (ui)\nSystem.Runtime.InteropServices.COMException (0x8007139F): not in the correct state\r\n   at A.B()\n" +
+            "Call stack: not recorded (written before call stacks were logged)", entries[1].Detail);
+        Assert.Equal(("2026-11-15 22:39:10", "Engine: logs.clear"), (entries[2].Time, Heading(entries[2])));
+        Assert.All(FileLines(), l => Assert.Equal(3, l.Split('\t').Length));
+    }
+
+    [Fact]
     public void An_older_error_log_becomes_entries()
     {
         File.WriteAllText(Path.Combine(_dir, ActionLog.FileName),
@@ -111,11 +190,9 @@ public sealed class ActionLogTests : IDisposable
         log.Flush();
         var (total, entries) = log.Read(0, 10);
         Assert.Equal(3, total);
-        Assert.Equal("App started", entries[0].Action);
-        Assert.Equal("startup", entries[1].Action);
-        Assert.Equal("IOException: Disk full", entries[1].Detail);
-        Assert.Equal("bridge", entries[2].Action);
-        Assert.Equal("InvalidCastException: Bad cast\n   at A.B()\n   at C.D()", entries[2].Detail.Replace("\r", ""));
+        Assert.Equal("App: App started", Heading(entries[0]));
+        Assert.Equal("App: startup\nIOException: Disk full\nCall stack:\n(empty)", entries[1].Detail);
+        Assert.Equal("App: bridge\nInvalidCastException: Bad cast\nCall stack:\n   at A.B()\n   at C.D()", entries[2].Detail.Replace("\r", ""));
         Assert.StartsWith("2026-11-01 ", entries[2].Time);
     }
 
@@ -130,13 +207,14 @@ public sealed class ActionLogTests : IDisposable
 
         var (total, entries) = log.Read(0, 10);
         Assert.Equal(2, total);
-        Assert.False(entries[0].More);
+        // A short entry is cut only within its call stack: its details are all on the page.
+        Assert.StartsWith("You: click\nshort\nCall stack:\n", entries[0].Detail);
         Assert.True(entries[1].More);
         Assert.True(entries[1].Detail.Length <= 4000);
-        Assert.StartsWith("request: {}\nanswer: {", entries[1].Detail);
+        Assert.StartsWith("Engine: periods.report\nrequest: {}\nanswer: {", entries[1].Detail);
         var full = log.ReadEntry(entries[1].N)!;
         Assert.False(full.More);
-        Assert.Equal("request: {}\nanswer: " + answer, full.Detail);
+        Assert.Equal("request: {}\nanswer: " + answer, Body(full));
         Assert.Null(log.ReadEntry(5));
     }
 
@@ -152,6 +230,6 @@ public sealed class ActionLogTests : IDisposable
         again.Flush();
         var (total, entries) = again.Read(0, 10);
         Assert.Equal(6, total);
-        Assert.Equal("to 4", entries[1].Detail);
+        Assert.Equal("to 4", Body(entries[1]));
     }
 }

@@ -18,6 +18,8 @@ internal sealed class MainForm : Form
     private readonly AppServices _services;
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private Bridge? _bridge;
+    /// <summary>Tells the Logs page of new entries; let go when the window closes.</summary>
+    private Action? _logsChanged;
 #if DEBUG
     /// <summary>The Vite dev server the interface is loaded from (--dev-url, debug builds only).</summary>
     private static string? _devOrigin;
@@ -249,7 +251,8 @@ internal sealed class MainForm : Form
 
         _bridge = new Bridge(core, this, _services.Logs);
         var bridge = _bridge;
-        _services.Logs.Changed += () => { if (!IsDisposed && IsHandleCreated) bridge.Emit("logs.changed", null); };
+        _logsChanged = () => bridge.Emit("logs.changed", null);
+        _services.Logs.Changed += _logsChanged;
         Api.Register(_bridge, _services, this, nonClientRegions);
 
         if (_options.Capture is not null)
@@ -362,5 +365,12 @@ internal sealed class MainForm : Form
             _services.SavePlacement(new AppServices.WindowPlacement(r.X, r.Y, r.Width, r.Height, WindowState == FormWindowState.Maximized));
         }
         base.OnFormClosing(e);
+        if (!e.Cancel)
+        {
+            // The page closes with the window: it is told of nothing more (the Logs page no longer open either).
+            if (_logsChanged is not null) _services.Logs.Changed -= _logsChanged;
+            _services.Logs.Watched = false;
+            _bridge?.Close();
+        }
     }
 }

@@ -385,10 +385,11 @@ internal static class Api
             if (entries.Count > 100_000) throw new ArgumentException("Too many entries.");
             foreach (var e in entries)
             {
-                var level = e.Level is "info" or "warning" or "error" ? e.Level : "info";
+                var level = e.Level is { } l && ActionLog.Levels.Contains(l) ? l : "info";
                 var source = e.Source is "you" or "app" ? e.Source : "app";
                 var time = e.At > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(e.At).LocalDateTime : DateTime.Now;
-                s.Logs.Write(level, source, e.Action ?? "", time, e.Detail ?? "");
+                // The window's own call stack: where in the interface the entry was written.
+                s.Logs.WriteWithStack(level, source, e.Action ?? "", time, e.Stack ?? "", e.Detail ?? "");
             }
             return null;
         });
@@ -400,7 +401,7 @@ internal static class Api
         b.Register("logs.move", p => { s.Logs.MoveTo(p.Get<string>("folder")); return new { logFile = s.Logs.FilePath }; });
     }
 
-    private sealed record WindowEntry(long At, string? Level, string? Source, string? Action, string? Detail);
+    private sealed record WindowEntry(long At, string? Level, string? Source, string? Action, string? Detail, string? Stack);
 
     private static DateOnly ParseDate(string s) =>
         DateOnly.TryParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : throw new ArgumentException("Invalid date.");

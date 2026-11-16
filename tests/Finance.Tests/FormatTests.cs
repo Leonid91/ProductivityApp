@@ -4,6 +4,7 @@ using System.Text;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Parsing;
 using ProductivityApp.Finance.Pdf;
+using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Testing;
 
 namespace ProductivityApp.Finance.Tests;
@@ -206,6 +207,35 @@ public class FormatTests
         Assert.Equal(VerificationStatus.Verified, p.Status);
         Assert.Equal(spec.Transactions.Count, p.Rows.Count);
         Assert.Equal(spec.Transactions.Sum(t => t.Amount), p.Rows.Sum(r => r.Amount));
+    }
+
+    [Fact]
+    public async Task A_csv_in_windows_1252_is_read_as_written_and_said_in_the_log()
+    {
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        var text = "Date;Libellé;Montant;Devise\n12/10/2025;CAFÉ DU COIN SAINT-ÉTIENNE;-4,50;EUR\n13/10/2025;VIR SEPA REÇU;100,00;EUR\n";
+        var w1252 = System.Text.Encoding.GetEncoding(1252).GetBytes(text);
+        Assert.True(CsvStatementReader.IsWindows1252(w1252));
+        Assert.False(CsvStatementReader.IsWindows1252(System.Text.Encoding.UTF8.GetBytes(text)));
+        Assert.False(CsvStatementReader.IsWindows1252(System.Text.Encoding.ASCII.GetBytes("Date;Amount\n")));
+        // Read: every character as the bank wrote it (no replacement character), in Windows-1252 as in UTF-8.
+        Assert.Equal(text, CsvStatementReader.Decode(w1252));
+        Assert.Equal(text, CsvStatementReader.Decode(System.Text.Encoding.UTF8.GetBytes(text)));
+
+        using var s = new TempStore();
+        var name = $"releve-{Guid.NewGuid():N}.csv";
+        var notes = new List<string>();
+        void Noted(string where, string what) { if (what.StartsWith(name, StringComparison.Ordinal)) lock (notes) notes.Add(what); }
+        Diagnostics.Noted += Noted;
+        try
+        {
+            var draft = await s.Imports.ParseAsync(name, w1252);
+            Assert.Equal(["CAFÉ DU COIN SAINT-ÉTIENNE", "VIR SEPA REÇU"], draft.Parse.Rows.Select(r => r.Label));
+            await s.Imports.ParseAsync("utf8-" + name, System.Text.Encoding.UTF8.GetBytes(text));
+        }
+        finally { Diagnostics.Noted -= Noted; }
+        // Written once, for the file read as Windows-1252 only.
+        Assert.Equal([name + ": not UTF-8, read as Windows-1252."], notes);
     }
 
     [Fact]

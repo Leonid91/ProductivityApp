@@ -446,7 +446,10 @@ public sealed class Database : IDisposable
 
     public List<RateSource> RateSources() =>
         Query("SELECT id, name, url, base, format FROM rate_sources ORDER BY position, rowid",
-            r => new RateSource(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetString(4)));
+            // A line kept from before the sources were central banks has no currency: its bank's is the one.
+            r => new RateSource(r.GetString(0), r.GetString(1), r.GetString(2),
+                r.IsDBNull(3) ? CentralBank.Find(r.GetString(4))?.Currency ?? throw new InvalidDataException($"Unknown central bank '{r.GetString(4)}'.") : r.GetString(3),
+                r.GetString(4)));
 
     /// <summary>Adds the source (at the end) or saves its name, address and currency.</summary>
     public void SaveRateSource(RateSource s) => Exec("""
