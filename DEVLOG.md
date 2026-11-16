@@ -1053,3 +1053,23 @@ real app with `tools/e2e/perf.mjs`.
 - A statement file read as Windows-1252 (not UTF-8) is written to the log as a debug entry, once per file.
 - Tests: 279 unit tests (three columns, date to the second, a call stack on every entry, debug entries, a log of five
   columns turned into three, Windows-1252 read as written and written once to the log).
+
+## November 16th, 2026 - The end-to-end suite brought up to date - Commit 44
+
+### Changed
+- The end-to-end suite (tools/e2e/run.mjs) follows the app as it is now:
+  - Periods start folded in Statements: the suite opens a period with the button of its heading, then each bank, as
+    a person does; a new check that a period starts folded to the summary of every bank together. The transfers
+    table is folded apart and opened with its own button.
+  - The Summary view is gone: its checks became "Folded periods" (a month, a year, All time and Custom folded to
+    Earnings, Expenses, Balance and Expenses / earnings; Unfold everything, all banks first, then Fold everything).
+  - Analytics shows every period whole, without summaries; the category lines (Selected total, Total, any number of
+    categories, from none to all); the salary per working day, per hour and per year; the calendar's header
+    (Earnings, Expenses, Balance); Export checked in Analytics.
+  - Logs: three columns (the date to the second, the type, the details ending with the call stack), in the file as
+    on the page; requests that only read and clicks or keys are not written; an entry of the interface has the
+    interface's call stack; a new entry (a console warning) comes in at the top; Clear logs at the top of the page;
+    the page opened from Settings > General.
+  - Charts drawn again while the view changes, or a period drawn in pieces, are waited for instead of read at once.
+- Tests: the suite on a copy of the sample statements, off-screen: 232 of 232 on the debug build and 232 of 232 on a
+  published release build (`-p:E2E=true`). No change to the app.

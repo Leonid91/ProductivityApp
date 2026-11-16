@@ -37,6 +37,43 @@ const settle = async (p, sel) => {
   }
 }
 const analyticsPart = async (p, part) => { await p.clickText(part, { selector: '[data-analytics-view] button' }); await sleep(500) }
+// An element brought to the middle of the screen, again until the page stops moving (a period being drawn keeps what
+// is read in its place, so the page can move under a scroll).
+const bringIntoView = async (p, sel) => {
+  let last = null
+  for (let i = 0; i < 30; i++) {
+    const top = await p.eval(`(() => { const e = document.querySelector('${sel}'); if (!e) return null; const r = e.getBoundingClientRect(); if (r.top < 120 || r.bottom > innerHeight - 20) e.scrollIntoView({ block: 'center' }); return Math.round(e.getBoundingClientRect().top) })()`)
+    if (top !== null && top === last) return
+    last = top
+    await sleep(300)
+  }
+}
+// The Logs page: Settings > General, Open logs (not in the left menu).
+const openLogs = async (p) => {
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('General', { selector: 'button' })
+  await p.waitFor(`!!document.querySelector('[data-open-logs]')`, 10000, 'Open logs')
+  await p.click('[data-open-logs]')
+}
+// In Statements a period starts folded to its summary, and so does each bank in it: a person opens the period with the
+// button of its heading, then each bank with its own (its tables open, the transfers folded as the setting says).
+const openPeriod = async (p, from, withAll = false) => {
+  const sec = `section[data-period="${from}"]`
+  // Brought to the top of the screen until it stays there (a list of periods made again can move it).
+  const toTop = async () => { for (let i = 0, last = null; i < 30; i++) { const top = await p.eval(`(() => { const s = document.querySelector('${sec}'); if (!s) return null; const t = s.getBoundingClientRect().top; if (t < 150 || t > 400) s.scrollIntoView({ block: 'start' }); return Math.round(s.getBoundingClientRect().top) })()`); if (top !== null && top === last) return; last = top; await sleep(300) } }
+  const waitNear = async (cond, label) => { for (let i = 0; i < 100; i++) { if (await p.eval(`(() => { try { return !!(${cond}) } catch { return false } })()`)) return; await toTop(); await sleep(300) } throw new Error('Timed out waiting for: ' + label) }
+  await toTop()
+  await waitNear(`document.querySelector('${sec} .p-period-head [data-fold]')`, 'period ' + from)
+  if (!(await p.eval(`document.querySelector('${sec}').hasAttribute('data-open')`))) await p.click(`${sec} .p-period-head [data-fold]`)
+  await waitNear(`document.querySelectorAll('${sec} [data-part-block]:not([data-part-block="all"])').length > 0`, 'banks of ' + from)
+  // Banks come in one after the other: each opened as it comes, until no new one comes.
+  for (let quiet = 0, i = 0; quiet < 4 && i < 80; i++) {
+    const opened = await p.eval(`(() => { const b = [...document.querySelectorAll('${sec} [data-part-block]' + (${withAll} ? '' : ':not([data-part-block="all"])'))].find(b => !b.hasAttribute('data-open') && b.querySelector('[data-part-head] [data-fold]')); if (!b) return false; b.querySelector('[data-part-head] [data-fold]').click(); return true })()`)
+    quiet = opened ? 0 : quiet + 1
+    await sleep(250)
+  }
+  await settle(p, sec)
+}
 // The transfers timeline of a period as drawn, beside what the engine says it holds.
 const timelineChecks = async (p, sec, t, label) => {
   const drawn = await p.eval(`(() => { const c = document.querySelector('${sec} [data-transfer-timeline]'); if (!c) return null; const svg = c.querySelector('svg'); const box = svg?.getBoundingClientRect(); const inside = (r) => r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1; const rects = (q) => [...c.querySelectorAll(q)].map(e => e.getBoundingClientRect()); const labels = rects('[data-timeline-label] rect'); const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom; let over = 0; for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) if (hit(labels[i], labels[j])) over++; return { lanes: [...c.querySelectorAll('[data-timeline-lane]')].map(e => e.dataset.timelineLane), banks: [...c.querySelectorAll('[data-timeline-bank]')].map(e => e.dataset.timelineBank), kinds: [...c.querySelectorAll('[data-timeline-event]')].map(e => e.dataset.timelineEvent), labels: labels.length, over, labelsInside: labels.every(inside), nets: [...c.querySelectorAll('[data-timeline-net]')].map(e => e.textContent), totals: Object.fromEntries([...c.querySelectorAll('[data-total]')].map(e => [e.dataset.total, e.innerText.replace(/\\s+/g, ' ')])), ticks: c.querySelectorAll('[data-timeline-tick]').length, width: box?.width ?? 0, page: document.documentElement.scrollWidth <= window.innerWidth } })()`)
@@ -289,18 +326,24 @@ try {
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(800)
 
+  // Periods start folded to their summary in Statements: Earnings, Expenses, Balance and Expenses / earnings, no table.
+  const augSec = 'section[data-period="2025-08-01"]'
+  await p.eval(`document.querySelector('${augSec}').scrollIntoView({ block: 'start' })`)
+  await p.waitFor(`!!document.querySelector('${augSec} [data-part-block="all"] [data-totals]')`, 30000, 'August summary')
+  const folded = await p.eval(`(() => { const s = document.querySelector('${augSec}'); return { open: s.hasAttribute('data-open'), tables: s.querySelectorAll('table').length, banks: s.querySelectorAll('[data-part-block]:not([data-part-block="all"])').length, stats: [...s.querySelectorAll('[data-part-block="all"] [data-stat]')].map(x => x.dataset.stat) } })()`)
+  check('a period starts folded to the summary of every bank together, no table', !folded.open && folded.tables === 0 && folded.banks === 0
+    && ['Earnings', 'Expenses', 'Balance', 'Expenses / earnings'].every((x) => folded.stats.includes(x)), JSON.stringify(folded))
+  await shot(p, '09a-period-folded.png')
   // transfers, card payments and investments: in their own folded table
-  await p.eval(`document.querySelector('section[data-period="2025-08-01"]').scrollIntoView({ block: 'start' })`)
-  await p.waitFor(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordion-root') !== null`, 20000, 'transfers section')
-  await settle(p, 'section[data-period="2025-08-01"]')
-  const mainHasMoves = await p.eval(`[...document.querySelector('section[data-period="2025-08-01"] table').querySelectorAll('tbody tr')].some(r => /Credit card payment|Transfer between accounts/.test(r.innerText))`)
-  check('transfers kept out of the main table, folded apart', !mainHasMoves)
-  await p.eval(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordionSummary-root').click()`)
-  await sleep(700)
-  await p.eval(`document.querySelector('section[data-period="2025-08-01"] .MuiAccordion-root').scrollIntoView({ block: 'center' })`)
+  await openPeriod(p, '2025-08-01')
+  const mainHasMoves = await p.eval(`[...document.querySelector('${augSec} [data-section="main"] table').querySelectorAll('tbody tr')].some(r => /Credit card payment|Transfer between accounts/.test(r.innerText))`)
+  check('transfers kept out of the main table, folded apart', !mainHasMoves && (await p.eval(`(() => { const m = document.querySelector('${augSec} [data-section="movements"]'); return !!m && !m.hasAttribute('data-open') && !m.querySelector('table') })()`)))
+  await p.click(`${augSec} [data-section="movements"] [data-fold]`)
+  await p.waitFor(`!!document.querySelector('${augSec} [data-movements] tbody tr')`, 10000, 'transfers table open')
+  await p.eval(`document.querySelector('${augSec} [data-section="movements"]').scrollIntoView({ block: 'center' })`)
   await sleep(400)
   await shot(p, '09b-transfers-folded-table.png')
-  const newest = await p.eval(`(() => { const d = [...document.querySelector('section[data-period="2025-08-01"] table').querySelectorAll('tbody tr td:first-child')].map(x => x.innerText); return d.length > 1 && new Date(d[0]) >= new Date(d[d.length - 1]) })()`)
+  const newest = await p.eval(`(() => { const d = [...document.querySelector('section[data-period="2025-08-01"] [data-section="main"] table').querySelectorAll('tbody tr td:first-child')].map(x => x.innerText); return d.length > 1 && new Date(d[0]) >= new Date(d[d.length - 1]) })()`)
   check('newest first by default', newest)
   // The transfers table has its own filters too: dates, categories and descriptions.
   const mv = 'section[data-period="2025-08-01"] [data-movements]'
@@ -319,7 +362,7 @@ try {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   await sleep(400)
   const mvOne = await mvRows()
-  check('transfers table: date, category, description and tag filters; one category shown', mvHeaders.join() === 'Date,Category,Description,Tags' && mvCats.length > 1
+  check('transfers table: date, category, description, tag and amount filters; one category shown', mvHeaders.slice(0, 4).join() === 'Date,Category,Description,Tags' && (mvHeaders[4] ?? '').startsWith('Amount (') && mvCats.length > 1
     && mvOne.length > 0 && mvOne.length < mvAll.length && mvOne.every((r) => r[1] === mvOne[0][1]), `${mvOne.length}/${mvAll.length} rows of ${mvOne[0]?.[1]}`)
   await p.eval(`[...document.querySelectorAll('${mv} th button')].find(b => b.innerText.trim() === 'Category').click()`)
   await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'transfers category filter')
@@ -331,10 +374,12 @@ try {
   // Every period fits the window, however many months there are (periods not drawn yet included).
   await p.scrollMain(0)
   check('periods never wider than the window', await p.eval(`(() => { const m = document.querySelector('main'); return m.scrollWidth <= m.clientWidth && [...document.querySelectorAll('section[data-period]')].every(s => s.getBoundingClientRect().right <= m.getBoundingClientRect().right) })()`))
-  // Table headers stay under the bar of tabs while the table scrolls.
+  // Table headers stay under the bar of tabs while the table scrolls (the latest period opened, as a person would).
+  const topFrom = await p.eval(`document.querySelector('section[data-period]').dataset.period`)
+  await openPeriod(p, topFrom)
   await p.eval(`(() => { const t = document.querySelector('section tbody tr:nth-child(12)'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 200 }) })()`)
   await sleep(300)
-  const sticky = await p.eval(`(() => { const th = document.querySelector('section thead th').getBoundingClientRect(); const head = document.querySelector('section [data-part-head]').getBoundingClientRect(); const bar = document.querySelector('main [class*=MuiToggleButtonGroup]').parentElement.getBoundingClientRect(); return [Math.round(th.top), Math.round(head.bottom), Math.round(head.top), Math.round(bar.bottom)] })()`)
+  const sticky = await p.eval(`(() => { const th = document.querySelector('section thead th').getBoundingClientRect(); const head = document.querySelector('section thead').closest('[data-part-block]').querySelector('[data-part-head]').getBoundingClientRect(); const bar = document.querySelector('main [class*=MuiToggleButtonGroup]').parentElement.getBoundingClientRect(); return [Math.round(th.top), Math.round(head.bottom), Math.round(head.top), Math.round(bar.bottom)] })()`)
   await shot(p, '09c-sticky-header.png')
   check('table headers stay visible while scrolling, under the bank’s name, itself under the bar', Math.abs(sticky[0] - sticky[1]) <= 2 && Math.abs(sticky[2] - sticky[3]) <= 2, sticky.join(' / '))
 
@@ -345,7 +390,7 @@ try {
   await p.waitFor(`document.querySelector('${sec} [data-totals]') !== null`, 20000, 'period loaded')
   await sleep(500)
   check('periods open on their statements, without charts', await p.eval(`document.querySelector('${sec} table') !== null && document.querySelector('${sec} [data-pie]') === null && document.querySelector('${sec} [data-flowchart]') === null`))
-  check('each bank starts with its totals, above its tables', await p.eval(`(() => { const b = document.querySelector('${sec} [data-part-block]'); const t = b.querySelector('[data-totals]'); return !!t && t.getBoundingClientRect().bottom <= b.querySelector('table').getBoundingClientRect().top && !!b.querySelector('[data-stat="Expenses / earnings"]') })()`))
+  check('each bank starts with its totals, above its tables', await p.eval(`(() => { const b = [...document.querySelectorAll('${sec} [data-part-block]')].find(b => b.querySelector('table')); const t = b.querySelector('[data-totals]'); return !!t && t.getBoundingClientRect().bottom <= b.querySelector('table').getBoundingClientRect().top && !!b.querySelector('[data-stat="Expenses / earnings"]') })()`))
   const ratio = await p.eval(`(() => { const s = document.querySelector('${sec}'); const bg = (l) => getComputedStyle(s.querySelector('[data-stat="' + l + '"]')).backgroundColor; const r = s.querySelector('[data-stat="Expenses / earnings"]'); return { text: r.innerText, rec: s.querySelector('[data-stat="Recurring payments, rent excluded"]').innerText, ratio: bg('Expenses / earnings'), exp: bg('Expenses'), earn: bg('Earnings') } })()`)
   const share = parseInt(ratio.text.match(/(\d+)%/)?.[1] ?? '0', 10)
   check('expenses / earnings red above 100%, green below, without the spent-of-earned line', !ratio.text.includes('spent of') && (share > 100 ? ratio.ratio === ratio.exp : ratio.ratio === ratio.earn), `${share}% ${ratio.ratio}`)
@@ -353,7 +398,7 @@ try {
   await p.clickText('Analytics', { selector: '[data-period-view] button' })
   await p.waitFor(`document.querySelector('${sec} [data-category-lines]') !== null`, 20000, 'charts view')
   await sleep(800)
-  check('analytics, General: pies, bars and category lines, no tables, no money moved', await p.eval(`(() => { const s = document.querySelector('${sec}'); return s.querySelectorAll('[data-pie]').length >= 2 && !!s.querySelector('[data-bars]') && !!s.querySelector('[data-category-lines]') && !s.querySelector('table:not([data-conversions])') && !!s.querySelector('[data-totals]') && !s.querySelector('[data-flowchart]') && !s.querySelector('[data-transfer-timeline]') })()`))
+  check('analytics, General: pies, bars and category lines, no tables, no summaries, no money moved', await p.eval(`(() => { const s = document.querySelector('${sec}'); return s.querySelectorAll('[data-pie]').length >= 2 && !!s.querySelector('[data-bars]') && !!s.querySelector('[data-category-lines]') && !s.querySelector('table:not([data-conversions])') && !s.querySelector('[data-totals]') && !s.querySelector('[data-flowchart]') && !s.querySelector('[data-transfer-timeline]') })()`))
   check('Analytics in two parts, General first', await p.eval(`[...document.querySelectorAll('[data-analytics-view] button')].map(b => b.innerText + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join()`) === 'General*,Transfers')
   check('the two parts under the Analytics button, on a line of their own', await p.eval(`(() => { const a = [...document.querySelectorAll('[data-period-view] button')].find(b => b.innerText === 'Analytics').getBoundingClientRect(); const g = document.querySelector('[data-analytics-view]').getBoundingClientRect(); return g.top >= a.bottom && Math.abs(g.left - a.left) <= 1 })()`))
   // Transfers: the money moved over time, then in total; none of the charts of General.
@@ -378,55 +423,83 @@ try {
   await analyticsPart(p, 'General')
   await p.waitFor(`document.querySelector('${sec} [data-bars]') !== null`, 20000, 'general view again')
   await settle(p, sec)
-  // Expenses per day: the amount of the day on hover.
-  await p.eval(`(() => { const f = document.querySelector('${sec} [data-bars]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 200 }) })()`)
-  await sleep(600)
-  const bar = await p.eval(`(() => { const r = [...document.querySelector('${sec} [data-bars]').querySelectorAll('rect')].filter(r => r.getBoundingClientRect().height > 2 && r.getBoundingClientRect().width < 60).sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
-  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bar.x - 2, y: bar.y - 2 })
-  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bar.x, y: bar.y })
-  await sleep(600)
+  // Income and expenses per day: the amounts of the day on hover (the bars grow in when drawn: measured once still).
+  await bringIntoView(p, `${sec} [data-bars]`)
+  // (While the view changes the charts of a bank are drawn again: for a moment there are none to measure.)
+  const tallest = () => p.eval(`(() => { const r = [...(document.querySelector('${sec} [data-bars]')?.querySelectorAll('rect.MuiBarChart-element') ?? [])].filter(r => r.getBoundingClientRect().height > 2).sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0]?.getBoundingClientRect(); return r ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), h: Math.round(r.height) } : null })()`)
+  // Measured when still, then pointed at; again if the page moved meanwhile (a period being drawn moves what is under it).
+  let bar = null
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await bringIntoView(p, `${sec} [data-bars]`)
+    const still = async () => { for (let i = 0, last = null; i < 40; i++) { bar = await tallest(); if (bar && last && bar.h === last.h && bar.y === last.y) break; last = bar; await sleep(150) } }
+    await still()
+    // None drawn yet (the charts of a bank come in after its pies): a little further down, inside August.
+    if (!bar) { await p.eval(`(() => { const s = document.querySelector('${sec}'), m = document.querySelector('main'); if (s && s.getBoundingClientRect().bottom > innerHeight + 400) m.scrollBy({ top: 400 }); else s?.scrollIntoView({ block: 'start' }) })()`); await sleep(800); continue }
+    // The bar itself in the middle of the screen (a chart taller than what is left under the bar can end below it).
+    if (bar.y < 200 || bar.y > 820) { await p.eval(`document.querySelector('main').scrollBy({ top: ${bar.y - 460} })`); await sleep(600); await still(); if (!bar || bar.y < 120 || bar.y > 900) continue }
+    for (const [dx, dy] of [[-2, -2], [0, 0], [1, 1]]) { await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bar.x + dx, y: bar.y + dy }); await sleep(150) }
+    if (await p.waitFor(`!!document.querySelector('.MuiChartsTooltip-root')`, 2000, 'bar tooltip').then(() => true, () => false)) break
+    await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
+  }
   const tip = await p.eval(`(() => { const t = document.querySelector('.MuiChartsTooltip-root'); if (!t) return null; const r = t.getBoundingClientRect(); return { text: t.innerText, x: r.left, y: r.top } })()`)
   await shot(p, '09e-day-hover.png')
-  check('amount spent that day shown on hover, next to the pointer', !!tip && /Day \d+/.test(tip.text) && /\$[\d,]+\.\d\d/.test(tip.text) && Math.abs(tip.y - bar.y) < 120 && Math.abs(tip.x - bar.x) < 200, JSON.stringify(tip))
+  check('income and expenses of that day shown on hover, next to the pointer', !!tip && /Day \d+/.test(tip.text) && /Expenses/.test(tip.text) && /\$[\d,]+\.\d\d/.test(tip.text) && !!bar && Math.abs(tip.y - bar.y) < 120 && Math.abs(tip.x - bar.x) < 200, JSON.stringify(tip))
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
-  // Expenses per category per day: under "Categories", the total and every category with expenses in the period (no
-  // drop-down), each ticked on or off; the total and the five largest at first; the scale follows the lines shown.
+  // Expenses per category per day: under "Categories", Selected total (the categories ticked, added together), Total
+  // (every expense, never added to the selected total), then every category with expenses in the period (no
+  // drop-down), each ticked on or off; the selected total and the five largest at first, the total not.
   // August is in CAD at every bank: all banks together hold every operation of the month in CAD.
   const augAll = `${sec} [data-part-block="all"]`
-  await p.eval(`(() => { const f = document.querySelector('${augAll} [data-category-lines]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
-  await sleep(600)
+  // Every bank together comes after the banks, drawn as it nears the screen.
+  for (let i = 0; i < 40 && !(await p.eval(`!!document.querySelector('${augAll} [data-category-lines]')`)); i++) {
+    await p.eval(`(() => { const b = [...document.querySelectorAll('${sec} [data-part-block]')].at(-1) ?? document.querySelector('${sec}'); b?.scrollIntoView({ block: 'end' }) })()`)
+    await sleep(500)
+  }
+  await bringIntoView(p, `${augAll} [data-category-lines]`)
   await shot(p, '09f-category-lines.png')
   const lineCount = () => p.eval(`document.querySelectorAll('${augAll} [data-category-lines] path.MuiLineChart-line').length`)
   const augSummary = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
   const choiceKeys = await p.eval(`[...document.querySelectorAll('${augAll} [data-category-choices] li[data-choice]')].map(l => l.dataset.choice)`)
-  const lineCats = choiceKeys.filter((k) => k !== '__total')
+  const lineCats = choiceKeys.filter((k) => !k.startsWith('__'))
   const linesText = await p.eval(`document.querySelector('${augAll} [data-category-lines]').innerText`)
-  check('categories listed under a Categories title: those with expenses in the period, no drop-down',
+  check('categories listed under a Categories title, after Selected total and Total: those with expenses in the period, no drop-down',
     linesText.includes('Categories') && !/Top \d|All \(|chosen/.test(linesText) && !(await p.eval(`!!document.querySelector('${augAll} [data-category-lines] [role=combobox]')`))
-      && choiceKeys[0] === '__total' && lineCats.join() === augSummary.byTopCategory.map((c) => c.key).join(), `${lineCats.length} categories`)
-  check('total and the five largest categories ticked at first', (await lineCount()) === 1 + Math.min(5, lineCats.length), `${await lineCount()} lines`)
+      && choiceKeys[0] === '__selected' && choiceKeys[1] === '__total' && lineCats.join() === augSummary.byTopCategory.map((c) => c.key).join(), `${lineCats.length} categories`)
+  const isTicked = (key) => p.eval(`document.querySelector('${augAll} [data-category-choices] li[data-choice="${key}"] input').checked`)
+  check('the selected total and the five largest categories ticked at first, the total not', (await lineCount()) === 1 + Math.min(5, lineCats.length) && !(await isTicked('__total')), `${await lineCount()} lines`)
   const tickLine = async (key) => { await p.eval(`document.querySelector('${augAll} [data-category-choices] li[data-choice="${key}"] input').click()`); await sleep(350) }
   const scaleTop = () => p.eval(`Math.max(...[...document.querySelectorAll('${augAll} [data-category-lines] .MuiChartsAxis-directionY text')].map(t => { const v = parseFloat(t.textContent.replace(/[^0-9.]/g, '')); return /K/.test(t.textContent) ? v * 1000 : v }).filter(v => !isNaN(v)))`)
-  const withTotal = await scaleTop()
-  await tickLine('__total')
-  const noTotal = await lineCount()
   const withoutTotal = await scaleTop()
-  await shot(p, '09g-category-lines-without-total.png')
-  check('the total can be unticked, the scale follows the lines shown', noTotal === Math.min(5, lineCats.length) && withoutTotal < withTotal, `${noTotal} lines, scale ${withTotal} -> ${withoutTotal}`)
+  await tickLine('__total')
+  const withTotalLines = await lineCount()
+  const withTotal = await scaleTop()
+  await shot(p, '09g-category-lines-with-total.png')
+  check('the total ticked: one more line, the scale follows the lines shown', withTotalLines === 2 + Math.min(5, lineCats.length) && withTotal >= withoutTotal, `${withTotalLines} lines, scale ${withoutTotal} -> ${withTotal}`)
+  const sums = () => p.eval(`(() => { const t = (k) => document.querySelector('${augAll} li[data-choice="' + k + '"]').innerText.replace(/\\s+/g, ' '); return { selected: t('__selected'), total: t('__total') } })()`)
+  const sums1 = await sums()
+  await tickLine(lineCats[0])
+  const sums2 = await sums()
+  await tickLine(lineCats[0])
+  check('the selected total changes with the ticks, the total never', sums1.selected !== sums2.selected && sums1.total === sums2.total, `${JSON.stringify(sums1)} -> ${JSON.stringify(sums2)}`)
+  await tickLine('__total')
   for (const k of lineCats.slice(5)) await tickLine(k)
   const allLines = await lineCount()
   for (const k of lineCats) await tickLine(k)
+  const noCategory = await lineCount()
+  await tickLine('__selected')
   const noLines = await lineCount()
   await tickLine(lineCats[Math.min(2, lineCats.length - 1)])
   const oneLine = await lineCount()
-  await tickLine('__total')
-  check('any number of categories, from none to all, the total on or off', allLines === lineCats.length && noLines === 0 && oneLine === 1 && (await lineCount()) === 2, `all ${allLines}, none ${noLines}, one ${oneLine}`)
+  const oneScale = await scaleTop()
+  await tickLine('__selected')
+  check('any number of categories, from none to all, each total on or off', allLines === 1 + lineCats.length && noCategory === 1 && noLines === 0 && oneLine === 1 && oneScale < withTotal && (await lineCount()) === 2,
+    `all ${allLines}, no category ${noCategory}, none ${noLines}, one ${oneLine} (scale ${oneScale} under the total's ${withTotal})`)
   // The choices stay when the period goes far from the screen and comes back.
   await p.scrollMain(0)
   await p.eval(`document.querySelector('main').scrollBy({ top: 30000 })`)
   await sleep(1500)
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
-  await p.waitFor(`document.querySelector('${augAll} [data-category-lines]') !== null`, 20000, 'period back')
+  await p.waitFor(`document.querySelector('${augAll} [data-category-lines]') !== null`, 30000, 'period back')
   await sleep(800)
   check('chosen lines kept after scrolling away and back', (await lineCount()) === 2)
   // Pies: shares with two decimals, so a small share never reads 0%.
@@ -455,18 +528,18 @@ try {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   await sleep(300)
   // Filters of a table: dates, categories and brands, each all, none, one or any; they stay when the period scrolls away.
-  const rowsOf = () => p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].map(r => [...r.children].map(c => c.innerText))`)
+  const rowsOf = () => p.eval(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('tbody tr')].map(r => [...r.children].map(c => c.innerText))`)
   const openFilter = async (label) => {
     await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
     await sleep(300)
-    await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === '${label}').click()`)
+    await p.eval(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === '${label}').click()`)
     await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, label + ' menu')
     await sleep(250)
   }
   const pick = async (choice) => { await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === ${JSON.stringify(choice)}).click()`); await sleep(250) }
   const closeMenu = async () => { await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await sleep(400) }
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
-  await p.waitFor(`document.querySelector('${sec} table') !== null`, 20000, 'August table')
+  await p.waitFor(`document.querySelector('${sec} [data-section="main"] table') !== null`, 20000, 'August table')
   await sleep(500)
   const allRows = await rowsOf()
   await openFilter('Category')
@@ -484,7 +557,7 @@ try {
   await p.eval(`document.querySelector('main').scrollBy({ top: 30000 })`)
   await sleep(1500)
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
-  await p.waitFor(`document.querySelector('${sec} table') !== null`, 20000, 'table back')
+  await p.waitFor(`document.querySelector('${sec} [data-section="main"] table') !== null`, 20000, 'table back')
   await sleep(600)
   check('category filter kept after scrolling away and back', JSON.stringify(await rowsOf()) === JSON.stringify(oneCat))
   await openFilter('Category')
@@ -518,8 +591,8 @@ try {
   check('every operation shown again', (await rowsOf()).length === allRows.length)
 
   // correcting a category teaches the dictionary
-  const before = await p.eval(`document.querySelector('section tbody tr td:nth-child(3)').innerText`)
-  await p.click('section tbody tr td:nth-child(2) button', 0)
+  const before = await p.eval(`document.querySelector('section [data-section="main"] tbody tr td:nth-child(3)').innerText`)
+  await p.click('section [data-section="main"] tbody tr td:nth-child(2) button', 0)
   await sleep(300)
   await p.eval(`[...document.querySelectorAll('.MuiListSubheader-root')].find(e => /income/i.test(e.innerText)).scrollIntoView({ block: 'start' })`)
   await sleep(300)
@@ -577,8 +650,8 @@ try {
   check('category renamed', true)
   // the picker shows it nested and coloured
   await p.clickText('Periods', { selector: 'nav button' })
-  await p.waitFor(`document.querySelector('section tbody tr td:nth-child(2) button') !== null`, 20000, 'operations')
-  await p.click('section tbody tr td:nth-child(2) button', 0)
+  await p.waitFor(`document.querySelector('section [data-section="main"] tbody tr td:nth-child(2) button') !== null`, 20000, 'operations')
+  await p.click('section [data-section="main"] tbody tr td:nth-child(2) button', 0)
   await sleep(300)
   await p.eval(`[...document.querySelectorAll('[role=menuitem]')].find(e => e.innerText === 'Brushes').scrollIntoView({ block: 'center' })`)
   await sleep(200)
@@ -586,7 +659,7 @@ try {
   await p.clickText('Brushes', { selector: '[role=menuitem]' })
   await p.waitFor(`document.querySelector('[data-scope-dialog]') !== null`, 5000, 'scope question')
   await p.clickText('Only this one', { selector: '[role=dialog] button' })
-  await p.waitFor(`[...document.querySelectorAll('section tbody tr td:nth-child(2)')].some(td => td.innerText === 'Brushes')`, 10000, 'subcategory set')
+  await p.waitFor(`[...document.querySelectorAll('section [data-section="main"] tbody tr td:nth-child(2)')].some(td => td.innerText === 'Brushes')`, 10000, 'subcategory set')
   await sleep(300)
   await shot(p, '12f-colored-pill.png')
   check('operation put in a subcategory', true)
@@ -636,7 +709,7 @@ try {
   check('Food counts Groceries, Restaurants and the nested levels once', cents(augNested.byTopCategory.find((s) => s.key === catId('Food (test)'))?.amount ?? 0) === cents(food)
     && cents(augNested.byTopCategory.reduce((s, x) => s + x.amount, 0)) === cents(augNested.expenses) && cents(augNested.expenses) === cents(augBefore.expenses)
     && cents(augNested.byCategory.reduce((s, x) => s + x.amount, 0)) === cents(augNested.expenses), `Food ${food.toFixed(2)}, expenses ${augNested.expenses}`)
-  const analyticsOfAugust = async () => {
+  const analyticsOfAugust = async (ready = () => true) => {
     await p.clickText('Periods', { selector: 'nav button' })
     await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods')
     await p.clickText('Analytics', { selector: '[data-period-view] button' })
@@ -644,10 +717,24 @@ try {
     await p.waitFor(`document.querySelector('${sec} [data-pie="Expenses per category"]') !== null && document.querySelector('${sec} [data-category-lines]') !== null`, 20000, 'August analytics')
     await sleep(800)
     await settle(p, sec)
-    return p.eval(`(() => { const s = document.querySelector('${sec}'); return { pie: [...s.querySelectorAll('[data-pie="Expenses per category"] li')].map(l => l.innerText.split('\\n')[0]), lines: [...s.querySelectorAll('[data-category-choices] li[data-choice]')].map(l => l.dataset.choice), expenses: s.querySelector('[data-stat="Expenses"]').innerText } })()`)
+    // The lines of every bank together (each bank lists only its own categories): drawn as that part nears the screen.
+    for (let i = 0; i < 40 && !(await p.eval(`!!document.querySelector('${sec} [data-part-block="all"] [data-category-choices]')`)); i++) {
+      await p.eval(`([...document.querySelectorAll('${sec} [data-part-block]')].at(-1) ?? document.querySelector('${sec}'))?.scrollIntoView({ block: 'end' })`)
+      await sleep(500)
+    }
+    const read =() => p.eval(`(() => { const s = document.querySelector('${sec}'); return { pie: [...s.querySelectorAll('[data-pie="Expenses per category"] li')].map(l => l.innerText.split('\\n')[0]), lines: [...s.querySelectorAll('[data-part-block="all"] [data-category-choices] li[data-choice]')].map(l => l.dataset.choice), expenses: s.querySelector('[data-part-block="all"] [data-pie="Expenses per category"]')?.innerText.match(/Total\\s+(\\S+)/)?.[1] } })()`)
+    let got = await read()
+    for (let i = 0; i < 40 && !ready(got); i++) { await sleep(250); got = await read() }
+    return got
   }
   const showPie = async (name) => {
-    await p.eval(`(() => { const s = document.querySelector('${sec} [data-pie="Expenses per category"]'); document.querySelector('main').scrollBy({ top: s.getBoundingClientRect().top - 160 }) })()`)
+    // Every bank together's pie, drawn again if the list of periods was made again meanwhile.
+    for (let i = 0; i < 40 && !(await p.eval(`!!document.querySelector('${sec} [data-part-block="all"] [data-pie="Expenses per category"]')`)); i++) {
+      await p.eval(`(() => { const parts = document.querySelectorAll('${sec} [data-part-block]'); (parts.length ? parts[parts.length - 1] : document.querySelector('${sec}'))?.scrollIntoView({ block: 'end' }) })()`)
+      await sleep(500)
+    }
+    await bringIntoView(p, `${sec} [data-part-block="all"] [data-pie="Expenses per category"]`)
+    await p.eval(`(() => { const s = document.querySelector('${sec} [data-part-block="all"] [data-pie="Expenses per category"]'); if (s) document.querySelector('main').scrollBy({ top: s.getBoundingClientRect().top - 160 }) })()`)
     await sleep(500)
     await shot(p, name)
   }
@@ -664,28 +751,27 @@ try {
   check('first level setting in Periods, on by default', await p.eval(`(() => { const i = ${firstLevelSwitch}; return i.checked && !!i.closest('[data-group="Periods"]') })()`))
   await p.eval(`${firstLevelSwitch}.click()`)
   await p.waitFor(`${firstLevelSwitch}.checked === false`, 5000, 'setting off')
-  const everyLevel = await analyticsOfAugust()
+  const everyLevel = await analyticsOfAugust((x) => !x.pie.includes('Food (test)') && !x.lines.includes(catId('Food (test)')))
   await showPie('12k-charts-every-level.png')
   // (The pie keeps its five largest slices and "Other" by default; the list of the lines has every category.)
   check('setting off: every nested category in the charts, Food gone, same expenses', ['Groceries', 'Restaurants & cafés'].every((n) => everyLevel.pie.includes(n)) && !everyLevel.pie.includes('Food (test)')
     && [1, 2, 3, 4].every((i) => everyLevel.lines.includes(catId(`Nested ${i}`)))
-    && everyLevel.lines.includes(catId('Nested 4')) && everyLevel.lines.includes('groceries') && !everyLevel.lines.includes(catId('Food (test)')) && everyLevel.expenses === firstLevel.expenses, everyLevel.pie.join(', '))
+    && everyLevel.lines.includes(catId('Nested 4')) && everyLevel.lines.includes('groceries') && !everyLevel.lines.includes(catId('Food (test)')) && everyLevel.expenses === firstLevel.expenses, JSON.stringify({ lines: everyLevel.lines, nested: [1, 2, 3, 4].map((i) => catId(`Nested ${i}`)), expenses: [firstLevel.expenses, everyLevel.expenses] }))
   await p.clickText('Statements', { selector: '[data-period-view] button' })
-  await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
-  await p.waitFor(`document.querySelector('${sec} table') !== null`, 20000, 'August statements')
-  await sleep(500)
+  await openPeriod(p, '2025-08-01')
   // Every bank's table of the month: the categories its operations have.
   const tableCats = []
   const bankParts = `${sec} [data-part-block]:not([data-part-block="all"])`
+  await p.waitFor(`[...document.querySelectorAll('${bankParts}')].length > 0 && [...document.querySelectorAll('${bankParts}')].every(b => b.querySelector('[data-section="main"] table'))`, 30000, 'August banks open')
   const bankCount = await p.eval(`document.querySelectorAll('${bankParts}').length`)
   for (let i = 0; i < bankCount; i++) {
-    await p.eval(`[...document.querySelectorAll('${bankParts}')[${i}].querySelector('table').querySelectorAll('th button')].find(b => b.innerText.trim() === 'Category').click()`)
+    await p.eval(`[...document.querySelectorAll('${bankParts}')[${i}].querySelector('[data-section="main"] table').querySelectorAll('th button')].find(b => b.innerText.trim() === 'Category').click()`)
     await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'category filter')
     tableCats.push(...await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].map(l => l.dataset.choice)`))
     await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
     await sleep(300)
   }
-  check('the operations keep their own categories in the tables', [1, 2, 3, 4].every((i) => tableCats.includes(catId(`Nested ${i}`))) && tableCats.includes('groceries') && !tableCats.includes(catId('Food (test)')))
+  check('the operations keep their own categories in the tables', [1, 2, 3, 4].every((i) => tableCats.includes(catId(`Nested ${i}`))) && tableCats.includes('groceries') && !tableCats.includes(catId('Food (test)')), `${bankCount} banks: ${[...new Set(tableCats)].join(', ')}`)
   // Clean up: the setting back on, the operations back in their categories, the test categories deleted.
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('General', { selector: 'button' })
@@ -757,14 +843,14 @@ try {
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${sec} table [data-tag-cell]') !== null`, 20000, 'tags column')
   await sleep(500)
-  const tagRows = () => p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].filter(r => r.children.length > 2).map(r => ({ cat: r.children[1].innerText, tags: [...r.querySelectorAll('[data-tag]')].map(t => t.dataset.tag) }))`)
-  await p.waitFor(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].some(r => r.children[1]?.innerText === 'Restaurants & cafés')`, 15000, 'restaurant rows').catch(() => undefined)
+  const tagRows = () => p.eval(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('tbody tr')].filter(r => r.children.length > 2).map(r => ({ cat: r.children[1].innerText, tags: [...r.querySelectorAll('[data-tag]')].map(t => t.dataset.tag) }))`)
+  await p.waitFor(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('tbody tr')].some(r => r.children[1]?.innerText === 'Restaurants & cafés')`, 15000, 'restaurant rows').catch(() => undefined)
   const tagBefore = await tagRows()
   const restaurantRows = tagBefore.filter((r) => r.cat === 'Restaurants & cafés')
   check('Tags column: a category\'s tags on every one of its operations', restaurantRows.length > 0 && restaurantRows.every((r) => r.tags.join() === 'Trip (test),Work (test)')
     && tagBefore.filter((r) => r.cat !== 'Restaurants & cafés').every((r) => r.tags.length === 0), `${restaurantRows.length} restaurant rows`)
   const target = tagBefore.findIndex((r) => r.cat !== 'Restaurants & cafés')
-  await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')][${target}].querySelector('[data-tag-cell]').click()`)
+  await p.eval(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('tbody tr')][${target}].querySelector('[data-tag-cell]').click()`)
   await p.waitFor(`document.querySelector('[data-tag-choice="Family (test)"]') !== null`, 5000, 'tag menu')
   await p.eval(`document.querySelector('[data-tag-choice="Family (test)"]').click()`)
   await sleep(300)
@@ -772,13 +858,13 @@ try {
   await sleep(300)
   await shot(p, '22c-tag-cell.png')
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
-  await p.waitFor(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')][${target}].querySelectorAll('[data-tag]').length === 2`, 10000, 'own tags shown')
+  await p.waitFor(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('tbody tr')][${target}].querySelectorAll('[data-tag]').length === 2`, 10000, 'own tags shown')
   const augTagged = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
   const ownOp = augTagged.transactions.find((t) => t.ownTags.length > 0)
   check('two tags put on one operation', ownOp?.ownTags.length === 2 && ownOp.tags.includes(tagIds['Family (test)']) && ownOp.tags.includes(tagIds['Work (test)']))
   // The Tags filter: none, then one tag (once the period is read again with the new tags).
   for (let i = 0; i < 20; i++) {
-    await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
+    await p.eval(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
     await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'tags filter')
     if (await p.eval(`!!document.querySelector('[role=menu] li[data-choice="${tagIds['Family (test)']}"]')`)) break
     await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
@@ -791,10 +877,10 @@ try {
   await sleep(250)
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   await sleep(400)
-  await p.waitFor(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('tbody tr')].filter(r => r.children.length > 2).length === 1`, 10000, 'one tagged row').catch(() => undefined)
+  await p.waitFor(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('tbody tr')].filter(r => r.children.length > 2).length === 1`, 10000, 'one tagged row').catch(() => undefined)
   const familyRows = await tagRows()
   check('Tags filter: one tag', familyRows.length === 1 && familyRows[0].tags.includes('Family (test)'))
-  await p.eval(`[...document.querySelectorAll('${sec} table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
+  await p.eval(`[...document.querySelectorAll('${sec} [data-section="main"] table')[0].querySelectorAll('th button')].find(b => b.innerText.trim() === 'Tags').click()`)
   await p.waitFor(`document.querySelector('[role=menu]') !== null`, 5000, 'tags filter')
   await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === 'all').click()`)
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
@@ -814,59 +900,84 @@ try {
   const piePerMode = {}
   for (const mode of ['Year', 'All time', 'Custom']) {
     await p.clickText(mode, { selector: 'button' })
-    await p.waitFor(`document.querySelector('section [data-pie="Tags"]') !== null || document.querySelector('section')?.innerText.includes('No tagged expenses')`, 20000, mode + ' tags pie')
-    await sleep(500)
-    piePerMode[mode] = await p.eval(`document.querySelector('section [data-pie="Tags"]') ? [...document.querySelectorAll('section [data-pie="Tags"] li')].length : 0`)
+    // The period holding the tagged operations of August 2025: the year 2025, all time, the custom period.
+    const at = mode === 'Year' ? 'section[data-period="2025-01-01"]' : 'section[data-period]'
+    const slices = `document.querySelectorAll('${at} [data-pie="Tags"] li').length`
+    for (let i = 0; i < 60 && !(await p.eval(`${slices} > 0`)); i++) {
+      await p.eval(`(() => { const s = document.querySelector('${at}'); if (!s) return; const t = s.querySelector('[data-pie="Tags"]'); if (t) document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 200 }); else if (s.getBoundingClientRect().top > 300 || s.getBoundingClientRect().bottom < 300) s.scrollIntoView({ block: 'start' }); else document.querySelector('main').scrollBy({ top: 500 }) })()`)
+      await sleep(400)
+    }
+    piePerMode[mode] = await p.eval(slices)
   }
   check('Tags pie in Year, All time and Custom periods', Object.values(piePerMode).every((n) => n >= 1), JSON.stringify(piePerMode))
   await p.clickText('Month', { selector: 'button' })
   await sleep(600)
 
-  // ---- Summary (left of Statements): only the balance, by month (or by year beyond a year), every kind of period.
-  await p.clickText('Summary', { selector: '[data-period-view] button' })
-  await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
-  await p.waitFor(`document.querySelector('${sec} [data-summary]') !== null`, 20000, 'month summary')
-  await sleep(400)
-  const viewOrder = await p.eval(`[...document.querySelectorAll('[data-period-view] button')].map(b => b.innerText.trim()).join()`)
-  const monthSummary = await p.eval(`(() => { const s = document.querySelector('${sec}'); return { stats: [...s.querySelectorAll('[data-stat]')].map(x => x.dataset.stat), text: s.innerText, tables: s.querySelectorAll('table').length, pies: s.querySelectorAll('[data-pie]').length } })()`)
-  const augBalance = (await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })).balance
-  check('Summary first, a month shows only its balance under its title and days', viewOrder === 'Summary,Statements,Analytics' && monthSummary.stats.join() === 'Balance' && monthSummary.tables === 0 && monthSummary.pies === 0
-    && monthSummary.text.includes('August 2025') && monthSummary.text.includes('31 days') && monthSummary.text.includes(Math.abs(augBalance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), monthSummary.stats.join())
-  await shot(p, '23a-summary-month.png')
-  await p.clickText('Year', { selector: 'button' })
-  await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'year summary')
-  await sleep(500)
-  const yearCard = await p.eval(`(() => { const s = document.querySelector('section[data-period="2025-01-01"]'); return { parts: s.querySelectorAll('[data-part]').length, stats: [...s.querySelectorAll('[data-stat]')].map(x => x.dataset.stat).join(), text: s.innerText } })()`)
-  // The Summary is global: every bank of the year together, in the global display currency.
-  const yearSum = (await p.engine('periods.report', { from: '2025-01-01', to: '2025-12-31', granularity: 'year' })).global
-  check('Summary of a year: the year alone, with its balance', yearCard.parts === 0 && yearCard.stats === 'Balance' && yearSum.breakdown.length === 1
-    && cents(yearSum.breakdown[0].balance) === cents(yearSum.balance) && yearCard.text.includes(Math.abs(yearSum.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), yearCard.stats)
-  await shot(p, '23b-summary-year.png')
-  await p.clickText('All time', { selector: 'button' })
-  await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'all time summary')
-  await sleep(500)
-  const allParts = await p.eval(`[...document.querySelector('section [data-summary]').querySelectorAll('[data-part]')].map(x => x.dataset.stat)`)
-  check('Summary of more than a year: by year', allParts.length >= 2 && allParts.every((t) => /^\d{4}(, from |$)/.test(t)), allParts.join(' | '))
-  await shot(p, '23c-summary-all-time.png')
-  await p.clickText('Custom', { selector: 'button' })
-  await p.waitFor(`document.querySelector('section [data-summary]') !== null`, 20000, 'custom summary')
-  check('Summary of a custom period', await p.eval(`document.querySelector('section [data-summary] [data-stat="Balance"]') !== null`))
-  await p.clickText('Month', { selector: 'button' })
+  // ---- Folded periods (Statements; they replace the Summary view): every kind of period folds to the summary of every
+  // bank together, Earnings, Expenses, Balance and Expenses / earnings, in the global display currency; Fold
+  // everything and Unfold everything in the bar.
   await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await sleep(600)
+  const viewOrder = await p.eval(`[...document.querySelectorAll('[data-period-view] button')].map(b => b.innerText.trim()).join()`)
+  check('Statements then Analytics, no Summary view', viewOrder === 'Statements,Analytics', viewOrder)
+  const foldAll = async (open) => {
+    const label = await p.eval(`document.querySelector('[data-fold-everything]').innerText.trim()`)
+    if (label === (open ? 'Unfold everything' : 'Fold everything')) await p.click('[data-fold-everything]')
+    await sleep(800)
+  }
+  await foldAll(false)
+  const foldedSummary = async (sel) => {
+    await p.eval(`document.querySelector('${sel}').scrollIntoView({ block: 'start' })`)
+    await p.waitFor(`!!document.querySelector('${sel} [data-part-block="all"] [data-totals]')`, 30000, 'summary of ' + sel)
+    await sleep(300)
+    return p.eval(`(() => { const s = document.querySelector('${sel}'); const all = s.querySelector('[data-part-block="all"]'); return { open: s.hasAttribute('data-open'), tables: s.querySelectorAll('table').length, banks: s.querySelectorAll('[data-part-block]:not([data-part-block="all"])').length, stats: [...all.querySelectorAll('[data-stat]')].map(x => x.dataset.stat), balance: all.querySelector('[data-stat="Balance"]').innerText, text: s.innerText } })()`)
+  }
+  const money2 = (v) => Math.abs(v).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const isSummary = (f) => !f.open && f.tables === 0 && f.banks === 0 && ['Earnings', 'Expenses', 'Balance', 'Expenses / earnings'].every((x) => f.stats.includes(x))
+  const augFolded = await foldedSummary(sec)
+  const augReport = await p.engine('periods.report', { from: '2025-08-01', to: '2025-08-31', granularity: 'month' })
+  check('a folded month: the summary of every bank together under its title and days, no table', isSummary(augFolded) && augFolded.text.includes('August 2025') && augFolded.text.includes('31 days')
+    && augFolded.balance.includes(money2(augReport.global.balance)), JSON.stringify({ stats: augFolded.stats, balance: augFolded.balance }))
+  await shot(p, '23a-folded-month.png')
+  await p.clickText('Year', { selector: 'button' })
+  await p.waitFor(`!!document.querySelector('section[data-period="2025-01-01"]')`, 20000, 'year 2025')
+  const yearFolded = await foldedSummary('section[data-period="2025-01-01"]')
+  const yearSum = (await p.engine('periods.report', { from: '2025-01-01', to: '2025-12-31', granularity: 'year' })).global
+  check('a folded year: the summary of every bank together, its balance', isSummary(yearFolded) && yearFolded.balance.includes(money2(yearSum.balance)), JSON.stringify({ stats: yearFolded.stats, balance: yearFolded.balance }))
+  await shot(p, '23b-folded-year.png')
+  await p.clickText('All time', { selector: 'button' })
+  await p.waitFor(`!!document.querySelector('section[data-period]')`, 20000, 'all time')
+  const allFrom = await p.eval(`document.querySelector('section[data-period]').dataset.period`)
+  const allFolded = await foldedSummary(`section[data-period="${allFrom}"]`)
+  check('All time folded: the summary of every bank together', isSummary(allFolded), JSON.stringify(allFolded.stats))
+  await shot(p, '23c-folded-all-time.png')
+  // Unfold everything opens the period, then every bank in it (all banks first); Fold everything folds it back.
+  await foldAll(true)
+  await p.waitFor(`document.querySelectorAll('section[data-period="${allFrom}"] [data-part-block]:not([data-part-block="all"])').length > 0`, 30000, 'banks of all time')
+  const unfolded = await p.eval(`(() => { const s = document.querySelector('section[data-period="${allFrom}"]'); const parts = [...s.querySelectorAll('[data-part-block]')]; return { open: s.hasAttribute('data-open'), first: parts[0]?.dataset.partBlock, banks: parts.length - 1, label: document.querySelector('[data-fold-everything]').innerText.trim() } })()`)
+  check('Unfold everything: the period open, all banks first, then each bank; the button then folds', unfolded.open && unfolded.first === 'all' && unfolded.banks > 0 && unfolded.label === 'Fold everything', JSON.stringify(unfolded))
+  await shot(p, '23d-unfolded-all-time.png')
+  await foldAll(false)
+  check('Fold everything folds them back', isSummary(await foldedSummary(`section[data-period="${allFrom}"]`)))
+  await p.clickText('Custom', { selector: 'button' })
+  await p.waitFor(`!!document.querySelector('section[data-period] [data-part-block="all"] [data-stat="Balance"]')`, 20000, 'custom summary')
+  check('a custom period folds to its summary too', isSummary(await foldedSummary('section[data-period]')))
+  await p.clickText('Month', { selector: 'button' })
   await sleep(600)
 
   // ---- Banks side by side (the samples have Canadian banks in CAD and French banks in EUR in October 2025): every bank
   // in the display currency, then all banks together; every euro operation converted at the rate of its day, with the
   // amount its bank wrote under it.
   const octSec = 'section[data-period="2025-10-01"]'
-  await p.eval(`document.querySelector('${octSec}').scrollIntoView({ block: 'start' })`)
+  // Opened as a person does: the period, every bank together (where how amounts are converted is told), each bank.
+  await openPeriod(p, '2025-10-01', true)
   await p.waitFor(`document.querySelector('${octSec} [data-conversion-panel]') !== null`, 30000, 'October with all banks')
   await sleep(500)
   const octUi = await p.eval(`(() => { const s = document.querySelector('${octSec}'); return { parts: [...s.querySelectorAll('[data-part-block]')].map(b => [b.dataset.partBlock, b.querySelector('[data-part-name]').textContent, b.querySelector('[data-part-currency]').textContent]), balance: s.querySelector('[data-part-block="all"] [data-totals] [data-stat="Balance"]').textContent, panel: s.querySelector('[data-conversion-panel]').textContent, originals: [...s.querySelectorAll('[data-original]')].map(o => o.textContent).slice(0, 3) } })()`)
   const oct = await p.engine('periods.report', { from: '2025-10-01', to: '2025-10-31', granularity: 'month' })
   const eurLines = oct.conversion.lines.filter((l) => l.from === 'EUR' && l.to === 'CAD')
-  check('a block per bank in the display currency (euro banks shown EUR → CAD), then all banks in CAD', octUi.parts.length === oct.banks.length + 1
-    && oct.banks.every((b) => b.currency === 'CAD') && octUi.parts.some((x) => x[2] === 'EUR → CAD') && octUi.parts.at(-1).join() === 'all,All banks,CAD', octUi.parts.map((x) => x[1] + ' ' + x[2]).join(' | '))
+  check('all banks in CAD first, then a block per bank in the display currency (euro banks shown EUR → CAD)', octUi.parts.length === oct.banks.length + 1
+    && oct.banks.every((b) => b.currency === 'CAD') && octUi.parts.some((x) => x[2] === 'EUR → CAD') && octUi.parts[0].join() === 'all,All banks,CAD', octUi.parts.map((x) => x[1] + ' ' + x[2]).join(' | '))
   check('all banks = every bank added up, each euro operation converted on its own', eurLines.length > 0 && eurLines.every((l) => l.unconverted === 0 && l.rates.length > 0)
     && cents(oct.global.expenses) === cents(oct.banks.reduce((x, b) => x + b.summary.expenses, 0))
     && cents(oct.global.earnings) === cents(oct.banks.reduce((x, b) => x + b.summary.earnings, 0))
@@ -879,9 +990,9 @@ try {
   check('the rate of every day with operations on demand', dayRates === eurLines[0].rates.length, `${dayRates} days`)
   await shot(p, '24a-banks-and-conversion.png')
   // The bank's name stays at the top of the screen while its table scrolls, the table's header just under it.
-  await p.eval(`(() => { const t = document.querySelector('${octSec} [data-part-block] tbody tr:nth-child(12)'); const m = document.querySelector('main'); m.scrollTop += t.getBoundingClientRect().top - m.getBoundingClientRect().top - 220 })()`)
+  await p.eval(`(() => { const t = [...document.querySelectorAll('${octSec} [data-part-block]')].find(b => b.querySelector('[data-section="main"] table')).querySelector('tbody tr:nth-child(12)'); const m = document.querySelector('main'); m.scrollTop += t.getBoundingClientRect().top - m.getBoundingClientRect().top - 220 })()`)
   await sleep(500)
-  const pinned = await p.eval(`(() => { const b = document.querySelector('${octSec} [data-part-block]'); const h = b.querySelector('[data-part-head]').getBoundingClientRect(); const th = b.querySelector('thead th').getBoundingClientRect(); const bar = document.querySelector('[data-period-view]').parentElement.parentElement.getBoundingClientRect(); return { bar: Math.round(bar.bottom), head: [Math.round(h.top), Math.round(h.bottom)], th: [Math.round(th.top), Math.round(th.bottom)], top: Math.round(b.getBoundingClientRect().top) } })()`)
+  const pinned = await p.eval(`(() => { const b = [...document.querySelectorAll('${octSec} [data-part-block]')].find(b => b.querySelector('[data-section="main"] table')); const h = b.querySelector('[data-part-head]').getBoundingClientRect(); const th = b.querySelector('[data-section="main"] thead th').getBoundingClientRect(); const bar = document.querySelector('main [class*=MuiToggleButtonGroup]').parentElement.getBoundingClientRect(); return { bar: Math.round(bar.bottom), head: [Math.round(h.top), Math.round(h.bottom)], th: [Math.round(th.top), Math.round(th.bottom)], top: Math.round(b.getBoundingClientRect().top) } })()`)
   check('the bank stays named while its table scrolls, the table header under its name', pinned.top < pinned.head[0] && Math.abs(pinned.head[0] - pinned.bar) <= 1 && Math.abs(pinned.th[0] - pinned.head[1]) <= 1, JSON.stringify(pinned))
   await shot(p, '24b-bank-name-pinned.png')
   // Money moved in October: the banks as boxes holding their accounts; 500 EUR sent from the Caisse d'Epargne to
@@ -910,11 +1021,11 @@ try {
   await analyticsPart(p, 'General')
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(600)
-  // The Summary stays global.
-  await p.clickText('Summary', { selector: '[data-period-view] button' })
-  await p.waitFor(`document.querySelector('${octSec} [data-summary]') !== null`, 20000, 'October summary')
-  check('the Summary is the global balance', (await p.eval(`document.querySelector('${octSec} [data-summary]').innerText`)).includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })))
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  // Folded, October shows the global balance: every bank together, in the display currency.
+  await p.click(`${octSec} .p-period-head [data-fold]`)
+  await sleep(500)
+  const octFolded = await foldedSummary(octSec)
+  check('folded, a period shows the global balance', isSummary(octFolded) && octFolded.balance.includes(money2(oct.global.balance)), octFolded.balance)
   const typeInto = async (selector, value) => {
     await p.eval(`(() => { const i = document.querySelector('${selector}'); i.focus(); i.select() })()`)
     await p.send('Input.insertText', { text: value })
@@ -1052,7 +1163,7 @@ try {
   for (let i = 0; i < 24 && (await p.eval(`document.querySelector('main h5')?.innerText`)) !== 'October 2025'; i++) await p.click('[aria-label="Previous month"]')
   await sleep(600)
   const header = await p.eval(`document.querySelector('[data-month-totals]')?.innerText.replace(/\\s+/g, ' ')`)
-  check('calendar: the month’s totals in its header', header?.includes('Spent') && header.includes('Earned') && header.includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), header)
+  check('calendar: the month’s totals in its header: earnings, expenses, balance', header?.includes('Earnings') && header.includes('Expenses') && header.includes('Balance') && header.includes(Math.abs(oct.global.balance).toLocaleString('en-CA', { minimumFractionDigits: 2 })), header)
   await p.mouseClick(`div[data-date="${converted.date}"]`)
   await sleep(600)
   check('calendar: all banks, a converted amount with the amount the bank wrote', await p.eval(`[...document.querySelectorAll('[data-original]')].some(e => e.innerText.includes('€'))`), converted.date)
@@ -1280,14 +1391,15 @@ try {
   // Analytics: the net salary per hour and per year, worked out from the business days, in the display currency.
   const decReport = await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })
   const sal = decReport.salary
-  const salaryOk = sal && sal.businessDays === decReport.businessDays && sal.hoursPerDay === 8 && Math.abs(sal.perHour - sal.net / (sal.businessDays * 8)) < 0.006 && Math.abs(sal.perYear - sal.net / sal.businessDays * sal.yearBusinessDays) < 0.006
+  const salaryOk = sal && sal.workingDays > 0 && sal.hoursPerDay === 8 && Math.abs(sal.perDay - sal.net / sal.workingDays) < 0.006 && Math.abs(sal.perHour - sal.net / (sal.workingDays * 8)) < 0.006 && Math.abs(sal.perYear - sal.net / sal.workingDays * sal.yearWorkingDays) < 0.006
   await p.clickText('Periods', { selector: 'nav button' })
   await p.clickText('Analytics', { selector: '[data-period-view] button' })
   await p.waitFor(`document.querySelector('section[data-period="2025-12-01"] [data-salary]') !== null`, 20000, 'the salary in December')
   await p.eval(`document.querySelector('section[data-period="2025-12-01"]').scrollIntoView({ block: 'start' })`)
   await sleep(600)
-  const salaryText = await p.eval(`document.querySelector('section[data-period="2025-12-01"] [data-salary]').innerText`)
-  check('Analytics: the net salary per hour and per year, from the business days', salaryOk && salaryText === `Your net salary per hour is ${moneyCad(sal.perHour)} and per year is ${moneyCad(sal.perYear)}.`, `${salaryText} ${JSON.stringify(sal)}`)
+  const salaryShown = await p.eval(`(() => { const s = document.querySelector('section[data-period="2025-12-01"] [data-salary]'); const v = (a) => s.querySelector('[' + a + ']')?.innerText.replace(/\\s+/g, ' ').trim(); return { day: v('data-salary-day'), hour: v('data-salary-hour'), year: v('data-salary-year') } })()`)
+  check('Analytics: the net salary per working day, per hour and per year', salaryOk && salaryShown.day === `Net salary per day ${moneyCad(sal.perDay)}` && salaryShown.hour === `Per hour ${moneyCad(sal.perHour)}` && salaryShown.year === `Per year ${moneyCad(sal.perYear)}`,
+    `${JSON.stringify(salaryShown)} ${JSON.stringify(sal)}`)
   await shot(p, '24j-analytics-salary.png')
   await p.engine('settings.set', { key: 'currency', value: 'EUR' })
   const salEur = (await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })).salary
@@ -1352,9 +1464,9 @@ try {
 
   // export the first month to PDF: one Export at the top of each period, in every view; the parts to export ticked
   check('one Export at the top of each period, none at the bottom', await p.eval(`(() => { const s = [...document.querySelectorAll('main section[data-period]')].filter(x => x.querySelector('h2')); return s.length > 0 && s.every(x => { const b = x.querySelector('[data-export]'); return !!b && b.getBoundingClientRect().top < x.querySelector('h2').getBoundingClientRect().bottom }) && ![...document.querySelectorAll('main button')].some(b => b.innerText === 'Export to PDF') })()`))
-  await p.clickText('Summary', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: '[data-period-view] button' })
   await sleep(600)
-  check('Export in the Summary view too', await p.eval(`!!document.querySelector('main section[data-period] [data-export]')`))
+  check('Export in Analytics too', await p.eval(`!!document.querySelector('main section[data-period] [data-export]')`))
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(600)
   await p.clickText('Export', { selector: 'section button[data-export]', index: 0 })
@@ -1547,7 +1659,10 @@ try {
   const tables = {}
   const visit = async (name, go) => { await go(); await sleep(900); const rows = await pencils(); tables[name] = { rows: rows.length, ok: rows.length > 0 && rows.every((r) => r.shown && r.order && r.last) } }
   const definition = (tab) => async () => { await p.clickText('Settings', { selector: 'nav button' }); await p.clickText('Definitions', { selector: 'button' }); await sleep(300); await p.clickText(tab, { selector: 'main [role=group] button' }) }
-  await visit('operations', async () => { await p.clickText('Periods', { selector: 'nav button' }); await sleep(800); await p.clickText('Statements', { selector: '[data-period-view] button' }) })
+  await visit('operations', async () => {
+    await p.clickText('Periods', { selector: 'nav button' }); await sleep(800); await p.clickText('Statements', { selector: '[data-period-view] button' })
+    await openPeriod(p, await p.eval(`document.querySelector('section[data-period]').dataset.period`))
+  })
   await visit('accounts', async () => { await p.clickText('Settings', { selector: 'nav button' }); await p.clickText('Bank Configuration', { selector: 'button' }) })
   await visit('banks', definition('Bank'))
   await visit('rates', definition('Exchange rates'))
@@ -1674,10 +1789,11 @@ try {
   // The movements table: an international transfer written in both currencies.
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(900)
-  await settle(p, fourSec)
-  // The transfers of every bank, opened.
-  await p.eval(`[...document.querySelectorAll('${fourSec} .MuiAccordionSummary-root')].filter(e => e.innerText.includes('Transfers, card payments') && e.getAttribute('aria-expanded') !== 'true').forEach(e => e.click())`)
-  await sleep(900)
+  await openPeriod(p, '2026-10-01')
+  // The transfers of every bank, unfolded.
+  await p.eval(`[...document.querySelectorAll('${fourSec} [data-section="movements"]:not([data-open]) [data-fold]')].forEach(b => b.click())`)
+  await p.waitFor(`[...document.querySelectorAll('${fourSec} [data-section="movements"]')].every(m => m.querySelector('[data-movements] tbody tr'))`, 15000, 'October transfers open').catch(() => false)
+  await sleep(600)
   const intl = await p.eval(`[...document.querySelectorAll('${fourSec} [data-international]')].map(e => e.innerText)`)
   check('the movements table writes an international transfer in both currencies', intl.some((t) => t.includes('€820.00 sent') && t.includes('$1,296.26 received')), intl.join(' | '))
   await p.clickText('Year', { selector: 'button' })
@@ -1698,72 +1814,88 @@ try {
   await p.clickText('Month', { selector: 'button' })
   await p.clickText('Statements', { selector: '[data-period-view] button' })
 
-  // ---- Logs: every action written with its full raw details (the event and the element it reached; every request to
-  // the engine as received and its whole answer; every exception with its stack), the latest first. Clear logs is under
-  // the table and empties the file; the file can move.
+  // ---- Logs: three columns, the date to the second, the type (debug, info, warning, error) and the details: who wrote
+  // it and what ("Engine: tx.update"), everything about it (a request as received and its whole answer; an exception in
+  // full), then always the full call stack of where it was written. The actions are written (what changes something),
+  // the pages opened, messages and every failure; not clicks, keys or requests that only read. The latest first.
+  // Clear logs is at the top of the page, beside the pages, and empties the file; the file can move.
   const logFile = join(data, 'app.log')
-  await p.clickText('Logs', { selector: 'nav button' })
+  check('Logs is not in the left menu: Open logs is in Settings > General', !(await p.eval(`[...document.querySelectorAll('nav button')].some(b => b.innerText.includes('Log'))`)))
+  await openLogs(p)
   await p.waitFor(`document.querySelectorAll('[data-logs] tbody tr.row').length > 0`, 15000, 'log entries')
   await sleep(600)
   await shot(p, '26-logs.png')
   const logRows = () => p.eval(`[...document.querySelectorAll('[data-logs] tbody tr.row')].map(r => [...r.cells].map(c => c.innerText))`)
   const all = await p.engine('logs.read', { page: 0, size: 100 })
   const firstPage = await logRows()
-  check('the log page lists the latest hundred entries, newest first, with time, source, action and details',
-    firstPage.length === 100 && firstPage.every((r) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/.test(r[0]) && r.length === 4), JSON.stringify(firstPage.slice(0, 2)).slice(0, 600))
+  const headers = await p.eval(`[...document.querySelectorAll('[data-logs] thead th')].map(t => t.innerText.trim()).join()`)
+  const typeNames = ['Debug', 'Info', 'Warning', 'Error']
+  check('the log page lists the latest hundred entries in three columns: Date to the second, Type, Details',
+    headers === 'Date,Type,Details' && firstPage.length === 100 && firstPage.every((r) => r.length === 3 && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(r[0]) && typeNames.includes(r[1])),
+    headers + ' ' + JSON.stringify(firstPage.slice(0, 2)).slice(0, 600))
+  // The file: one line per entry, three columns, and every entry ends with its call stack.
+  const fileLines = readFileSync(logFile, 'utf8').split('\n').filter((l) => l.length > 0)
+  const badLines = fileLines.filter((l) => { const f = l.split('\t'); return f.length !== 3 || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(f[0]) || !['debug', 'info', 'warning', 'error'].includes(f[1]) || !f[2].includes('\\nCall stack:\\n') })
+  check('the log file: one line per entry, date, type and details, every entry with its call stack', fileLines.length === all.total && badLines.length === 0,
+    `${fileLines.length} lines, ${all.total} entries, ${badLines.length} not so: ${badLines[0]?.slice(0, 300)}`)
   const fullLog = []
   for (let i = 0; i * 1000 < all.total; i++) fullLog.push(...(await p.engine('logs.read', { page: i, size: 1000 })).entries)
   const find = (pred) => fullLog.find(pred)
-  // A click of the user: the raw mouse event, the element reached with its path and attributes, its control and text.
-  const click = find((e) => e.action === 'click' && e.detail.includes('"text":"Settings"') && e.detail.includes('"path":"'))
-  const clickData = click ? JSON.parse(click.detail) : null
-  check('a click is written as the raw event: button, coordinates, keys, element path, attributes and text',
-    !!clickData && 'clientX' in clickData && 'button' in clickData && 'ctrlKey' in clickData && clickData.target?.path?.includes('nav') && clickData.page, click?.detail.slice(0, 500))
-  // A request of the window to the engine: the message as received and the whole answer, not cut.
-  const request = find((e) => e.source === 'engine' && e.action === 'periods.report' && e.more)
+  const heading = (e) => e.detail.split('\n')[0]
+  const stackOf = (detail) => detail.slice(detail.lastIndexOf('\nCall stack:\n') + 13)
+  // An action of the window to the engine: the request as received and the whole answer, not cut, then its call stack.
+  const request = find((e) => e.level === 'info' && heading(e).startsWith('Engine: ') && e.detail.includes('\nrequest: {"id":'))
   const whole = request ? await p.engine('logs.entry', { n: request.n }) : null
-  const answer = whole ? JSON.parse(whole.detail.slice(whole.detail.indexOf('\nanswer: ') + 9)) : null
-  check('an engine request is written in full: when it started, the request as received, the whole answer',
-    !!whole && /^started: \d{4}-/.test(whole.detail) && whole.detail.includes('\nrequest: {"id":') && answer?.ok === true && typeof answer.result === "object" && answer.result !== null && whole.size > 16 * 1024 && !whole.more,
-    whole ? `${whole.size} bytes` : 'none')
+  const answerText = whole ? whole.detail.slice(whole.detail.indexOf('\nanswer: ') + 9, whole.detail.lastIndexOf('\nCall stack:\n')) : ''
+  let answer = null
+  try { answer = JSON.parse(answerText) } catch { /* checked below */ }
+  check('an engine action is written in full: who and what, when it started, the request as received, the whole answer, its call stack',
+    !!whole && /^Engine: [a-z]+\.[A-Za-z]+\nstarted: \d{4}-/.test(whole.detail) && whole.detail.includes('\nrequest: {"id":') && answer?.ok === true && !whole.more && /^\s+at /.test(stackOf(whole.detail)),
+    whole ? whole.detail.slice(0, 300) : 'none')
+  check('requests that only read are not written', !find((e) => /^Engine: (periods\.report|periods\.index|logs\.read|tx\.get)$/.test(heading(e))),
+    JSON.stringify([...new Set(fullLog.map(heading))].filter((h) => h.startsWith('Engine: ')).slice(0, 40)))
   // A failed request: its full exception, type, message and call stack.
-  const failed = find((e) => e.source === 'engine' && (e.level === 'warning' || e.level === 'error') && e.detail.includes('\nexception: '))
+  const failed = find((e) => heading(e).startsWith('Engine: ') && (e.level === 'warning' || e.level === 'error') && e.detail.includes('\nexception: '))
   const failedWhole = failed ? await p.engine('logs.entry', { n: failed.n }) : null
   check('a failed request is written with its full exception and call stack', !!failedWhole && /\nexception: System\.[A-Za-z.]+Exception: /.test(failedWhole.detail) && failedWhole.detail.includes('\n   at '), failedWhole?.detail.slice(0, 400))
   // A failure the engine handles itself (the wrong address of a download): its exception in full all the same.
-  const caught = find((e) => e.action === 'Caught exception' && e.detail.includes('Update '))
+  const caught = find((e) => heading(e) === 'App: Caught exception' && e.detail.includes('Update '))
   const caughtWhole = caught ? await p.engine('logs.entry', { n: caught.n }) : null
-  check('an exception the engine handles (a download that failed) is written in full', !!caughtWhole && /\nexception: System\.[A-Za-z.]+Exception: /.test(caughtWhole.detail) && caughtWhole.detail.includes('\n   at '), caughtWhole?.detail.slice(0, 400))
-  check('the log has every kind of entry: clicks, keys, scrolls, drags, pages, messages, window events, the start',
-    !!find((e) => e.action === 'scroll') && !!find((e) => e.action === 'page' && e.detail.includes('"to":"logs"')) && !!find((e) => e.action === 'toast')
-    && !!find((e) => e.action === 'drag') && !!find((e) => e.action === 'keydown') && !!find((e) => e.action === 'change')
-    && !!find((e) => e.source === 'window' && e.action === 'CoreWebView2.NavigationStarting') && !!find((e) => e.action === 'Start' && e.detail.includes('version: '))
-    && !!find((e) => e.action === 'Database.Open'),
-    JSON.stringify([...new Set(fullLog.map((e) => e.source + ':' + e.action))].slice(0, 60)))
+  check('an exception the engine handles (a download that failed) is written in full', !!caughtWhole && /\nexception: [A-Za-z.]+Exception: /.test(caughtWhole.detail) && caughtWhole.detail.includes('\n   at '), caughtWhole?.detail.slice(0, 400))
+  // What the interface writes carries the interface's own call stack.
+  const pageEntry = find((e) => heading(e) === 'App: page' && e.detail.includes('"to":"logs"'))
+  const pageWhole = pageEntry ? await p.engine('logs.entry', { n: pageEntry.n }) : null
+  check('an entry of the interface (a page opened) has the interface’s call stack', !!pageWhole && /^\s*at .*(pageOpened|AppContext)/.test(stackOf(pageWhole.detail)), pageWhole?.detail.slice(0, 600))
+  check('the log has every kind of entry: pages, messages, window events, actions, the start and the database',
+    !!pageEntry && !!find((e) => heading(e) === 'App: toast')
+    && !!find((e) => heading(e) === 'Window: CoreWebView2.NavigationStarting') && !!find((e) => heading(e) === 'App: Start' && e.detail.includes('version: '))
+    && !!find((e) => heading(e) === 'App: Database.Open'),
+    JSON.stringify([...new Set(fullLog.map(heading))].slice(0, 60)))
+  check('no clicks, keys or scrolls in the log', !find((e) => /^You: (click|keydown|scroll|drag|change)$/.test(heading(e))))
   check('more than a page: pages to go through', await p.eval(`document.querySelectorAll('[data-logs] .MuiPagination-root').length === 2`) && all.total > 100, String(all.total))
-  // A long entry: its first lines, Show all opens it whole.
-  const shownBefore = await p.eval(`(() => { const d = [...document.querySelectorAll('[data-logs] [data-log-detail]')].find(d => d.parentElement.querySelector('button')); if (!d) return null; d.closest('tr').setAttribute('data-e2e-long', ''); return d.innerText.length })()`)
+  // A long entry: its first six lines, Show all shows it whole (read again from the file when the page read it cut).
+  const longRow = `[...document.querySelectorAll('[data-logs] tbody tr.row')].find(r => [...r.querySelectorAll('button')].some(b => b.innerText === 'Show all'))`
+  const shownBefore = await p.eval(`(() => { const r = ${longRow}; if (!r) return null; r.setAttribute('data-e2e-long', ''); const d = r.querySelector('[data-log-detail]'); return { lines: Math.round(d.getBoundingClientRect().height / parseFloat(getComputedStyle(d).lineHeight)), height: Math.round(d.getBoundingClientRect().height), text: d.innerText.length } })()`)
   await p.clickText('Show all', { selector: '[data-e2e-long] button' })
   await sleep(600)
-  const shownAfter = await p.eval(`document.querySelector('[data-e2e-long] [data-log-detail]').innerText.length`)
-  check('a long entry shows its first lines, Show all shows all of it', shownBefore !== null && shownAfter > shownBefore, `${shownBefore} -> ${shownAfter} characters`)
+  const shownAfter = await p.eval(`(() => { const d = document.querySelector('[data-e2e-long] [data-log-detail]'); return { height: Math.round(d.getBoundingClientRect().height), text: d.innerText.length, less: [...document.querySelectorAll('[data-e2e-long] button')].some(b => b.innerText === 'Show less') } })()`)
+  check('a long entry shows its first six lines, Show all shows all of it', !!shownBefore && shownBefore.lines === 6 && shownAfter.height > shownBefore.height && shownAfter.text >= shownBefore.text && shownAfter.less, `${JSON.stringify(shownBefore)} -> ${JSON.stringify(shownAfter)}`)
   await shot(p, '26b-logs-show-all.png')
-  // A key pressed while the page shows: it comes in at the top without anything being reloaded by hand.
-  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'F2', code: 'F2', windowsVirtualKeyCode: 113 })
-  await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'F2', code: 'F2', windowsVirtualKeyCode: 113 })
-  await p.waitFor(`[...document.querySelectorAll('[data-logs] tbody tr.row')].slice(0, 5).some(r => r.cells[2].innerText === 'keydown' && r.innerText.includes('"key":"F2"'))`, 5000, 'key in the log').catch(() => false)
-  const keyRow = (await logRows()).slice(0, 5).find((r) => r[2] === 'keydown')
-  check('a new action shows at the top of the open log page, as the raw key event', !!keyRow && keyRow[1] === 'You' && keyRow[3].includes('"key":"F2"') && keyRow[3].includes('"code":"F2"') && keyRow[3].includes('"isTrusted":true'), keyRow?.[3].slice(0, 300))
+  // A warning of the page's console while the page shows: it comes in at the top without anything being reloaded by hand.
+  await p.eval(`console.warn('e2e: a warning written while the Logs page shows')`)
+  await p.waitFor(`[...document.querySelectorAll('[data-logs] tbody tr.row')].slice(0, 5).some(r => r.innerText.includes('e2e: a warning written'))`, 5000, 'warning in the log').catch(() => false)
+  const warnRow = (await logRows()).slice(0, 5).find((r) => r[2].includes('e2e: a warning written'))
+  check('a new entry shows at the top of the open log page: a console warning, type Warning', !!warnRow && warnRow[1] === 'Warning' && warnRow[2].startsWith('App: console.warn'), warnRow?.join(' | ').slice(0, 300))
   await p.clickText('2', { selector: '[data-logs] .MuiPagination-root button' })
   await sleep(700)
   const second = await logRows()
   // Entries are listed in the order they were written: the second page is the engine's second hundred.
-  const enginePage2 = (await p.engine('logs.read', { page: 1, size: 100 })).entries.map((e) => [e.time, e.action])
-  check('the second page goes on from the first', second.length === 100 && JSON.stringify(second.map((r) => [r[0], r[2]])) === JSON.stringify(enginePage2), JSON.stringify(second[0]).slice(0, 300))
+  const enginePage2 = (await p.engine('logs.read', { page: 1, size: 100 })).entries.map((e) => [e.time, heading(e)])
+  check('the second page goes on from the first', second.length === 100 && JSON.stringify(second.map((r) => [r[0], r[2].split('\n')[0]])) === JSON.stringify(enginePage2), JSON.stringify(second[0]).slice(0, 300))
 
-  // Clear logs, under the table (not in the left menu), asks first, then empties the file.
-  check('Clear logs is under the table of the Logs page, not in the left menu', await p.eval(`(() => { const b = document.querySelector('[data-logs] [data-clear-logs]'); const t = document.querySelector('[data-logs] table'); return !!b && b.getBoundingClientRect().top > t.getBoundingClientRect().bottom && ![...document.querySelectorAll('nav button')].some(n => n.innerText.includes('Clear')) })()`))
-  await p.eval(`document.querySelector('[data-clear-logs]').scrollIntoView({ block: 'center' })`)
+  // Clear logs, at the top of the page (not under the table, not in the left menu), asks first, then empties the file.
+  check('Clear logs is at the top of the Logs page, above the table, not in the left menu', await p.eval(`(() => { const b = document.querySelector('[data-logs] [data-clear-logs]'); const t = document.querySelector('[data-logs] table'); return !!b && b.getBoundingClientRect().bottom <= t.getBoundingClientRect().top && ![...document.querySelectorAll('nav button')].some(n => n.innerText.includes('Clear')) })()`))
+  await p.eval(`document.querySelector('main').scrollTo({ top: 0 })`)
   await sleep(300)
   await shot(p, '27a-clear-logs-button.png')
   await p.click('[data-clear-logs]')
@@ -1772,8 +1904,8 @@ try {
   await p.clickText('Clear', { selector: '[role=dialog] button' })
   await sleep(1500)
   const cleared = await p.engine('logs.read', { page: 0, size: 100 })
-  check('Clear logs empties the log file: only what came after is left', cleared.total <= 6 && !cleared.entries.some((e) => e.action === 'Start' || e.action === 'periods.report') && readFileSync(logFile, 'utf8').trim().split('\n').length === cleared.total,
-    JSON.stringify(cleared.entries.map((e) => e.action)))
+  check('Clear logs empties the log file: only what came after is left', cleared.total <= 6 && !cleared.entries.some((e) => /^App: (Start|Database\.Open)$/.test(heading(e))) && readFileSync(logFile, 'utf8').trim().split('\n').length === cleared.total,
+    JSON.stringify(cleared.entries.map(heading)))
   check('the log page shows the emptied log', (await logRows()).length === cleared.total && cleared.total >= 1, String((await logRows()).length))
   await shot(p, '28-logs-cleared.png')
 
@@ -1795,11 +1927,11 @@ try {
   await p.clickText('Use this folder', { selector: '[role=dialog] button' })
   await sleep(1200)
   const shown = await p.eval(`document.querySelector('[data-log-file]').innerText`)
-  await p.clickText('Logs', { selector: 'nav button' })
+  await openLogs(p)
   await sleep(1200)
   const afterMoveLog = existsSync(join(movedLog, 'app.log')) ? readFileSync(join(movedLog, 'app.log'), 'utf8') : ''
   check('the log file moved to the chosen folder and goes on being written there', shown === join(movedLog, 'app.log') && !existsSync(logFile)
-    && afterMoveLog.includes('\tlogs.move\t') && afterMoveLog.includes('"to":"logs"'), shown)
+    && afterMoveLog.includes('\tinfo\tEngine: logs.move\\n') && afterMoveLog.includes('"to":"logs"'), shown)
   await p.clickText('Settings', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('[data-log-file]') !== null`, 10000, 'log location row')
   await p.engine('logs.move', { folder: data })
