@@ -10,7 +10,6 @@ internal sealed partial class DocumentContext
 {
     public required IReadOnlyList<PageWords> Pages { get; init; }
     public required List<TextLine> Lines { get; init; }
-    public required string Language { get; init; }
     public required bool LooksLikeCard { get; init; }
     public required bool LooksLikeSavings { get; init; }
     /// <summary>Known bank layout recognised ("bnc"), or null.</summary>
@@ -46,7 +45,6 @@ internal sealed partial class DocumentContext
         {
             Pages = pages,
             Lines = lines,
-            Language = DetectLanguage(folded),
             LooksLikeCard = Keywords.ContainsAny(headerFolded, Keywords.Card) || MaskedCard().IsMatch(headerFolded)
                             || (Keywords.ContainsAny(headerFolded, ["MASTERCARD", "VISA", "AMERICAN EXPRESS"]) && !Keywords.ContainsAny(headerFolded, ["COMPTE", "ACCOUNT"])),
             LooksLikeSavings = Keywords.ContainsAny(Keywords.WithoutBankNames(headerFolded), Keywords.Savings),
@@ -102,31 +100,6 @@ internal sealed partial class DocumentContext
         if (current.Count > 0) yield return string.Join(' ', current.Select(x => x.Text));
     }
 
-    [GeneratedRegex(@"[A-Z']+")]
-    private static partial Regex Letters();
-
-    private static readonly HashSet<string> FrenchWords =
-    [
-        "SOLDE", "RELEVE", "LIBELLE", "OPERATION", "OPERATIONS", "VIREMENT", "RETRAIT", "RETRAITS", "DEPOT", "DEPOTS", "PAIEMENT",
-        "FRAIS", "DU", "AU", "LE", "LA", "LES", "DES", "COMPTE", "PERIODE", "NOUVEAU", "PRECEDENT", "ACHAT", "CARTE", "DATE", "ET",
-    ];
-
-    private static readonly HashSet<string> EnglishWords =
-    [
-        "BALANCE", "STATEMENT", "DESCRIPTION", "WITHDRAWAL", "WITHDRAWALS", "DEPOSIT", "DEPOSITS", "PAYMENT", "ACCOUNT", "FROM",
-        "TO", "THE", "AND", "FEE", "FEES", "PERIOD", "NEW", "PREVIOUS", "PURCHASE", "CARD", "OPENING", "CLOSING", "TOTAL",
-    ];
-
-    private static string DetectLanguage(string folded)
-    {
-        int fr = 0, en = 0;
-        foreach (Match m in Letters().Matches(folded))
-        {
-            if (FrenchWords.Contains(m.Value)) fr++;
-            if (EnglishWords.Contains(m.Value)) en++;
-        }
-        return fr > en ? "fr" : "en";
-    }
 
     private static string DetectCurrency(string folded, string fallback)
     {
@@ -149,6 +122,22 @@ internal sealed partial class DocumentContext
         if (best.Value > 0) return best.Key;
         // A bare "$": the person's own currency when its sign has a "$" (dollars, pesos, reais...), the Canadian dollar otherwise.
         return folded.Contains('$') ? (DollarSigns.Contains(fallback) ? fallback : "CAD") : fallback;
+    }
+
+    /// <summary>
+    /// The currency the operations of a file name, for a file that says none (a CSV or QIF export): at least three
+    /// operations naming one currency ("PRLV SEPA EDF": SEPA operations are euro operations) and none naming another.
+    /// One line naming a currency (an exchange "to EUR" in an account in dollars) never decides it. Null: no evidence.
+    /// </summary>
+    public static string? CurrencyNamedByOperations(IEnumerable<string> labels)
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var label in labels)
+        {
+            var currency = DetectCurrency(TextNorm.Fold(label), "");
+            if (currency.Length == 3) counts[currency] = counts.GetValueOrDefault(currency) + 1;
+        }
+        return counts.Count == 1 && counts.Single().Value >= 3 ? counts.Single().Key : null;
     }
 
     /// <summary>The currencies written with a "$" sign (as Windows lists them for every country).</summary>

@@ -13,7 +13,7 @@ namespace ProductivityApp.Finance.Storage;
 /// </summary>
 public sealed class Database : IDisposable
 {
-    private const int SchemaVersion = 18;
+    private const int SchemaVersion = 19;
     private readonly SqliteConnection _cn;
     private readonly Lock _gate = new();
 
@@ -105,10 +105,13 @@ public sealed class Database : IDisposable
                 """);
             // The banks the accounts were imported from become the bank list, with the one banking system used so far.
             var system = GetSetting("bankingSystem") == "france" ? BankingSystem.France : BankingSystem.NorthAmerica;
-            AddBank(new Bank { Name = KnownBanks.National, Country = "Canada", System = BankingSystem.NorthAmerica, Currency = "CAD" });
+            // The table as this version made it (its date format comes with version 19).
+            void Add(string name, string country, BankingSystem s, string currency) =>
+                Exec("INSERT INTO banks(name, country, system, currency) VALUES($n, $c, $s, $cu)", ("$n", name), ("$c", country), ("$s", (int)s), ("$cu", currency));
+            Add(KnownBanks.National, "Canada", BankingSystem.NorthAmerica, "CAD");
             foreach (var (name, currency) in Query("SELECT bank, MIN(currency) FROM accounts WHERE bank IS NOT NULL AND bank <> $n GROUP BY bank ORDER BY MIN(id)",
                 r => (r.GetString(0), r.GetString(1)), ("$n", KnownBanks.National)))
-                AddBank(new Bank { Name = name, System = system, Currency = currency });
+                Add(name, "", system, currency);
             Exec("UPDATE accounts SET bank_id = (SELECT b.id FROM banks b WHERE b.name = accounts.bank); PRAGMA user_version = 6;");
         }
         if (version < 7)
@@ -265,6 +268,16 @@ public sealed class Database : IDisposable
                 PRAGMA user_version = 18;
                 """);
             _settings = null;
+        }
+        if (version < 19)
+        {
+            // Each bank has the date format its files are read with, set by the person; to start with, the one of its
+            // country and banking system.
+            if (!Query("PRAGMA table_info(banks)", r => r.GetString(1)).Contains("date_format"))
+                Exec("ALTER TABLE banks ADD COLUMN date_format INTEGER;");
+            foreach (var b in Query("SELECT id, country, system FROM banks", r => (Id: r.GetInt64(0), Country: r.GetString(1), System: (BankingSystem)r.GetInt32(2))))
+                Exec("UPDATE banks SET date_format = $f WHERE id = $id", ("$f", (int)Parsing.BankDates.Default(b.Country, b.System)), ("$id", b.Id));
+            Exec("PRAGMA user_version = 19;");
         }
     }
 
@@ -524,16 +537,17 @@ public sealed class Database : IDisposable
 
     // ---------------------------------------------------------------- banks
 
-    public List<Bank> Banks() => Query("SELECT id, name, country, system, currency FROM banks ORDER BY id", r => new Bank
+    public List<Bank> Banks() => Query("SELECT id, name, country, system, currency, date_format FROM banks ORDER BY id", r => new Bank
     {
         Id = r.GetInt64(0), Name = r.GetString(1), Country = r.GetString(2), System = (BankingSystem)r.GetInt32(3), Currency = r.GetString(4),
+        DateFormat = r.IsDBNull(5) ? Parsing.BankDates.Default(r.GetString(2), (BankingSystem)r.GetInt32(3)) : (DateFormat)r.GetInt32(5),
     });
 
-    public long AddBank(Bank b) => (long)Scalar("INSERT INTO banks(name, country, system, currency) VALUES($n, $c, $s, $cu) RETURNING id",
-        ("$n", b.Name), ("$c", b.Country), ("$s", (int)b.System), ("$cu", b.Currency))!;
+    public long AddBank(Bank b) => (long)Scalar("INSERT INTO banks(name, country, system, currency, date_format) VALUES($n, $c, $s, $cu, $f) RETURNING id",
+        ("$n", b.Name), ("$c", b.Country), ("$s", (int)b.System), ("$cu", b.Currency), ("$f", (int)(b.DateFormat ?? Parsing.BankDates.Default(b.Country, b.System))))!;
 
-    public void UpdateBank(Bank b) => Exec("UPDATE banks SET name = $n, country = $c, system = $s, currency = $cu WHERE id = $id",
-        ("$n", b.Name), ("$c", b.Country), ("$s", (int)b.System), ("$cu", b.Currency), ("$id", b.Id));
+    public void UpdateBank(Bank b) => Exec("UPDATE banks SET name = $n, country = $c, system = $s, currency = $cu, date_format = $f WHERE id = $id",
+        ("$n", b.Name), ("$c", b.Country), ("$s", (int)b.System), ("$cu", b.Currency), ("$f", (int)(b.DateFormat ?? Parsing.BankDates.Default(b.Country, b.System))), ("$id", b.Id));
 
     public void DeleteBank(long id) => Exec("DELETE FROM banks WHERE id = $id", ("$id", id));
 

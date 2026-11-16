@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Unit tests: the engine's logic on data held in memory. No database, file, network, PDF engine or Windows text
+       recognition here: those belong to Finance.IntegrationTests. -->
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>ProductivityApp.Finance.UnitTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Finance.Core\Finance.Core.csproj" />
+    <ProjectReference Include="..\Finance.TestData\Finance.TestData.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Fictitious statements in the layouts of real banks (every person, number and amount invented), shared by the
+       unit tests, the integration tests and the SampleStatements tool. Never shipped. -->
+  <PropertyGroup>
+    <RootNamespace>ProductivityApp.Finance.Testing</RootNamespace>
+    <AssemblyName>ProductivityApp.Finance.TestData</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Finance.Core\Finance.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -114,21 +114,69 @@ public static partial class TableFiles
     private static List<List<List<string>>> Excel(byte[] bytes)
     {
         var tables = new List<List<List<string>>>();
+        // The currency of each number format of the workbook, read once.
+        var byFormat = new Dictionary<string, string?>(StringComparer.Ordinal);
         using var reader = ExcelReaderFactory.CreateReader(new MemoryStream(bytes));
         do
         {
             var rows = new List<List<string>>();
+            var currencies = new HashSet<string>(StringComparer.Ordinal);
             while (reader.Read())
             {
                 var row = new List<string>(reader.FieldCount);
-                for (var i = 0; i < reader.FieldCount; i++) row.Add(Cell(reader.GetValue(i)));
+                for (var i = 0; i < reader.FieldCount; i++)
+                {
+                    var value = reader.GetValue(i);
+                    row.Add(Cell(value));
+                    if (value is not (double or decimal) || reader.GetNumberFormatString(i) is not { Length: > 0 } format) continue;
+                    if (!byFormat.TryGetValue(format, out var currency)) byFormat[format] = currency = FormatCurrency(format);
+                    if (currency is not null) currencies.Add(currency);
+                }
                 // Trailing empty cells are not columns.
                 while (row.Count > 0 && row[^1].Length == 0) row.RemoveAt(row.Count - 1);
                 if (row.Count > 0) rows.Add(row);
             }
-            tables.Add(rows);
+            tables.Add(StatingCurrency(rows, currencies));
         } while (reader.NextResult());
         return tables;
+    }
+
+    /// <summary>
+    /// The numbers of a sheet are written in the currency their format shows ("#,##0.00 [$€-40C]"): said on a line above
+    /// the table ("Currency : EUR"), as banks say it, so the table names it once its cells are text. Only when every
+    /// number in a currency is in the same one.
+    /// </summary>
+    private static List<List<string>> StatingCurrency(List<List<string>> rows, HashSet<string> currencies) =>
+        currencies.Count == 1 && rows.Count > 0 ? [[$"Currency : {currencies.Single()}"], .. rows] : rows;
+
+    [GeneratedRegex(@"\[\$(?<sign>[^\]\-]*)(?:-(?<lcid>[0-9A-Fa-f]+))?\]")]
+    private static partial Regex FormatLocale();
+
+    /// <summary>
+    /// The currency a number format of Excel shows: the sign or code of a locale part ("[$€-40C]", "[$CHF]", "[$$-1009]",
+    /// a dollar sign read with the country of its locale: here Canada), or a sign written in the format ("#,##0.00 €").
+    /// </summary>
+    internal static string? FormatCurrency(string format)
+    {
+        foreach (Match m in FormatLocale().Matches(format))
+        {
+            var sign = m.Groups["sign"].Value;
+            if (AmountParser.CurrencyOf(sign) is { } named) return named;
+            if (sign.Length == 0 || !m.Groups["lcid"].Success) continue;
+            try
+            {
+                var region = new RegionInfo(CultureInfo.GetCultureInfo(int.Parse(m.Groups["lcid"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)).Name);
+                if (region.CurrencySymbol.Contains(sign, StringComparison.Ordinal)) return region.ISOCurrencySymbol;
+            }
+            catch (Exception e) when (e is ArgumentException or CultureNotFoundException)
+            {
+                // A locale Windows does not know: the sign alone tells nothing more.
+                ProductivityApp.Finance.Services.Diagnostics.Note("TableFiles.FormatCurrency", $"Unknown locale in the number format {format}.");
+            }
+        }
+        // Outside the locale parts: quoted text and signs ("\"€\" #,##0.00"), never the letters of colours or conditions.
+        var rest = Regex.Replace(FormatLocale().Replace(format, ""), @"\[[^\]]*\]", "");
+        return AmountParser.CurrencyOf(rest);
     }
 
     private static string Cell(object? value) => value switch
@@ -155,6 +203,7 @@ public static partial class TableFiles
         foreach (var table in doc.Descendants(Table + "table"))
         {
             var rows = new List<List<string>>();
+            var currencies = new HashSet<string>(StringComparer.Ordinal);
             foreach (var tr in table.Descendants(Table + "table-row"))
             {
                 // Rows and cells repeated by the file (empty ones at the end of a sheet are repeated thousands of times).
@@ -163,6 +212,9 @@ public static partial class TableFiles
                 {
                     var repeat = Math.Min(int.TryParse((string?)td.Attribute(Table + "number-columns-repeated"), out var n) ? n : 1, 64);
                     var value = OdsValue(td);
+                    // A cell of money says its currency ("EUR").
+                    if ((string?)td.Attribute(Office + "value-type") is "currency" && AmountParser.CurrencyOf((string?)td.Attribute(Office + "currency") ?? "") is { } currency)
+                        currencies.Add(currency);
                     for (var i = 0; i < repeat; i++) row.Add(value);
                 }
                 while (row.Count > 0 && row[^1].Length == 0) row.RemoveAt(row.Count - 1);
@@ -170,7 +222,7 @@ public static partial class TableFiles
                 var times = Math.Min(int.TryParse((string?)tr.Attribute(Table + "number-rows-repeated"), out var m) ? m : 1, 1000);
                 for (var i = 0; i < times; i++) rows.Add(row);
             }
-            tables.Add(rows);
+            tables.Add(StatingCurrency(rows, currencies));
         }
         return tables;
     }

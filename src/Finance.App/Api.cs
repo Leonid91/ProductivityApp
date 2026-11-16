@@ -276,7 +276,7 @@ internal static class Api
         b.RegisterBackground("import.choose", p =>
         {
             var id = p.Get<Guid>("draftId");
-            return Task.FromResult<object?>(DraftView(s.Imports.Choose(id, p.Opt<long?>("accountId"), p.Opt<AccountKind?>("kind"), p.Opt<long?>("bankId")), s));
+            return Task.FromResult<object?>(DraftView(s.Imports.Choose(id, p.Opt<long?>("accountId"), p.Opt<AccountKind?>("kind"), p.Opt<long?>("bankId"), p.Opt<DateFormat?>("dateFormat")), s));
         });
         b.Register("import.commit", p => s.Imports.Commit(new CommitRequest(
             p.Get<Guid>("draftId"), p.Opt<long?>("accountId"), p.Opt<string>("newAccountName"),
@@ -459,8 +459,9 @@ internal static class Api
             p.Profile,
             p.NewestFirst,
             p.ZeroRowsSkipped,
-            p.Language,
             p.DateOrder,
+            dateFormat = d.DateFormat,
+            dateFormatMismatch = p.DateFormatMismatch,
             rowChecks = p.RowBalanceChecks,
             rowMismatches = p.RowBalanceMismatches,
             defaultAccountName = ImportService.DefaultAccountName(p),

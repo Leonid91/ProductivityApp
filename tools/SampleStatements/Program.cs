@@ -56,7 +56,7 @@ if (args.Length == 2 && args[0] == "parse")
 {
     var pages = await PdfReader.ReadAsync(await File.ReadAllBytesAsync(args[1]));
     var p = StatementParser.Parse(pages, null, "CAD");
-    Console.WriteLine($"{p.Status} diff={p.Difference} open={p.OpeningBalance} close={p.ClosingBalance} computed={p.ComputedClosing} rows={p.Rows.Count} kind={p.Kind} lang={p.Language} cur={p.Currency} bank={p.Bank} last4={p.Last4} period={p.PeriodStart}..{p.PeriodEnd} ocr={p.UsedOcr} rowchecks={p.RowBalanceChecks}/{p.RowBalanceMismatches}");
+    Console.WriteLine($"{p.Status} diff={p.Difference} open={p.OpeningBalance} close={p.ClosingBalance} computed={p.ComputedClosing} rows={p.Rows.Count} kind={p.Kind} cur={p.Currency} bank={p.Bank} last4={p.Last4} period={p.PeriodStart}..{p.PeriodEnd} ocr={p.UsedOcr} rowchecks={p.RowBalanceChecks}/{p.RowBalanceMismatches}");
     foreach (var r in p.Rows) Console.WriteLine($"{r.Date:yyyy-MM-dd} {r.Amount,10} {r.Balance,10}  {r.Label}");
     return 0;
 }

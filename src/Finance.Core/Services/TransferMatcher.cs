@@ -50,9 +50,6 @@ public static class TransferMatcher
     /// <summary>Converts an amount from one currency to another at the rate of a day (null when no rate is known).</summary>
     public delegate decimal? Converter(decimal amount, string from, string to, DateOnly day);
 
-    /// <summary>Which way of pairing halves in two currencies was kept at the last linking (see the remarks).</summary>
-    public static string LastWay { get; private set; } = "general";
-
     /// <param name="convert">
     /// Pairs the halves of a movement between accounts in two currencies (the amount received is the amount sent
     /// converted, within <see cref="CurrencyTolerance"/>); without it only halves in the same currency are paired.
@@ -125,7 +122,6 @@ public static class TransferMatcher
             var general = Across(outgoing, txs, used, convert, accounts, service, services: false);
             var withServices = Across(outgoing, txs, used, convert, accounts, service, services: true);
             var kept = withServices.Count > general.Count ? withServices : general;
-            LastWay = withServices.Count > general.Count ? "transfer services" : "general";
             pairs.AddRange(kept);
         }
 

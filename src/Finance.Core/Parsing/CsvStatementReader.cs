@@ -246,11 +246,12 @@ public static partial class CsvStatementReader
     }
 
     /// <param name="forcedKind">Account type chosen by the person; when null the file is only read, not typed.</param>
-    public static StatementParse Parse(byte[] bytes, string fileName, string defaultCurrency, AccountKind? forcedKind = null)
+    /// <param name="format">The date format of the bank chosen for the file; null before a bank is chosen.</param>
+    public static StatementParse Parse(byte[] bytes, string fileName, string defaultCurrency, AccountKind? forcedKind = null, DateFormat? format = null)
     {
         var text = Decode(bytes);
         var delimiter = DetectDelimiter(text);
-        return ParseTable(Rows(text, delimiter).ToList(), fileName, defaultCurrency, forcedKind, "CSV", delimiter == ',' ? '.' : null);
+        return ParseTable(Rows(text, delimiter).ToList(), fileName, defaultCurrency, forcedKind, "CSV", delimiter == ',' ? '.' : null, format);
     }
 
     /// <summary>
@@ -258,7 +259,9 @@ public static partial class CsvStatementReader
     /// found by their names or by what they contain, as for a CSV export.
     /// </summary>
     /// <param name="decimalSeparator">Known separator of decimals, or null to find it from the numbers.</param>
-    public static StatementParse ParseTable(List<List<string>> table, string fileName, string defaultCurrency, AccountKind? forcedKind, string method, char? decimalSeparator = null)
+    /// <param name="format">The date format of the bank chosen for the file; null before a bank is chosen.</param>
+    public static StatementParse ParseTable(List<List<string>> table, string fileName, string defaultCurrency, AccountKind? forcedKind, string method, char? decimalSeparator = null,
+        DateFormat? format = null)
     {
         if (table.Count == 0) return Empty(method, defaultCurrency);
         // The width of the table: that of most of its lines of several cells (lines of title above it are one cell).
@@ -298,23 +301,20 @@ public static partial class CsvStatementReader
         // Dates and their order (day/month or month/day) across the whole file.
         var printed = data.Select(r => TryDate(Cell(r, Col.Date), out var d) ? d : (PrintedDate?)null).ToList();
         var numeric = printed.Where(d => d is { MonthKnown: false, IsoOrder: false }).Select(d => d!.Value).ToList();
-        var headerFolded = headerIndex >= 0 ? TextNorm.Fold(string.Join(' ', table[headerIndex])) : "";
-        var french = Regex.IsMatch(headerFolded, @"\b(LIBELLE|MONTANT|SOLDE|CATEGORIE|DEBIT|DEVISE|OPERATION)\b");
         var year = DateTime.Today.Year;
-        // No date says which is the day (none above 12): a file covers days that follow each other, so the order under
-        // which its dates span the shorter time is the right one ("03.02, 05.02, 09.02" is a week of February, not
-        // March to September); when that tells nothing, the language of its headings.
+        // The bank's date format decides. Before a bank is chosen, what the dates show: a day above 12, else the order
+        // under which they span the shorter time (a file covers days that follow each other), else month first.
         int Span(DateOrder o)
         {
             var days = numeric.Select(d => d.ToDate(o, d.Year ?? year)).Where(d => d is not null).Select(d => d!.Value.DayNumber).ToList();
             return days.Count < numeric.Count || days.Count == 0 ? int.MaxValue : days.Max() - days.Min();
         }
         var (dayFirst, monthFirst) = (Span(DateOrder.DayMonth), Span(DateOrder.MonthDay));
-        var order = numeric.Any(d => d.A > 12) ? DateOrder.DayMonth
+        var order = format is { } bankFormat && BankDates.Order(bankFormat) is not DateOrder.Unknown and var set ? set
+            : numeric.Any(d => d.A > 12) ? DateOrder.DayMonth
             : numeric.Any(d => d.B > 12) ? DateOrder.MonthDay
             : dayFirst < monthFirst ? DateOrder.DayMonth
-            : monthFirst < dayFirst ? DateOrder.MonthDay
-            : french ? DateOrder.DayMonth : DateOrder.MonthDay;
+            : DateOrder.MonthDay;
 
         // The name of a bank says nothing of the account ("Caisse d'Épargne", "Crédit Mutuel"): left out.
         var name = Keywords.WithoutBankNames(TextNorm.Fold(Path.GetFileNameWithoutExtension(fileName)));
@@ -437,7 +437,11 @@ public static partial class CsvStatementReader
 
         var profile = IsBncHeader(headerIndex >= 0 ? table[headerIndex] : []) ? "bnc" : null;
         var last4 = Regex.Match(Cell(data[0], Col.Card) + " " + Cell(data[0], Col.Account), @"(\d{4})\s*$") is { Success: true } m ? m.Groups[1].Value : about.Last4;
-        var currency = Cell(data[0], Col.Currency) is { Length: 3 } c3 && c3.All(char.IsAsciiLetter) ? c3.ToUpperInvariant() : about.Currency ?? defaultCurrency;
+        // The currency column, the currency said above the table, the one the columns of money are written in, or the one
+        // its operations name (SEPA operations are in euros); else the person's own.
+        var currency = Cell(data[0], Col.Currency) is { Length: 3 } c3 && c3.All(char.IsAsciiLetter) ? c3.ToUpperInvariant()
+            : about.Currency ?? MoneyColumnsCurrency(headerIndex >= 0 ? table[headerIndex] : [], data, cols)
+            ?? DocumentContext.CurrencyNamedByOperations(rows.Select(r => r.Label)) ?? defaultCurrency;
 
         // Without a balance on each line, the balances printed above or below the table prove the total.
         var printedProof = checks == 0 && about.Opening is { } po && about.Closing is { } pc && rows.Count > 0;
@@ -456,7 +460,6 @@ public static partial class CsvStatementReader
             PeriodStart = rows.Count > 0 ? allDates.Min() : null,
             PeriodEnd = rows.Count > 0 ? allDates.Max() : null,
             Currency = currency,
-            Language = french ? "fr" : "en",
             Kind = kind,
             Bank = profile == "bnc" ? KnownBanks.National : null,
             Last4 = last4,
@@ -465,6 +468,7 @@ public static partial class CsvStatementReader
             RowBalanceMismatches = mismatches,
             Method = method,
             DateOrder = order,
+            DateFormatMismatch = format is { } chosen ? BankDates.Mismatch(chosen, [.. numeric.Select(d => (d.A, d.B))]) : null,
             Profile = profile,
             NewestFirst = newestFirst,
             ZeroRowsSkipped = skippedZero,
@@ -488,6 +492,19 @@ public static partial class CsvStatementReader
             label = label.Length > 0 && ft.Contains(fl, StringComparison.Ordinal) ? t : label.Length == 0 ? t : label + " " + t;
         }
         return label;
+    }
+
+    /// <summary>
+    /// The currency the columns of money are written in: named in their headings ("Amount (CHF)", "Montant EUR") or beside
+    /// the amounts ("-45.10 CHF", "12,34 €"), when every one that names a currency names the same. Null otherwise.
+    /// </summary>
+    private static string? MoneyColumnsCurrency(List<string> header, List<List<string>> data, Dictionary<Col, int> cols)
+    {
+        var money = new[] { Col.Amount, Col.Debit, Col.Credit, Col.Balance, Col.Fee }.Where(cols.ContainsKey).Select(c => cols[c]).ToList();
+        var named = money.Where(i => i < header.Count).Select(i => header[i])
+            .Concat(data.SelectMany(r => money.Where(i => i < r.Count).Select(i => r[i])))
+            .Select(AmountParser.CurrencyOf).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        return named.Count == 1 ? named[0] : null;
     }
 
     private sealed record About(string AccountName, string? Last4, string? Currency, decimal? Opening, decimal? Closing);

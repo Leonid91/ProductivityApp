@@ -87,7 +87,8 @@ public static partial class MoneyFiles
         };
     }
 
-    public static StatementParse ParseQif(byte[] bytes, string defaultCurrency, AccountKind? forcedKind)
+    /// <param name="format">The date format of the bank chosen for the file; null before a bank is chosen.</param>
+    public static StatementParse ParseQif(byte[] bytes, string defaultCurrency, AccountKind? forcedKind, DateFormat? format = null)
     {
         var text = CsvStatementReader.Decode(bytes);
         var type = Regex.Match(text, @"!Type:(\w+)", RegexOptions.IgnoreCase) is { Success: true } tm ? tm.Groups[1].Value.ToUpperInvariant() : "BANK";
@@ -126,7 +127,9 @@ public static partial class MoneyFiles
         }
         var parts = entries.Select(e => Split(e.Date.Replace('\'', '/'))).ToList();
         var yearFirst = entries.Any(e => Regex.IsMatch(e.Date, @"^\d{4}"));
-        var dayMonth = !yearFirst && parts.Any(p => p is { A: > 12 });
+        // The bank's date format decides; before a bank is chosen, day first when a first number is above 12.
+        var dayMonth = !yearFirst && (format is { } f && BankDates.Order(f) is not DateOrder.Unknown and var set ? set == DateOrder.DayMonth : parts.Any(p => p is { A: > 12 }));
+        var yearLast = yearFirst ? [] : parts.OfType<(int A, int B, int Y)>().Select(p => (p.A, p.B)).ToList();
         var rows = new List<ParsedRow>();
         for (var i = 0; i < entries.Count; i++)
         {
@@ -144,11 +147,13 @@ public static partial class MoneyFiles
             Rows = rows,
             PeriodStart = rows.FirstOrDefault()?.Date,
             PeriodEnd = rows.LastOrDefault()?.Date,
-            Currency = defaultCurrency,
+            // QIF names no currency: the one its operations name (SEPA operations are in euros), else the person's own.
+            Currency = DocumentContext.CurrencyNamedByOperations(rows.Select(r => r.Label)) ?? defaultCurrency,
             Kind = forcedKind ?? (type is "CCARD" or "CREDITCARD" ? AccountKind.CreditCard : AccountKind.Bank),
             Status = rows.Count == 0 ? VerificationStatus.NoTransactions : VerificationStatus.NoBalances,
             Method = "QIF",
             DateOrder = dayMonth ? DateOrder.DayMonth : DateOrder.MonthDay,
+            DateFormatMismatch = format is { } chosen ? BankDates.Mismatch(chosen, yearLast) : null,
         };
     }
 }

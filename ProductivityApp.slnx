@@ -4,7 +4,9 @@
     <Project Path="src/Finance.Core/Finance.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Finance.Tests/Finance.Tests.csproj" />
+    <Project Path="tests/Finance.TestData/Finance.TestData.csproj" />
+    <Project Path="tests/Finance.UnitTests/Finance.UnitTests.csproj" />
+    <Project Path="tests/Finance.IntegrationTests/Finance.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/SampleStatements/SampleStatements.csproj" />

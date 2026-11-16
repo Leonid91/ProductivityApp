@@ -19,7 +19,16 @@ export interface Tag { id: number; name: string; color: string | null; operation
 export interface TagData { tags: Tag[]; categoryTags: Record<string, number[]> }
 
 export type BankingSystem = 'northAmerica' | 'france'
-export interface Bank { id: number; name: string; country: string; system: BankingSystem; currency: string }
+/** How a bank writes its dates; its files are read with it. */
+export type DateFormat = 'dayMonthYear' | 'monthDayYear' | 'yearMonthDay'
+export const dateFormats: { value: DateFormat; label: string }[] = [
+  { value: 'dayMonthYear', label: 'DD/MM/YYYY' },
+  { value: 'monthDayYear', label: 'MM/DD/YYYY' },
+  { value: 'yearMonthDay', label: 'YYYY-MM-DD' },
+]
+
+/** dateFormat: null when adding a bank, for the format of its country and banking system. */
+export interface Bank { id: number; name: string; country: string; system: BankingSystem; currency: string; dateFormat: DateFormat | null }
 
 export const currencies = ['CAD', 'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'JPY', 'MXN']
 
@@ -297,8 +306,11 @@ export interface Draft {
   profile: string | null
   newestFirst: boolean
   zeroRowsSkipped: number
-  language: string
   dateOrder: DateOrder
+  /** The date format the file is read with (its bank's, or the one chosen for it); null until a bank is chosen. */
+  dateFormat: DateFormat | null
+  /** Why the dates do not fit that format; the file cannot be imported until they do. */
+  dateFormatMismatch: string | null
   rowChecks: number
   rowMismatches: number
   /** Account and type chosen by the person; null until they choose. */
@@ -464,7 +476,8 @@ export const api = {
     /** A file of several accounts (a French statement of every account) gives one draft per account: the others in "others". */
     parseFile: (path: string) => invoke<Draft>('import.parseFile', { path }),
     parseBytes: (name: string, base64: string) => invoke<Draft>('import.parseBytes', { name, base64 }),
-    choose: (draftId: string, accountId: number | null, kind: AccountKind | null, bankId: number | null) => invoke<Draft>('import.choose', { draftId, accountId, kind, bankId }),
+    choose: (draftId: string, accountId: number | null, kind: AccountKind | null, bankId: number | null, dateFormat: DateFormat | null = null) =>
+      invoke<Draft>('import.choose', { draftId, accountId, kind, bankId, dateFormat }),
     commit: (p: { draftId: string; accountId: number | null; newAccountName: string | null; currency: string; kind: AccountKind | null; edits: DraftEdit[]; bankId: number | null; newBankName: string | null }) =>
       invoke<CommitResult>('import.commit', p),
     discard: (draftId: string) => invoke<null>('import.discard', { draftId }),

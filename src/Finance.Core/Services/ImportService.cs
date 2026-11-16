@@ -45,6 +45,12 @@ public sealed class ImportDraft
     public BankTemplate? Template { get; set; }
     /// <summary>Banking system of the chosen account's bank (or of the bank chosen for a new account).</summary>
     public BankingSystem System { get; set; }
+    /// <summary>The date format the file is read with: the one the person chose for it, else its bank's; null until a bank is chosen.</summary>
+    public DateFormat? DateFormat { get; set; }
+    /// <summary>The date format the person chose for this file, if they changed the bank's.</summary>
+    public DateFormat? ChosenDateFormat { get; set; }
+    /// <summary>The account of a statement of several this draft is (its pages, title and number), or null.</summary>
+    public AccountSections.Section? Section { get; init; }
     /// <summary>The other accounts of the same file (a statement of several accounts gives one draft per account).</summary>
     public List<ImportDraft> Others { get; } = [];
 }
@@ -149,13 +155,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             var auto = StatementParser.Parse(pages, null, defaultCurrency());
             if (auto.Verified) { parse = auto; template = null; }
         }
-        // One account of a statement of several: its own number, and its type from its own title (a savings book or not).
-        if (section is not null)
-        {
-            if (section.Number.Length >= 4) parse.Last4 = section.Number[^4..];
-            if (parse.Kind != AccountKind.CreditCard)
-                parse.Kind = Keywords.ContainsAny(TextNorm.Fold(section.Title), Keywords.Savings) ? AccountKind.Savings : AccountKind.Bank;
-        }
+        OfSection(parse, section);
 
         var draft = new ImportDraft
         {
@@ -166,6 +166,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             Parse = parse,
             AlreadyImported = db.HasStatementHash(hash),
             Template = template,
+            Section = section,
         };
         Fill(draft);
         _drafts[draft.Id] = draft;
@@ -186,7 +187,7 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
     private void Read(ImportDraft draft)
     {
         if (draft.Pages.Count == 0)
-            draft.Parse = ReadFile(draft.Bytes, draft.FileName, draft.Kind);
+            draft.Parse = ReadFile(draft.Bytes, draft.FileName, draft.Kind, draft.DateFormat);
         else
         {
             var hint = draft.Kind switch
@@ -197,22 +198,32 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             };
             var t = draft.Template;
             if (t is not null && hint != StatementKindHint.Auto) t = new BankTemplate { Id = t.Id, Name = t.Name, MatchText = t.MatchText, Columns = t.Columns, DateOrder = t.DateOrder, Kind = hint, UpdatedAt = t.UpdatedAt };
-            draft.Parse = StatementParser.Parse(draft.Pages, t, defaultCurrency(), hint);
+            draft.Parse = StatementParser.Parse(draft.Pages, t, defaultCurrency(), hint, draft.DateFormat);
+            OfSection(draft.Parse, draft.Section);
         }
         if (draft.Kind is { } k) draft.Parse.Kind = k;
         Fill(draft);
     }
 
+    /// <summary>One account of a statement of several: its own number, and its type from its own title (a savings book or not).</summary>
+    private static void OfSection(StatementParse parse, AccountSections.Section? section)
+    {
+        if (section is null) return;
+        if (section.Number.Length >= 4) parse.Last4 = section.Number[^4..];
+        if (parse.Kind != AccountKind.CreditCard)
+            parse.Kind = Keywords.ContainsAny(TextNorm.Fold(section.Title), Keywords.Savings) ? AccountKind.Savings : AccountKind.Bank;
+    }
+
     /// <summary>Reads a file that is not a PDF: a table file (Excel, OpenDocument, Word, web page), OFX / QFX / QBO, QIF or CSV.</summary>
-    private StatementParse ReadFile(byte[] bytes, string fileName, AccountKind? kind)
+    private StatementParse ReadFile(byte[] bytes, string fileName, AccountKind? kind, DateFormat? format = null)
     {
         if (TableFiles.Kind(bytes, fileName) is { } table)
-            return CsvStatementReader.ParseTable(TableFiles.Read(bytes, fileName), fileName, defaultCurrency(), kind, table);
+            return CsvStatementReader.ParseTable(TableFiles.Read(bytes, fileName), fileName, defaultCurrency(), kind, table, null, format);
         return MoneyFiles.Kind(bytes, fileName) switch
         {
             "OFX" => MoneyFiles.ParseOfx(bytes, defaultCurrency(), kind),
-            "QIF" => MoneyFiles.ParseQif(bytes, defaultCurrency(), kind),
-            _ => CsvStatementReader.Parse(bytes, fileName, defaultCurrency(), kind),
+            "QIF" => MoneyFiles.ParseQif(bytes, defaultCurrency(), kind, format),
+            _ => CsvStatementReader.Parse(bytes, fileName, defaultCurrency(), kind, format),
         };
     }
 
@@ -309,23 +320,32 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         return ka.Length >= 3 && ka == kb;
     }
 
-    /// <summary>The person picks the account (or a new one and its type); the file is then read for that type.</summary>
-    public ImportDraft Choose(Guid id, long? accountId, AccountKind? newKind, long? bankId = null)
+    /// <summary>
+    /// The person picks the account (or a new one, its type and its bank), and may change the date format of the file;
+    /// the file is then read with the banking system and the date format of that bank.
+    /// </summary>
+    public ImportDraft Choose(Guid id, long? accountId, AccountKind? newKind, long? bankId = null, DateFormat? dateFormat = null)
     {
         var draft = _drafts.GetValueOrDefault(id) ?? throw new KeyNotFoundException("This import is no longer open.");
+        if (dateFormat is not null) draft.ChosenDateFormat = dateFormat;
+        Bank? bank;
         if (accountId is { } a)
         {
             var account = db.Accounts().FirstOrDefault(x => x.Id == a) ?? throw new KeyNotFoundException("This account no longer exists.");
             draft.AccountId = a;
             draft.Kind = account.Kind;
             draft.System = account.System;
+            bank = db.Banks().FirstOrDefault(b => b.Id == account.BankId);
         }
         else
         {
             draft.AccountId = null;
             draft.Kind = newKind;
-            draft.System = db.Banks().FirstOrDefault(b => b.Id == bankId)?.System ?? BankingSystem.NorthAmerica;
+            bank = db.Banks().FirstOrDefault(b => b.Id == bankId);
+            draft.System = bank?.System ?? BankingSystem.NorthAmerica;
         }
+        // A new bank named in the card starts with the format of its banking system, until the person chooses one.
+        draft.DateFormat = draft.ChosenDateFormat ?? bank?.DateFormat ?? BankDates.Default(null, draft.System);
         Read(draft);
         return draft;
     }
@@ -340,6 +360,8 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         // An existing account keeps its currency; a new one takes the one chosen (its bank's by default).
         var currency = existing?.Currency ?? request.Currency;
         if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper)) throw new ArgumentException("A currency is a three-letter code such as CAD.");
+        // Dates the format cannot read leave no operation: the format is said first.
+        if (draft.Parse.DateFormatMismatch is { } mismatch) throw new InvalidOperationException(mismatch);
         if (draft.Rows.Count == 0) throw new InvalidOperationException("No operations were found in this statement.");
         var edits = request.Edits.ToDictionary(e => e.Index);
         foreach (var e in request.Edits)
@@ -353,7 +375,13 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
         {
             var bankId = request.BankId;
             if (existing is null && bankId is null && request.NewBankName?.Trim() is { Length: > 0 } bankName)
-                bankId = db.AddBank(new Bank { Name = bankName, Currency = currency, System = draft.System });
+                bankId = db.AddBank(new Bank { Name = bankName, Currency = currency, System = draft.System, DateFormat = draft.DateFormat });
+            // The date format chosen for this file becomes its bank's: its next files are read the same way.
+            else if (draft.ChosenDateFormat is { } chosenFormat && db.Banks().FirstOrDefault(b => b.Id == (existing?.BankId ?? bankId)) is { } bankOfFile && bankOfFile.DateFormat != chosenFormat)
+            {
+                bankOfFile.DateFormat = chosenFormat;
+                db.UpdateBank(bankOfFile);
+            }
             if (request.AccountId is null && bankId is null) throw new ArgumentException("Choose the bank of the new account.");
             accountId = request.AccountId ?? db.AddAccount(new Account
             {

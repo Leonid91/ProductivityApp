@@ -1122,3 +1122,39 @@ real app with `tools/e2e/perf.mjs`.
   read by the previous and this version: the same readings, but CIC's (now balanced, both accounts). The CIC files
   imported through the Import page of the real app on an empty database: 9 of 9 checks. The scroll checked with the
   real mouse wheel in a visible window on a copy of real data: no jump in 18 phases (folded and unfolded months, Analytics, years, at a person's pace and fast, the scrollbar dragged), the month kept on all 4 view switches (2 of 4 before). End-to-end suite: 232 of 232 on the debug build and on a published release build.
+
+## November 16th, 2026 - Each bank's date format; tests split by purpose; CIC read in euros against the ECB's rates - Commit 46
+
+### Added
+- Each bank has a date format, set in Definitions > Bank (a column of the banks table, and in the bank's dialog):
+  DD/MM/YYYY, MM/DD/YYYY or YYYY-MM-DD. A new bank starts with the one of its country and banking system (DD/MM/YYYY
+  for a bank on the French system or in France, YYYY-MM-DD in Canada, MM/DD/YYYY in the United States, DD/MM/YYYY
+  elsewhere); the banks already there get theirs the same way. A file is read once its bank is known (the bank of the
+  account chosen, or the one chosen for a new account): its operations, balance check and status are shown then, read with that bank's banking
+  system and date format, and the Import page shows the format beside the bank, to change for that file. Dates written
+  in another format are said ("The dates of this file are written DD/MM/YYYY, not YYYY-MM-DD as set for its bank")
+  and the file cannot be imported until the right format is chosen; the format chosen becomes the bank's.
+- A workbook says the currency of its amounts in their number format ("#,##0.00 [$€-40C]"), an OpenDocument sheet in
+  its money cells: the statement is in that currency (the CIC's Excel export, Livret A sheet included, is in euros). A
+  CSV whose money columns name their currency ("Amount (CHF)", "-45.10 CHF", "12,34 €") is in it.
+
+### Fixed
+- A statement of several accounts (CIC, Caisse d'Epargne) read again when its account was chosen lost each account's
+  number and the savings type of the Livret A.
+
+### Removed
+- The guess of a statement's language from its words, used only to order day and month when its dates could not
+  tell: the bank's date format does it.
+- A record of which way of pairing transfers between currencies was used last, kept for one test only.
+
+### Changed
+- Tests, one project per kind: `tests/Finance.UnitTests` (the engine's code alone: 2,604 tests), `tests/Finance.
+  IntegrationTests` (with a real database, files, PDFs and a stand-in for the Internet: 411), `ui/tests` (3), the
+  end-to-end suite of the real app (`tests/Finance.EndToEndTests`, 236 checks: nothing is read before a file's bank
+  is chosen, a file is read with its bank's date format, every bank shows its format), the timings
+  (`tests/Finance.PerformanceTests`, run on their own) and the driver of the app both use (`tests/Finance.AppDriver`);
+  the fictitious statements, rates and calendars the .NET tests share in `tests/Finance.TestData`. Each test is named after what it calls, the case and what must happen, does one thing and checks it;
+  tests that only touched code or compared a PDF's size were replaced by checks of what it says. The CIC: every form
+  of its statements read in euros by a person whose currency is the Canadian dollar, each operation converted at the
+  European Central Bank's rate of its day (Friday's on a weekend), the Livret A transfer one movement inside the bank.
+  `tools/test.ps1` runs them all.

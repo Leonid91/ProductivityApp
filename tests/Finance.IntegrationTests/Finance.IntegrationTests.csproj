@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Integration tests: the engine with what it really uses: a SQLite database on disk, files and folders, the HTTP
+       layer (answered by a fake handler, never the network), PDF documents and Windows text recognition. -->
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>ProductivityApp.Finance.IntegrationTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Finance.Core\Finance.Core.csproj" />
+    <ProjectReference Include="..\Finance.TestData\Finance.TestData.csproj" />
+  </ItemGroup>
+
+</Project>

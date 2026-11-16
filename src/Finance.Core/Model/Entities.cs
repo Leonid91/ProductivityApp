@@ -50,7 +50,10 @@ public sealed class Account
     public BankingSystem System { get; set; }
 }
 
-/// <summary>A bank of the person's list. Its banking system decides how its cards and movements are read.</summary>
+/// <summary>How a bank writes the dates of its files: the person sets it for each bank (see Parsing.BankDates).</summary>
+public enum DateFormat { DayMonthYear = 0, MonthDayYear = 1, YearMonthDay = 2 }
+
+/// <summary>A bank of the person's list. Its banking system decides how its cards and movements are read, its date format how its dates are.</summary>
 public sealed class Bank
 {
     public long Id { get; set; }
@@ -59,6 +62,8 @@ public sealed class Bank
     public BankingSystem System { get; set; }
     /// <summary>Currency new accounts of this bank are imported in.</summary>
     public string Currency { get; set; } = "CAD";
+    /// <summary>How the bank writes its dates; when a bank is added without one, the format of its country and banking system.</summary>
+    public DateFormat? DateFormat { get; set; }
 }
 
 public sealed class Transaction

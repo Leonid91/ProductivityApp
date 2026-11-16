@@ -14,7 +14,9 @@ namespace ProductivityApp.Finance.Parsing;
 /// </summary>
 public static partial class StatementParser
 {
-    public static StatementParse Parse(IReadOnlyList<PageWords> pages, BankTemplate? template, string defaultCurrency, StatementKindHint forcedKind = StatementKindHint.Auto)
+    /// <param name="format">The date format of the bank chosen for the statement; null before a bank is chosen.</param>
+    public static StatementParse Parse(IReadOnlyList<PageWords> pages, BankTemplate? template, string defaultCurrency, StatementKindHint forcedKind = StatementKindHint.Auto,
+        DateFormat? format = null)
     {
         if (pages.Count == 0) throw new ArgumentException("The PDF has no pages.", nameof(pages));
         var ctx = DocumentContext.Build(pages, defaultCurrency);
@@ -40,7 +42,7 @@ public static partial class StatementParser
             };
             foreach (var kind in kinds)
             {
-                var parse = Interpret(ctx, layout, kind);
+                var parse = Interpret(ctx, layout, kind, format);
                 var score = Score(parse, ctx, layout);
                 if (score > bestScore) { best = parse; bestScore = score; }
             }
@@ -51,7 +53,6 @@ public static partial class StatementParser
     private static StatementParse Empty(DocumentContext ctx, BankTemplate? template) => new()
     {
         Currency = ctx.Currency,
-        Language = ctx.Language,
         Kind = ctx.DefaultKind,
         Bank = ctx.Bank,
         Last4 = ctx.Last4,
@@ -643,11 +644,11 @@ public static partial class StatementParser
 
     // ---------------------------------------------------------------- interpretation
 
-    private static StatementParse Interpret(DocumentContext ctx, Layout layout, AccountKind kind)
+    private static StatementParse Interpret(DocumentContext ctx, Layout layout, AccountKind kind, DateFormat? format)
     {
         var (raw, cells, firstBalanceOnly) = Assemble(ctx, layout);
 
-        var order = layout.DateOrder != DateOrder.Unknown ? layout.DateOrder : ResolveOrder(ctx, raw.Select(r => r.Date).ToList());
+        var order = layout.DateOrder != DateOrder.Unknown ? layout.DateOrder : ResolveOrder(ctx, raw.Select(r => r.Date).ToList(), format);
         var period = ResolvePeriod(ctx, order);
 
         // A sign written on only some amounts tells what the unmarked ones are: "+2 432,33" among "28,18"
@@ -746,13 +747,13 @@ public static partial class StatementParser
             PeriodStart = period?.Start ?? (parsed.Count > 0 ? allDates.Min() : null),
             PeriodEnd = period?.End ?? (parsed.Count > 0 ? allDates.Max() : null),
             Currency = ctx.Currency,
-            Language = ctx.Language,
-            Kind = ctx.Refine(kind),
+                Kind = ctx.Refine(kind),
             Bank = ctx.Bank,
             Last4 = ctx.Last4,
             UsedOcr = ctx.UsedOcr,
             Method = layout.Name.StartsWith("Template", StringComparison.Ordinal) ? layout.Name : "Layout",
             DateOrder = order,
+            DateFormatMismatch = format is { } chosen ? BankDates.Mismatch(chosen, YearLast(raw.Select(r => r.Date))) : null,
             RowBalanceChecks = checks,
             RowBalanceMismatches = mismatches,
             FirstPageText = ctx.FirstPageText,
@@ -950,15 +951,19 @@ public static partial class StatementParser
         return TextNorm.Fold(string.Join(' ', words.Skip(start).Select(w => w.Text)));
     }
 
-    private static DateOrder ResolveOrder(DocumentContext ctx, List<PrintedDate> dates)
+    /// <summary>The numeric dates written with the year last (or none), as their first and second numbers.</summary>
+    private static List<(int First, int Second)> YearLast(IEnumerable<PrintedDate> dates) => [.. dates.Where(d => !d.MonthKnown && !d.IsoOrder).Select(d => (d.A, d.B))];
+
+    private static DateOrder ResolveOrder(DocumentContext ctx, List<PrintedDate> dates, DateFormat? format)
     {
         var all = dates.ToList();
         if (ctx.Period is { } per) { all.Add(per.Start); all.Add(per.End); }
         var numeric = all.Where(d => !d.MonthKnown && !d.IsoOrder).ToList();
         if (numeric.Count == 0) return DateOrder.DayMonth;
+        // The bank's date format decides; before a bank is chosen, what the dates themselves show.
+        if (format is { } f && BankDates.Order(f) is not DateOrder.Unknown and var set) return set;
         if (numeric.Any(d => d.A > 12)) return DateOrder.DayMonth;
         if (numeric.Any(d => d.B > 12)) return DateOrder.MonthDay;
-        if (ctx.Language == "fr") return DateOrder.DayMonth;
 
         int Score(DateOrder o)
         {

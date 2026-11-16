@@ -53,7 +53,6 @@ public sealed class StatementParse
     public DateOnly? PeriodStart { get; set; }
     public DateOnly? PeriodEnd { get; set; }
     public string Currency { get; set; } = "CAD";
-    public string Language { get; set; } = "en";
     public AccountKind Kind { get; set; }
     public string? Bank { get; set; }
     public string? Last4 { get; set; }
@@ -63,6 +62,8 @@ public sealed class StatementParse
     public decimal? ComputedClosing { get; set; }
     /// <summary>Rows whose printed running balance disagrees with the computed one.</summary>
     public int RowBalanceMismatches { get; set; }
+    /// <summary>Why the dates of the file do not fit the date format of its bank (they are not saved until they do), or null.</summary>
+    public string? DateFormatMismatch { get; set; }
     public int RowBalanceChecks { get; set; }
     public bool UsedOcr { get; set; }
     public string Method { get; set; } = "";

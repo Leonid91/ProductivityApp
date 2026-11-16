@@ -8,7 +8,7 @@ import FolderOpen from '@mui/icons-material/FolderOpenRounded'
 import AccountBalance from '@mui/icons-material/AccountBalanceRounded'
 import Refresh from '@mui/icons-material/RefreshRounded'
 import ReceiptLong from '@mui/icons-material/ReceiptLongRounded'
-import { accountKinds, api, currencies, type Account, type AccountKind, type Bank, type BankingSystem, type CentralBank, type RateSource } from '../api'
+import { accountKinds, api, currencies, dateFormats, type Account, type AccountKind, type Bank, type BankingSystem, type CentralBank, type DateFormat, type RateSource } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample } from '../format'
 import { FileBrowser } from '../components/FileBrowser'
@@ -552,7 +552,7 @@ function BankConfiguration({ confirm }: { confirm: (c: Confirm) => void }) {
   )
 }
 
-const emptyBank: Bank = { id: 0, name: '', country: '', system: 'northAmerica', currency: 'CAD' }
+const emptyBank: Bank = { id: 0, name: '', country: '', system: 'northAmerica', currency: 'CAD', dateFormat: null }
 
 /**
  * A bank added (from the Add bank button) or changed (from its pencil): name, country, banking system and the
@@ -580,6 +580,10 @@ function BankDialog({ open, bank, onClose, onAdded }: { open: boolean; bank?: Ba
         </TextField>
         <TextField select label="Currency" value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value })}>
           {[...new Set([draft.currency, ...currencies])].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+        </TextField>
+        <TextField select label="Date format" value={draft.dateFormat ?? ''} onChange={(e) => setDraft({ ...draft, dateFormat: e.target.value as DateFormat })}
+          slotProps={{ select: { displayEmpty: true, renderValue: (v) => dateFormats.find((f) => f.value === v)?.label ?? 'As written in its country' }, inputLabel: { shrink: true } }}>
+          {dateFormats.map((f) => <MenuItem key={f.value} value={f.value}>{f.label}</MenuItem>)}
         </TextField>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
@@ -669,10 +673,11 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
         <TableHead>
           <TableRow>
             <TableCell padding="none" />
-            <TableCell>Bank Name</TableCell>
+            <TableCell sx={{ minWidth: 220 }}>Bank Name</TableCell>
             <TableCell>Country</TableCell>
             <TableCell>Banking System</TableCell>
             <TableCell>Currency</TableCell>
+            <TableCell>Date Format</TableCell>
             <TableCell sx={{ width: ROW_ACTIONS_WIDTH, px: 0 }} />
           </TableRow>
         </TableHead>
@@ -688,6 +693,11 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
                 </TextField>
               </TableCell>
               <TableCell><CurrencySelect value={b.currency} onChange={(c) => void save({ ...b, currency: c }, 'Currency changed')} /></TableCell>
+              <TableCell>
+                <TextField select size="small" value={b.dateFormat ?? ''} onChange={(e) => void save({ ...b, dateFormat: e.target.value as DateFormat }, 'Date format changed')} sx={{ width: 168 }} slotProps={{ htmlInput: { 'aria-label': 'Date format' } }}>
+                  {dateFormats.map((f) => <MenuItem key={f.value} value={f.value}>{f.label}</MenuItem>)}
+                </TextField>
+              </TableCell>
               <TableCell sx={{ px: 0, pr: 0.5 }} align="right">
                 <RowActions
                   editLabel={`Edit ${b.name}`}

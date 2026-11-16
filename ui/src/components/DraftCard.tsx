@@ -7,7 +7,7 @@ import ErrorOutline from '@mui/icons-material/ErrorOutlineRounded'
 import HelpOutline from '@mui/icons-material/HelpOutlineRounded'
 import ViewColumn from '@mui/icons-material/ViewColumnRounded'
 import DocumentScanner from '@mui/icons-material/DocumentScannerRounded'
-import { accountKinds, api, currencies, type AccountKind, type Draft, type DraftEdit } from '../api'
+import { accountKinds, api, currencies, dateFormats, type AccountKind, type DateFormat, type Draft, type DraftEdit } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural, shortDate } from '../format'
 import { CategoryPill, Money } from './common'
@@ -130,15 +130,16 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
 
   useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
 
-  const choose = async (account: number | 'new', newKind: AccountKind | '', bank: number | 'new' | '' = bankId) => {
+  const choose = async (account: number | 'new', newKind: AccountKind | '', bank: number | 'new' | '' = bankId, dateFormat: DateFormat | null = null) => {
     setAccountId(account)
     const a = accounts.find((x) => x.id === account)
     if (a) { setCurrency(a.currency); setKind(a.kind) }
     else setKind(newKind)
-    if (account === 'new' && newKind === '') return
+    // The file is read once its bank is known: the bank of the account, or the one chosen for the new account.
+    if (account === 'new' && bank === '') return
     try {
-      // The file is read again for the chosen type and the bank's banking system, and checked against that account only.
-      setDraft(await api.imports.choose(draft.id, account === 'new' ? null : account, account === 'new' ? newKind as AccountKind : null, typeof bank === 'number' ? bank : null))
+      // Read with the bank's banking system and date format (or the format chosen here), checked against that account only.
+      setDraft(await api.imports.choose(draft.id, account === 'new' ? null : account, account === 'new' && newKind !== '' ? newKind : null, typeof bank === 'number' ? bank : null, dateFormat))
     } catch (e) {
       fail(e)
     }
@@ -148,12 +149,13 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
     setBankId(b)
     const found = banks.find((x) => x.id === b)
     if (found) setCurrency(found.currency)
-    if (kind !== '') void choose('new', kind, b)
+    void choose('new', kind, b)
   }
 
   const system = accountId === 'new' ? banks.find((b) => b.id === bankId)?.system ?? 'northAmerica' : 'northAmerica'
   const kindLabel = (k: AccountKind, s = system) => accountKinds(s).find((x) => x.value === k)?.label ?? k
-  const chosen = accountId !== '' && (accountId !== 'new' || (kind !== '' && bankId !== '' && (bankId !== 'new' || bankName.trim() !== '')))
+  const read = draft.dateFormat !== null
+  const chosen = read && !draft.dateFormatMismatch && accountId !== '' && (accountId !== 'new' || (kind !== '' && bankId !== '' && (bankId !== 'new' || bankName.trim() !== '')))
 
   const edit = (index: number, change: Partial<DraftEdit>) => setEdits((prev) => {
     const next = new Map(prev)
@@ -211,8 +213,9 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
     onDone(false)
   }
 
-  const period = draft.periodStart && draft.periodEnd ? `${shortDate(draft.periodStart)} – ${shortDate(draft.periodEnd)}` : null
-  const needsColumns = !draft.alreadyImported && (draft.status === 'noTransactions' || draft.status === 'mismatch')
+  const period = read && draft.periodStart && draft.periodEnd ? `${shortDate(draft.periodStart)} – ${shortDate(draft.periodEnd)}` : null
+  // A table not recognised needs its columns before anything is read; a total that differs is said once the file is read.
+  const needsColumns = !draft.alreadyImported && (draft.status === 'noTransactions' || (read && draft.status === 'mismatch'))
 
   return (
     <Box data-draft={draft.fileName} sx={{ border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: { xs: 2.5, md: 3 } }}>
@@ -220,18 +223,18 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         <Box sx={{ flex: '1 1 300px', minWidth: 0 }}>
           <Typography variant="h6" noWrap>{draft.fileName}</Typography>
           <Typography variant="body2" color="text.secondary">
-            {[draft.bank, period, plural(draft.rows.length, 'operation')].filter(Boolean).join(' · ')}
+            {[draft.bank, period, read ? plural(draft.rows.length, 'operation') : null].filter(Boolean).join(' · ')}
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
           {draft.usedOcr && <Chip size="small" icon={<DocumentScanner />} label="Scanned" variant="outlined" />}
           {draft.method === 'CSV' && <Chip size="small" label="CSV" variant="outlined" />}
           {draft.template && <Chip size="small" icon={<ViewColumn />} label={draft.template.name} variant="outlined" />}
-          <StatusChip draft={draft} currency={currency} />
+          {(read || draft.alreadyImported) && <StatusChip draft={draft} currency={currency} />}
         </Box>
       </Box>
 
-      {!draft.alreadyImported && <BalanceCheck draft={draft} currency={currency} />}
+      {read && !draft.alreadyImported && <BalanceCheck draft={draft} currency={currency} />}
       {needsColumns && draft.pageCount > 0 && (
         <Alert
           severity={draft.status === 'mismatch' ? 'warning' : 'error'}
@@ -244,7 +247,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         </Alert>
       )}
 
-      {!draft.alreadyImported && draft.rows.length > 0 && (
+      {!draft.alreadyImported && (draft.rows.length > 0 || draft.dateFormatMismatch) && (
         <>
           <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 2 }}>
             <TextField
@@ -301,8 +304,24 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
                 </TextField>
               </>
             )}
+            {read && (
+              <TextField
+                select
+                size="small"
+                label="Date format"
+                value={draft.dateFormat ?? ''}
+                error={!!draft.dateFormatMismatch}
+                onChange={(e) => void choose(accountId === '' ? 'new' : accountId, kind, bankId, e.target.value as DateFormat)}
+                sx={{ width: 150 }}
+                slotProps={{ htmlInput: { 'data-date-format': '' } }}
+              >
+                {dateFormats.map((f) => <MenuItem key={f.value} value={f.value}>{f.label}</MenuItem>)}
+              </TextField>
+            )}
           </Box>
+          {draft.dateFormatMismatch && <Alert severity="warning" sx={{ mb: 2 }} data-date-format-mismatch>{draft.dateFormatMismatch}</Alert>}
 
+          {read && (
           <Box sx={{ maxHeight: 420, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: '16px' }}>
             <Table size="small" stickyHeader sx={{ '& th': { bgcolor: 'background.paper' } }}>
               <TableHead>
@@ -351,6 +370,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
               </TableBody>
             </Table>
           </Box>
+          )}
           {(() => {
             const r = editingRow === null ? undefined : draft.rows.find((x) => x.index === editingRow)
             const e = r && edits.get(r.index)
@@ -380,7 +400,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
         <Button onClick={() => void discard()}>{draft.alreadyImported ? 'Close' : 'Discard'}</Button>
         {!draft.alreadyImported && (
           <Button variant="contained" disabled={busy || !chosen || included.length === 0} onClick={() => void commit()}>
-            Import {plural(included.length, 'operation')}
+            {read ? `Import ${plural(included.length, 'operation')}` : 'Import'}
           </Button>
         )}
       </Box>

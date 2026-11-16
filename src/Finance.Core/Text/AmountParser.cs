@@ -21,7 +21,6 @@ public readonly record struct PrintedAmount(decimal Magnitude, SignMarker Marker
 /// </summary>
 public static partial class AmountParser
 {
-    /// <summary>The currencies an amount can be written in, by their code ("CHF 12.50", "12,50 GBP"), besides the signs $ € £.</summary>
     /// <summary>
     /// The ISO 4217 codes of every currency in use (as Windows lists them for every country), less the six that are
     /// also common words a statement prints beside numbers (ALL, CUP, MOP, PEN, SOS, TOP).
@@ -122,6 +121,38 @@ public static partial class AmountParser
         var t = TextNorm.Fold(text).Trim();
         // Any currency sign ($, €, £, ¥, ₹, ₩, ₽, ₺...), alone or with its country.
         return t is "CA$" or "US$" or "CR" or "DR" or "DB" or "-" or "+" or "$CA" or "$US" || (t.Length == 1 && char.GetUnicodeCategory(t[0]) == UnicodeCategory.CurrencySymbol) || Currencies.Contains(t);
+    }
+
+    /// <summary>
+    /// The signs of money only one currency uses (as banks print them), by currency. "$" and "¥" are shared by several
+    /// currencies: alone they name none.
+    /// </summary>
+    private static readonly Dictionary<char, string> OwnSigns = new()
+    {
+        ['€'] = "EUR", ['£'] = "GBP", ['₹'] = "INR", ['₩'] = "KRW", ['₽'] = "RUB", ['₺'] = "TRY", ['₪'] = "ILS",
+        ['₫'] = "VND", ['₴'] = "UAH", ['₱'] = "PHP", ['฿'] = "THB", ['₦'] = "NGN", ['₸'] = "KZT", ['₾'] = "GEL",
+    };
+
+    [GeneratedRegex(@"CA\$|\$\s?CA(?![A-Z])|US\$|\$\s?US(?![A-Z])")]
+    private static partial Regex DollarOfCountry();
+
+    [GeneratedRegex(@"(?<![A-Z])[A-Z]{3}(?![A-Z])")]
+    private static partial Regex ThreeLetters();
+
+    /// <summary>
+    /// The one currency a text names: a currency code as a word ("Amount (CHF)", "-45.10 CHF"), a sign only one currency
+    /// uses ("12,34 €", "£5") or a dollar with its country ("CA$ 12"). Null when it names none, several, or only a sign
+    /// several currencies share ("$12.34", "¥980").
+    /// </summary>
+    public static string? CurrencyOf(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var t = text.ToUpperInvariant();
+        var named = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match m in DollarOfCountry().Matches(t)) named.Add(m.Value.Contains("US", StringComparison.Ordinal) ? "USD" : "CAD");
+        foreach (Match m in ThreeLetters().Matches(t)) if (Currencies.Contains(m.Value)) named.Add(m.Value);
+        foreach (var ch in t) if (OwnSigns.TryGetValue(ch, out var code)) named.Add(code);
+        return named.Count == 1 ? named.Single() : null;
     }
 
     /// <summary>Formats with invariant culture, two decimals, for storage.</summary>
