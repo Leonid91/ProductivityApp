@@ -18,10 +18,14 @@ public static partial class AccountSections
     [GeneratedRegex(@"\bN[°O]?\s*:?\s*\d[\d ]{6,}")]
     private static partial Regex AccountNumber();
 
-    [GeneratedRegex(@"\b(COMPTE|LIVRET|LDDS|LEP|PEL|CEL|PEA|EPARGNE|ACCOUNT|CHEQUING|SAVINGS)\b")]
+    /// <summary>A word naming an account: "COMPTE" and the names banks make of it ("EUROCOMPTE"), "C/C" (compte
+    /// courant), the savings books, their English names.</summary>
+    [GeneratedRegex(@"(\b[A-Z]*COMPTE|\bC/C|\bCCP|\b(LIVRET|LDDS|LEP|PEL|CEL|PEA|EPARGNE|ACCOUNT|CHEQUING|CHECKING|SAVINGS))\b")]
     private static partial Regex AccountWord();
 
-    [GeneratedRegex(@"\b(SOLDE PRECEDENT|ANCIEN SOLDE|SOLDE AU|SOLDE INITIAL|OPENING BALANCE|PREVIOUS BALANCE)\b")]
+    /// <summary>The balance an account starts with: "SOLDE PRECEDENT", "SOLDE CREDITEUR AU" (or DEBITEUR), "ANCIEN SOLDE",
+    /// "OPENING BALANCE", "BALANCE FORWARD"...</summary>
+    [GeneratedRegex(@"\b(SOLDE PRECEDENT|ANCIEN SOLDE|SOLDE (CREDITEUR |DEBITEUR )?AU|SOLDE INITIAL|SOLDE D'OUVERTURE|OPENING BALANCE|PREVIOUS BALANCE|BEGINNING BALANCE|STARTING BALANCE|BALANCE (BROUGHT )?FORWARD)\b")]
     private static partial Regex OpeningWords();
 
     /// <summary>The accounts of the file, or a single section (the whole file) when it holds one account.</summary>
@@ -67,12 +71,16 @@ public static partial class AccountSections
         return sections;
     }
 
-    /// <summary>"M ALEX SAMPLE - COMPTE DE DEPOT - N° 0812..." gives "COMPTE DE DEPOT".</summary>
+    /// <summary>"M ALEX SAMPLE - COMPTE DE DEPOT - N° 0812..." gives "COMPTE DE DEPOT"; "C/C EUROCOMPTE DUO N° 0002...
+    /// en euros" gives "C/C EUROCOMPTE DUO" (the name is what comes before the number).</summary>
     private static string Name(string title)
     {
         var parts = title.Split(" - ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var named = parts.FirstOrDefault(p => AccountWord().IsMatch(TextNorm.Fold(p)) && !AccountNumber().IsMatch(TextNorm.Fold(p)));
-        return named ?? AccountNumber().Replace(title, "").Trim(' ', '-');
+        if (named is not null) return named;
+        var number = AccountNumber().Match(title);
+        var before = number.Success ? title[..number.Index].Trim(' ', '-') : "";
+        return before.Length > 0 && AccountWord().IsMatch(TextNorm.Fold(before)) ? before : AccountNumber().Replace(title, "").Trim(' ', '-');
     }
 
     /// <summary>Words of a page grouped in lines (same baseline), top to bottom.</summary>

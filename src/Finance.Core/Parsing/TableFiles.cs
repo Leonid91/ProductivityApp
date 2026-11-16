@@ -49,31 +49,66 @@ public static partial class TableFiles
     }
 
     /// <summary>The rows of the table of operations in the file (several sheets or tables of the same layout follow each other).</summary>
-    public static List<List<string>> Read(byte[] bytes, string fileName)
+    public static List<List<string>> Read(byte[] bytes, string fileName) => Pick(Tables(bytes, fileName)).SelectMany(t => t).ToList();
+
+    /// <summary>
+    /// The accounts of the file: one per table of operations when the tables are titled with different account numbers
+    /// (an export with a sheet per account), otherwise the one table of operations (a statement split over pages or
+    /// sheets). Title: the account's name as written above its operations, or "" for a single account.
+    /// </summary>
+    public static List<(string Title, List<List<string>> Table)> ReadAccounts(byte[] bytes, string fileName)
     {
-        var tables = Kind(bytes, fileName) switch
+        var picked = Pick(Tables(bytes, fileName));
+        var titled = picked.Select(t => (Title: AccountTitle(t), Rows: t)).ToList();
+        if (titled.Count > 1 && titled.All(t => t.Title is not null) && titled.Select(t => t.Title!.Value.Number).Distinct().Count() == titled.Count)
+            return [.. titled.Select(t => (t.Title!.Value.Name, t.Rows))];
+        return [("", picked.SelectMany(t => t).ToList())];
+    }
+
+    private static List<List<List<string>>> Tables(byte[] bytes, string fileName) => Kind(bytes, fileName) switch
+    {
+        "Excel" => Excel(bytes),
+        "OpenDocument" => OpenDocument(bytes),
+        "Word" => Word(bytes),
+        "Web page" => Html(CsvStatementReader.Decode(bytes)),
+        _ => [],
+    };
+
+    [GeneratedRegex(@"(?<![\dA-Z])(N[°O]?\s*:?\s*)?(\d[\d ]{5,}\d)(?![\d])", RegexOptions.IgnoreCase)]
+    private static partial Regex AccountNumberText();
+
+    /// <summary>
+    /// The account a table is about, from the lines above its first operation: a line holding an account number (six
+    /// digits or more) and a name ("C/C EUROCOMPTE DUO N° 00020123401" gives "C/C EUROCOMPTE DUO"), or null.
+    /// </summary>
+    private static (string Name, string Number)? AccountTitle(List<List<string>> table)
+    {
+        foreach (var row in table)
         {
-            "Excel" => Excel(bytes),
-            "OpenDocument" => OpenDocument(bytes),
-            "Word" => Word(bytes),
-            "Web page" => Html(CsvStatementReader.Decode(bytes)),
-            _ => [],
-        };
-        return Pick(tables);
+            if (row.Any(c => DateParser.TryParse(c, out _))) break;
+            var text = string.Join(' ', row.Where(c => c.Length > 0)).Trim();
+            var m = AccountNumberText().Match(text);
+            if (!m.Success) continue;
+            var name = text[..m.Index].Trim(' ', '-', ':');
+            if (name.Length == 0) name = text.Remove(m.Index, m.Length).Trim(' ', '-', ':');
+            if (name.Length == 0) continue;
+            return (name, m.Groups[2].Value.Replace(" ", ""));
+        }
+        return null;
     }
 
     /// <summary>
     /// The tables that hold the operations: the one with the most dated lines with an amount, and every other table of
     /// the same width (a statement split over pages), in order. Summary tables and headers of the bank are left out.
     /// </summary>
-    private static List<List<string>> Pick(List<List<List<string>>> tables)
+    private static List<List<List<string>>> Pick(List<List<List<string>>> tables)
     {
         static int Score(List<List<string>> t) => t.Count(r => r.Any(c => DateParser.TryParse(c, out _)) && r.Any(c => Regex.IsMatch(c, @"\d[.,]\d{2}\b|^-?\d+(\.\d+)?$")));
         static int Width(List<List<string>> t) => t.Where(r => r.Count(c => c.Length > 0) >= 2).Select(r => r.Count).GroupBy(n => n).OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
         var scored = tables.Select(t => (Table: t, Score: Score(t), Width: Width(t))).ToList();
         var best = scored.OrderByDescending(x => x.Score).FirstOrDefault();
-        if (best.Table is null || best.Score == 0) return tables.SelectMany(t => t).ToList();
-        return scored.Where(x => x.Width == best.Width && (x.Score > 0 || ReferenceEquals(x.Table, best.Table) || x.Table.Count <= 2)).SelectMany(x => x.Table).ToList();
+        if (best.Table is null || best.Score == 0) return tables;
+        return [.. scored.Where(x => x.Width == best.Width && (x.Score > 0 || ReferenceEquals(x.Table, best.Table) || x.Table.Count <= 2)).Select(x => x.Table)];
     }
 
     private static List<List<List<string>>> Excel(byte[] bytes)

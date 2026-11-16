@@ -95,11 +95,12 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
             // A text file (CSV, OFX, QIF, web page) that is not UTF-8 is read as Windows-1252: written to the log.
             if (TableFiles.Kind(bytes, fileName) is null or "Web page" && CsvStatementReader.IsWindows1252(bytes))
                 Diagnostics.Note("ImportService.ParseAsync", $"{fileName}: not UTF-8, read as Windows-1252.");
-            // One export of several accounts (one per currency, or per product named on each line): one draft per
-            // account, each holding its own lines as a file of its own.
-            var table = TableFiles.Kind(bytes, fileName) is not null ? TableFiles.Read(bytes, fileName)
-                : MoneyFiles.Kind(bytes, fileName) is null ? CsvStatementReader.Table(bytes) : null;
-            var accounts = table is null ? [] : CsvStatementReader.Accounts(table, defaultCurrency());
+            // One export of several accounts (a sheet per account; one per currency, or per product named on each line):
+            // one draft per account, each holding its own lines as a file of its own.
+            var sheets = TableFiles.Kind(bytes, fileName) is not null ? TableFiles.ReadAccounts(bytes, fileName) : null;
+            var table = sheets is { Count: 1 } ? sheets[0].Table
+                : sheets is null && MoneyFiles.Kind(bytes, fileName) is null ? CsvStatementReader.Table(bytes) : null;
+            var accounts = sheets is { Count: > 1 } ? sheets : table is null ? [] : CsvStatementReader.Accounts(table, defaultCurrency());
             if (accounts.Count > 1)
             {
                 // Named after its file, then its account, the extension last ("export · Savings · EUR.csv").

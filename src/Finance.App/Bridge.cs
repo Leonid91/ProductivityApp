@@ -42,6 +42,12 @@ internal sealed class Bridge
         _web = web;
         _ui = ui;
         _web.WebMessageReceived += OnMessage;
+        // The browser process gone (a crash, or ended from outside), the browser control can no longer be used: its page
+        // is gone with it.
+        _web.ProcessFailed += (_, e) =>
+        {
+            if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited) Close($"the browser of the window ended ({e.Reason}, exit code {e.ExitCode})");
+        };
     }
 
     public void RegisterAsync(string method, Func<JsonElement, Task<object?>> handler) => _methods[method] = handler;
@@ -53,16 +59,33 @@ internal sealed class Bridge
 
     public void Emit(string name, object? data) => Post(JsonSerializer.Serialize(new { @event = name, data }, Json), "event " + name);
 
-    /// <summary>False once the window closes: its page goes with it (the browser control is shut down).</summary>
+    /// <summary>False once the page is gone: the window closed, or its browser ended (the browser control is shut down).</summary>
     private bool _open = true;
 
-    /// <summary>The window is closing (called on its thread): nothing more is sent to the page.</summary>
-    public void Close() => _open = false;
+    /// <summary>Why the page is gone, for what could not be sent to it.</summary>
+    private string _closedBecause = "";
+
+    /// <summary>
+    /// The page is gone (said once, on the window's thread): the window closed, its browser ended, or a message could
+    /// not be sent. Whoever tells the page of anything stops (the window starts a new browser when it is still open).
+    /// </summary>
+    public event Action<string>? Closed;
+
+    /// <summary>The page is gone (called on the window's thread): nothing more is sent to it.</summary>
+    public void Close(string why)
+    {
+        if (!_open) return;
+        _open = false;
+        _closedBecause = why;
+        Closed?.Invoke(why);
+    }
 
     /// <summary>
     /// Sends a message to the page, from the window's thread. Whether the page is still there is checked when the message
     /// is sent, not when it is asked for: an answer finished on a worker thread, or an event, may wait in the window's queue
-    /// while the window closes. Such a message has no page left to reach: it is written to the log (debug), not sent.
+    /// while the window closes or its browser ends. Such a message has no page left to reach: it is written to the log
+    /// (debug), not sent. A message the browser refuses closes the bridge, then fails as it came (written as an error), so
+    /// one failure never brings another (the log telling a page it cannot reach of its own new entries).
     /// </summary>
     private void Post(string json, string what)
     {
@@ -70,17 +93,26 @@ internal sealed class Bridge
         var asked = new System.Diagnostics.StackTrace(1, false);
         void Send()
         {
-            if (_open && !_ui.IsDisposed) _web.PostWebMessageAsJson(json);
-            else NotSent(what, asked);
+            if (!_open || _ui.IsDisposed) { NotSent(what, asked); return; }
+            try { _web.PostWebMessageAsJson(json); }
+            catch (Exception ex)
+            {
+                Close($"{what} could not be sent ({ex.GetType().Name} 0x{ex.HResult:X8})");
+                throw;
+            }
         }
         if (!_ui.InvokeRequired) { Send(); return; }
         try { _ui.BeginInvoke(Send); }
         // The window is already gone (its handle destroyed): nothing can run on its thread any more.
-        catch (InvalidOperationException) when (_ui.IsDisposed || !_ui.IsHandleCreated) { NotSent(what, asked); }
+        catch (InvalidOperationException) when (_ui.IsDisposed || !_ui.IsHandleCreated)
+        {
+            if (_open) _closedBecause = "the window was closed";
+            NotSent(what, asked);
+        }
     }
 
     private void NotSent(string what, System.Diagnostics.StackTrace asked) =>
-        _actions.WriteWithStack("debug", "engine", "Not sent to the page", DateTime.Now, asked.ToString().TrimEnd(), what, ": the window was closed before it could be sent.");
+        _actions.WriteWithStack("debug", "engine", "Not sent to the page", DateTime.Now, asked.ToString().TrimEnd(), what, ": the page was gone (", _closedBecause, ").");
 
     private async void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {

@@ -1073,3 +1073,52 @@ real app with `tools/e2e/perf.mjs`.
   - Charts drawn again while the view changes, or a period drawn in pieces, are waited for instead of read at once.
 - Tests: the suite on a copy of the sample statements, off-screen: 232 of 232 on the debug build and 232 of 232 on a
   published release build (`-p:E2E=true`). No change to the app.
+
+## November 16th, 2026 - The interface comes back when its browser ends; CIC statements; the month kept on view switches - Commit 45
+
+### Fixed
+- The COMException 0x8007139F on closing (fixed in Commit 43) was reproduced in a visible window with real mouse and
+  keys, on a copy of real data, with the version before Commit 43 (10 of 20 closes, every one with a click on the
+  window's X) and checked with this one: 0 of 24 closes in 12 ways (X clicked, X then another window in front, Alt+F4,
+  the system's close, minimised, maximised, while writing to the log, while an answer was on its way, ...).
+- The same error had another cause, not covered by Commit 43: the browser of the window ending (a crash, or ended from
+  outside). Every message to the page then failed with that COMException; each error, written to the log, told the
+  page of a new entry, which failed again: about 23,500 errors in 6 seconds, and the window stayed blank. Now the
+  bridge to the page knows when its page is gone (the window closed, its browser ended, a message refused): nothing
+  more is sent to it (a debug entry says what was not sent and why) and the log stops telling it. The window then
+  starts a new browser and loads the interface again ("Browser started again"); the page's own process ending loads
+  the page again ("Page loaded again"). Three times within five minutes at most: beyond, the window says the interface
+  stopped and where the log is. That message was dark grey on the dark theme and the window had no title bar to close
+  it with: it is readable in both themes and the window gets Windows' own title bar.
+- Periods: switching the view far down the page (Statements, Analytics General and Transfers) could land on another
+  month, up to 2,647 px away (2 switches of 4 in the check): the new view is first drawn at guessed heights, so the page
+  was for a moment shorter than the place being read; the browser pulled it up, and that pull was taken for a scroll
+  of the person, never undone. A pull of the browser is no longer the person's, and a correction the page is still too
+  short for is made once it is long enough again: the month stays in place (0 to 1 px).
+- Reading statements, for any bank:
+  - a CSV or table with as many lines of title (one cell each) as lines of operations is read: its separator and width
+    are those of its lines of cells (a month of one operation was read as nothing);
+  - a balance line under or above the table is found in any column ("Solde au 31/10/2025" under the label column), a
+    dated balance under the operations is the closing one; printed balances are checked against the running balance
+    (a month of one operation is proven by them);
+  - a spreadsheet (or document) with a table per account, each titled with its own account number, gives one statement
+    per account (sheets of the same account still make one);
+  - account titles "C/C ..." and names ending in COMPTE ("EUROCOMPTE"), opening balances "SOLDE CREDITEUR AU" and
+    "SOLDE DEBITEUR AU" in statements of several accounts.
+
+### Added
+- CIC statements (a French bank, on the online banking of the Crédit Mutuel): the CSV and Excel exports in the layouts
+  public projects reading them describe, the PDF from the bank's own description of its statement (no real CIC
+  statement was available to compare with): the monthly PDF "Relevé et informations bancaires" with every account (current
+  account and Livret A, "Date | Date valeur | Opération | Débit EUROS | Crédit EUROS", balances "SOLDE CREDITEUR AU",
+  "Total des mouvements", card payments on three lines), the CSV export (ISO-8859-15, debits negative), the Excel
+  export (a sheet of the accounts, then a sheet per account), OFX and QIF. Fictitious statements: `SampleStatements cic
+  <folder>`. The CSV and QIF exports name no currency: they are read in the global currency until the account's is
+  chosen (the PDF says EUROS).
+
+### Changed
+- Tests: 288 unit tests (CIC in every format, a short table under lines of title, a printed balance that disagrees is a
+  mismatch, sheets of one account stay one statement), `npm test` in ui 3 of 3. Every sample statement of every bank
+  read by the previous and this version: the same readings, but CIC's (now balanced, both accounts). The CIC files
+  imported through the Import page of the real app on an empty database: 9 of 9 checks. The scroll checked with the
+  real mouse wheel in a visible window on a copy of real data: no jump in 18 phases (folded and unfolded months, Analytics, years, at a person's pace and fast, the scrollbar dragged), the month kept on all 4 view switches (2 of 4 before). End-to-end suite: 232 of 232 on the debug build and on a published release build.

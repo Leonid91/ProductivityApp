@@ -125,6 +125,25 @@ if (args.Length == 2 && args[0] == "caisse")
     }
     return 0;
 }
+if (args.Length == 2 && args[0] == "cic")
+{
+    // cic <folder>: fictitious statements in CIC layouts (PDF with every account, CSV, Excel with a sheet per account,
+    // OFX and QIF), three months
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    for (var m = 8; m <= 10; m++)
+    {
+        var st = CicGenerator.Sample(2025, m, 50 + m);
+        Write(Path.Combine(dir, $"CIC releve 2025-{m:D2}.pdf"), CicGenerator.Pdf(st));
+        foreach (var a in st.Accounts) Console.WriteLine($"{m:D2} {a.Title} open={a.Opening} close={a.Closing} debits={a.Debits} credits={a.Credits} lines={a.Lines.Count}");
+        if (m != 10) continue;
+        var cur = st.Accounts[0];
+        Write(Path.Combine(dir, "CIC export 2025-10.csv"), CicGenerator.Csv(cur));
+        Write(Path.Combine(dir, "CIC export 2025-10.xlsx"), CicGenerator.Xlsx(st));
+        Write(Path.Combine(dir, "CIC 2025-10.ofx"), CicGenerator.Ofx(st, cur));
+        Write(Path.Combine(dir, "CIC 2025-10.qif"), CicGenerator.Qif(cur));
+    }
+    return 0;
+}
 if (args.Length >= 2 && args[0] == "inspect")
 {
     // inspect <file> [bank|card]: reads any file the import takes (PDF, picture, CSV, Excel, OFX...) as the app does, in a

@@ -49,10 +49,10 @@ public static partial class CsvStatementReader
         var bestScore = -1.0;
         foreach (var d in new[] { ';', ',', '\t', '|' })
         {
-            var counts = lines.Select(l => Split(l, d).Count).ToList();
+            // Lines of title above the table (account, name, dates) hold no separator: only the lines of cells count.
+            var counts = lines.Select(l => Split(l, d).Count).Where(c => c >= 2).ToList();
             if (counts.Count == 0) continue;
             var mode = counts.GroupBy(c => c).OrderByDescending(g => g.Count()).First();
-            if (mode.Key < 2) continue;
             var score = mode.Count() * 10 + mode.Key;
             if (score > bestScore) { bestScore = score; best = d; }
         }
@@ -261,7 +261,8 @@ public static partial class CsvStatementReader
     public static StatementParse ParseTable(List<List<string>> table, string fileName, string defaultCurrency, AccountKind? forcedKind, string method, char? decimalSeparator = null)
     {
         if (table.Count == 0) return Empty(method, defaultCurrency);
-        var width = table.GroupBy(r => r.Count).OrderByDescending(g => g.Count()).First().Key;
+        // The width of the table: that of most of its lines of several cells (lines of title above it are one cell).
+        var width = (table.Any(r => r.Count >= 2) ? table.Where(r => r.Count >= 2) : table).GroupBy(r => r.Count).OrderByDescending(g => g.Count()).First().Key;
 
         // Header: the first row whose cells are column names rather than data.
         var headerIndex = HeaderIndex(table);
@@ -417,6 +418,18 @@ public static partial class CsvStatementReader
         var withBalance = rows.Where(x => x.Balance is not null).ToList();
         decimal? opening = withBalance.Count > 0 && rows[0].Balance is { } fb ? fb - rows[0].Amount : about.Opening;
         decimal? closing = withBalance.Count > 0 ? rows[^1].Balance ?? withBalance[^1].Balance : about.Closing;
+        // Balances printed above or below the table ("Solde au 31/10/2025") are checks of the running balance too: a
+        // month of one operation is proven by them alone.
+        if (withBalance.Count > 0 && about.Closing is { } printedClosing && closing is { } runningClosing)
+        {
+            checks++;
+            if (printedClosing != runningClosing) mismatches++;
+        }
+        if (withBalance.Count > 0 && rows[0].Balance is not null && about.Opening is { } printedOpening && opening is { } runningOpening)
+        {
+            checks++;
+            if (printedOpening != runningOpening) mismatches++;
+        }
         // Lines of zero (waived fees) are left out, but their dates still count for the period the balances cover:
         // they prove the balance on those days.
         var allDates = rows.Select(x => x.Date).ToList();
@@ -500,14 +513,22 @@ public static partial class CsvStatementReader
                 else if ((key.StartsWith("NUMERO DE COMPTE", StringComparison.Ordinal) || key is "ACCOUNT NUMBER" or "COMPTE") && Regex.Match(value, @"(\d{4})\s*$") is { Success: true } n) last4 = n.Groups[1].Value;
                 else if (key is "DEVISE" or "CURRENCY" && value.Length == 3 && value.All(char.IsAsciiLetter)) currency = value.ToUpperInvariant();
             }
-            // Balance lines: no date, the first cell names the balance, one number in the line.
-            var first = TextNorm.Fold(cells[0]);
+            // Balance lines: no date of operation, the first cell written names the balance, a number after it.
+            var named = cells.FindIndex(c => c.Trim().Length > 0);
+            if (named < 0 || cells.Any(c => DateParser.TryParse(c, out _))) continue;
+            var first = TextNorm.Fold(cells[named]);
             if (!first.StartsWith("SOLDE", StringComparison.Ordinal) && !first.Contains("BALANCE", StringComparison.Ordinal)) continue;
-            if (DateParser.TryParse(cells[0], out _)) continue;
-            var number = cells.Skip(1).Select(c => TryNumber(c, decimalSep, out var v) ? v : (decimal?)null).LastOrDefault(v => v is not null);
+            var number = cells.Skip(named + 1).Select(c => TryNumber(c, decimalSep, out var v) ? v : (decimal?)null).LastOrDefault(v => v is not null);
             if (number is null) continue;
             if (Regex.IsMatch(first, @"\b(FIN|FINAL|NOUVEAU|CLOSING|ENDING|END)\b")) closing = number;
             else if (Regex.IsMatch(first, @"\b(DEBUT|INITIAL|PRECEDENT|OPENING|PREVIOUS|START|STARTING)\b")) opening = number;
+            // "Solde au 31/10/2025", "Balance as of ...": a balance on a day, the closing one under the operations, the
+            // opening one above them.
+            else if (headerIndex >= 0 && Keywords.ContainsAny(first, Keywords.BalanceAsOf))
+            {
+                if (i > headerIndex) closing = number;
+                else opening = number;
+            }
         }
         return new About(accountName, last4, currency, opening, closing);
     }

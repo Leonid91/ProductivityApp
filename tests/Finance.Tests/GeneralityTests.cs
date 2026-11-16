@@ -118,4 +118,21 @@ public class GeneralityTests
         var none = "Date,Account,Description,Amount\n2026-06-01,A,Bakery,-5.00\n2026-06-02,B,Bus,-3.00\n";
         Assert.Single(CsvStatementReader.Accounts(CsvStatementReader.Table(Encoding.UTF8.GetBytes(none)), "USD"));
     }
+
+    [Theory]
+    [InlineData(';')]
+    [InlineData(',')]
+    [InlineData('\t')]
+    public void A_short_table_under_lines_of_title_is_read_and_proven_by_the_balance_printed_under_it(char d)
+    {
+        // As many lines of title (one cell each) as lines of the table: the separator and the width are those of the table.
+        var csv = $"Savings account No 99887766\nA Sample\nFrom 2026-05-01 to 2026-05-31\nDate{d}Description{d}Withdrawal{d}Deposit{d}Balance\n"
+            + $"2026-05-12{d}Transfer from chequing{d}{d}150.00{d}4360.00\n{d}Balance on 2026-05-31{d}{d}{d}4360.00\n";
+        var p = CsvStatementReader.Parse(Encoding.UTF8.GetBytes(csv), "export.csv", "USD");
+        Assert.Equal([(new DateOnly(2026, 5, 12), 150.00m)], p.Rows.Select(r => (r.Date, r.Amount)));
+        Assert.Equal((VerificationStatus.Verified, 4210.00m, 4360.00m), (p.Status, p.OpeningBalance, p.ClosingBalance));
+        // A balance printed under the table that disagrees with the running balance is a mismatch, never hidden.
+        var wrong = csv.Replace($"{d}{d}{d}4360.00\n", $"{d}{d}{d}4300.00\n", StringComparison.Ordinal);
+        Assert.Equal(VerificationStatus.Mismatch, CsvStatementReader.Parse(Encoding.UTF8.GetBytes(wrong), "export.csv", "USD").Status);
+    }
 }

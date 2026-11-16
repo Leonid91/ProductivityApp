@@ -16,10 +16,15 @@ internal sealed class MainForm : Form
 
     private readonly AppOptions _options;
     private readonly AppServices _services;
-    private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
+    /// <summary>The browser control showing the interface (a new one when the browser of the previous one ended).</summary>
+    private WebView2 _web = new() { Dock = DockStyle.Fill };
     private Bridge? _bridge;
-    /// <summary>Tells the Logs page of new entries; let go when the window closes.</summary>
+    /// <summary>Tells the Logs page of new entries; let go when its page is gone.</summary>
     private Action? _logsChanged;
+    private bool _closing;
+    /// <summary>Browsers started again after their browser ended, in the last minutes (a browser that keeps ending is
+    /// said on the window instead of being started again and again).</summary>
+    private readonly List<DateTime> _restarts = [];
 #if DEBUG
     /// <summary>The Vite dev server the interface is loaded from (--dev-url, debug builds only).</summary>
     private static string? _devOrigin;
@@ -37,6 +42,7 @@ internal sealed class MainForm : Form
         StartPosition = FormStartPosition.Manual;
         var dark = services.Setting("theme") == "dark";
         BackColor = dark ? Color.FromArgb(0x16, 0x16, 0x15) : Color.FromArgb(0xF6, 0xF5, 0xF2);
+        ForeColor = dark ? Color.FromArgb(0xEC, 0xEA, 0xE6) : Color.FromArgb(0x1E, 0x1D, 0x1B);
         _web.DefaultBackgroundColor = BackColor;
         Controls.Add(_web);
         PlaceWindow();
@@ -115,14 +121,18 @@ internal sealed class MainForm : Form
         var border = dark ? 0x00302F2D : 0x00D9DAD6;
         Native.DwmSetWindowAttribute(Handle, Native.DWMWA_BORDER_COLOR, ref border, sizeof(int));
         BackColor = dark ? Color.FromArgb(0x16, 0x16, 0x15) : Color.FromArgb(0xF6, 0xF5, 0xF2);
+        // The message painted on the window when its interface cannot be shown, readable on that background.
+        ForeColor = dark ? Color.FromArgb(0xEC, 0xEA, 0xE6) : Color.FromArgb(0x1E, 0x1D, 0x1B);
         _web.DefaultBackgroundColor = BackColor;
+        Invalidate();
     }
 
     protected override void WndProc(ref Message m)
     {
         switch (m.Msg)
         {
-            case Native.WM_NCCALCSIZE when m.WParam != IntPtr.Zero:
+            // Without its interface (a message painted instead), the window has Windows' own title bar, to be closed.
+            case Native.WM_NCCALCSIZE when m.WParam != IntPtr.Zero && _fatal is null:
                 if (WindowState == FormWindowState.Maximized)
                 {
                     // A maximised window hangs its frame outside the monitor; clip the client to the work area.
@@ -136,7 +146,7 @@ internal sealed class MainForm : Form
                 }
                 m.Result = IntPtr.Zero;
                 return;
-            case Native.WM_NCACTIVATE:
+            case Native.WM_NCACTIVATE when _fatal is null:
                 // Keep Windows from painting a native frame when focus changes.
                 m.LParam = new IntPtr(-1);
                 base.WndProc(ref m);
@@ -177,6 +187,9 @@ internal sealed class MainForm : Form
         _fatal = message;
         _services.Logs.Error("window", "ShowFatal", message);
         _web.Visible = false;
+        // Windows' own title bar comes back (the interface drew the window's own, with its buttons).
+        if (IsHandleCreated)
+            Native.SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
         Invalidate();
     }
 
@@ -247,12 +260,27 @@ internal sealed class MainForm : Form
         core.DownloadStarting += (_, e) => { e.Cancel = true; _services.Logs.Write("warning", "window", "CoreWebView2.DownloadStarting", DateTime.Now, $"Uri: {e.DownloadOperation.Uri}\nMimeType: {e.DownloadOperation.MimeType}\nContentDisposition: {e.DownloadOperation.ContentDisposition}\nResultFilePath: {e.ResultFilePath}\nCancel: {e.Cancel}"); };
         core.PermissionRequested += (_, e) => { e.State = CoreWebView2PermissionState.Deny; _services.Logs.Write("warning", "window", "CoreWebView2.PermissionRequested", DateTime.Now, $"PermissionKind: {e.PermissionKind}\nUri: {e.Uri}\nIsUserInitiated: {e.IsUserInitiated}\nState: {e.State}"); };
         core.NavigationCompleted += (_, e) => _services.Logs.Write(e.IsSuccess ? "info" : "error", "window", "CoreWebView2.NavigationCompleted", DateTime.Now, $"NavigationId: {e.NavigationId}\nIsSuccess: {e.IsSuccess}\nHttpStatusCode: {e.HttpStatusCode}\nWebErrorStatus: {e.WebErrorStatus}");
-        core.ProcessFailed += (_, e) => _services.Logs.Error("window", "CoreWebView2.ProcessFailed", $"ProcessFailedKind: {e.ProcessFailedKind}\nReason: {e.Reason}\nExitCode: {e.ExitCode}\nProcessDescription: {e.ProcessDescription}\nFailureSourceModulePath: {e.FailureSourceModulePath}");
+        core.ProcessFailed += (_, e) =>
+        {
+            _services.Logs.Error("window", "CoreWebView2.ProcessFailed", $"ProcessFailedKind: {e.ProcessFailedKind}\nReason: {e.Reason}\nExitCode: {e.ExitCode}\nProcessDescription: {e.ProcessDescription}\nFailureSourceModulePath: {e.FailureSourceModulePath}");
+            // The page's process ended: the page is loaded again (the browser itself ending is the bridge's: a new browser).
+            if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited && !_closing)
+                BeginInvoke(() => ReloadPage(core, $"the page's process ended ({e.Reason}, exit code {e.ExitCode})"));
+        };
 
         _bridge = new Bridge(core, this, _services.Logs);
         var bridge = _bridge;
-        _logsChanged = () => bridge.Emit("logs.changed", null);
-        _services.Logs.Changed += _logsChanged;
+        var logsChanged = () => bridge.Emit("logs.changed", null);
+        _logsChanged = logsChanged;
+        _services.Logs.Changed += logsChanged;
+        bridge.Closed += why =>
+        {
+            // Nothing more tells this page of anything; the Logs page is no longer open either.
+            _services.Logs.Changed -= logsChanged;
+            _services.Logs.Watched = false;
+            // Its browser ended while the window is open: a new one, the interface loaded again (after this event).
+            if (!_closing && !IsDisposed) BeginInvoke(() => RestartBrowser(why));
+        };
         Api.Register(_bridge, _services, this, nonClientRegions);
 
         if (_options.Capture is not null)
@@ -276,6 +304,60 @@ internal sealed class MainForm : Form
         }
 #endif
         core.Navigate(start);
+    }
+
+    /// <summary>
+    /// The browser of the window ended (a crash, or ended from outside) while the window is open: the browser control can
+    /// no longer be used, so a new one takes its place and loads the interface again; written to the log. A browser that
+    /// ends three times within five minutes is not started again: the window says so, with the log's place.
+    /// </summary>
+    private async void RestartBrowser(string why)
+    {
+        if (!MayRecover(why)) return;
+        _services.Logs.Info("window", "Browser started again", $"why: {why}\ntimes in the last five minutes: {_restarts.Count}");
+        var old = _web;
+        _web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = BackColor };
+        Controls.Add(_web);
+        Controls.Remove(old);
+        old.Dispose();
+        try
+        {
+            await InitializeWebViewAsync();
+        }
+        catch (Exception ex)
+        {
+            _services.Log(ex, "browser started again");
+            ShowFatal("The interface could not start again. The details were written to " + _services.LogPath);
+        }
+    }
+
+    /// <summary>
+    /// The page's own process ended (a crash, or ended from outside) while the window is open: the browser control still
+    /// works, the page is loaded again in it; written to the log.
+    /// </summary>
+    private void ReloadPage(CoreWebView2 core, string why)
+    {
+        if (core != _web.CoreWebView2 || !MayRecover(why)) return;
+        _services.Logs.Watched = false;
+        _services.Logs.Info("window", "Page loaded again", $"why: {why}\ntimes in the last five minutes: {_restarts.Count}");
+        core.Reload();
+    }
+
+    /// <summary>
+    /// Whether the interface may be brought back once more: at most three times within five minutes. Beyond, the window
+    /// says it stopped, with the log's place (the browser or the page keeps ending: starting it again would not help).
+    /// </summary>
+    private bool MayRecover(string why)
+    {
+        if (_closing || IsDisposed) return false;
+        _restarts.RemoveAll(t => DateTime.Now - t > TimeSpan.FromMinutes(5));
+        if (_restarts.Count >= 3)
+        {
+            ShowFatal($"The interface stopped: it ended {_restarts.Count + 1} times within five minutes ({why}). Start the app again. The details were written to {_services.LogPath}");
+            return false;
+        }
+        _restarts.Add(DateTime.Now);
+        return true;
     }
 
     /// <summary>Embedded interface files by URL path ("assets/index.js"); resource names may carry Windows separators.</summary>
@@ -368,9 +450,10 @@ internal sealed class MainForm : Form
         if (!e.Cancel)
         {
             // The page closes with the window: it is told of nothing more (the Logs page no longer open either).
+            _closing = true;
             if (_logsChanged is not null) _services.Logs.Changed -= _logsChanged;
             _services.Logs.Watched = false;
-            _bridge?.Close();
+            _bridge?.Close("the window was closed");
         }
     }
 }

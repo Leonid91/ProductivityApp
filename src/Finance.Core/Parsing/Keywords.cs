@@ -28,7 +28,13 @@ internal static class Keywords
         "SOLDE DU JOUR", "DAILY BALANCE", "TOTAL AMOUNT", "TOTAL DEBITS", "TOTAL CREDITS", "NO. OF DEBITS", "NO. OF CREDITS", "NO OF DEBITS", "NO OF CREDITS",
     ];
 
-    public static readonly string[] BalanceAsOf = ["SOLDE AU", "SOLDE LE", "BALANCE AS OF", "BALANCE AS AT", "BALANCE ON"];
+    /// <summary>A balance on a day: the first of the statement is its opening, the last its closing ("SOLDE CREDITEUR
+    /// AU 30/09/2025" above the operations, "SOLDE CREDITEUR AU 31/10/2025" under them).</summary>
+    public static readonly string[] BalanceAsOf =
+    [
+        "SOLDE AU", "SOLDE LE", "SOLDE CREDITEUR AU", "SOLDE DEBITEUR AU", "SOLDE CREDITEUR LE", "SOLDE DEBITEUR LE",
+        "BALANCE AS OF", "BALANCE AS AT", "BALANCE ON",
+    ];
 
     public static readonly string[] Card =
     [

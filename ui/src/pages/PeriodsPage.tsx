@@ -172,11 +172,12 @@ export function PeriodsPage() {
     const pick = () => {
       if (own >= 0 && Math.abs(scroller.scrollTop - own) < 1) { own = -1; return }
       own = -1
-      // At the bottom, a page that got shorter is pulled up by the browser itself: that scroll is not the person's, the
-      // period on screen is put back where it was. Any other scroll moves the anchor.
+      // At the bottom, a page that got shorter is pulled up by the browser itself (another view drawn first at guessed
+      // heights, periods folded): that scroll is not the person's, the period on screen is put back where it was as soon
+      // as the page is long enough again. Any other scroll moves the anchor.
       const shrunk = scroller.scrollHeight < lastHeight && scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 1
       lastHeight = scroller.scrollHeight
-      if (shrunk && anchor) return
+      if (shrunk && anchor) { anchor.top = scroller.scrollTop; return }
       const y = line()
       // What is read at the top of the screen stays there: the period across the top line (under the bar), then the bank
       // across it inside, then the section; where nothing crosses the line, the first one that starts on screen. An
@@ -207,7 +208,13 @@ export function PeriodsPage() {
       const pulled = scroller.scrollHeight < lastHeight && scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 1
       if (pulled) anchor.top = scroller.scrollTop
       const moved = anchor.el.getBoundingClientRect().top - line() - (anchor.offset - (scroller.scrollTop - anchor.top))
-      if (Math.abs(moved) >= 1) { scroller.scrollTop += moved; anchor.top += moved; own = scroller.scrollTop }
+      const was = scroller.scrollTop
+      if (Math.abs(moved) >= 1) {
+        scroller.scrollTop += moved
+        // What the page could take: a correction the page is still too short for stays owed, made once it is longer.
+        anchor.top += scroller.scrollTop - was
+        own = scroller.scrollTop
+      }
       lastHeight = scroller.scrollHeight
     })
     const watch = () => { for (const c of el.children) ro.observe(c) }
