@@ -140,7 +140,7 @@ public class StatementParserTests
     [Fact]
     public async Task Parse_ScannedStatement_IsReadByTextRecognitionAndBalances()
     {
-        Assert.SkipUnless(PdfReader.OcrAvailable, "No Windows text-recognition language is installed on this machine.");
+        Assert.SkipUnless(PdfReader.OcrAvailable, "No text recognition on this machine (Windows: no recognition language installed; Linux: no Tesseract).");
         var spec = Sample(Style.FrenchDebitCredit, count: 18, seed: 5);
         var pages = await PdfReader.ReadAsync(AsScan(Render(spec)), TestContext.Current.CancellationToken);
 

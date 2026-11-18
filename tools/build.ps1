@@ -1,5 +1,6 @@
 # Builds the interface, then publishes the single self-contained ProductivityApp.exe into .\publish
-# Needs the .NET 10 SDK and Node.js 22 or later.
+# Needs the .NET 10 SDK and Node.js 22 or later. The release files of every system (Windows, macOS, Linux), after this:
+#   dotnet run --project tools\Package
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location (Join-Path $root 'ui')
@@ -9,6 +10,6 @@ try {
     npm run build
     if ($LASTEXITCODE -ne 0) { throw 'interface build failed' }
 } finally { Pop-Location }
-dotnet publish (Join-Path $root 'src\Finance.App\Finance.App.csproj') -c Release -o (Join-Path $root 'publish')
+dotnet publish (Join-Path $root 'src\Finance.App\Finance.App.csproj') -c Release -f net10.0-windows10.0.19041.0 -o (Join-Path $root 'publish')
 if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
 Get-Item (Join-Path $root 'publish\ProductivityApp.exe') | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }

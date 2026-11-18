@@ -100,7 +100,7 @@ public sealed class ImportServiceTests : IDisposable
     [Fact]
     public async Task ParseAsync_PictureOfAStatement_IsReadByTextRecognitionAndBalances()
     {
-        Assert.SkipUnless(PdfReader.OcrAvailable, "No Windows text-recognition language is installed on this machine.");
+        Assert.SkipUnless(PdfReader.OcrAvailable, "No text recognition on this machine (Windows: no recognition language installed; Linux: no Tesseract).");
         var spec = Sample(Style.EnglishWithdrawalsDeposits, 2025, 10, 12, 21);
         var png = await PdfReader.RenderPagePngAsync(Render(spec), 0, 1700);
 

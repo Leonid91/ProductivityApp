@@ -1,18 +1,20 @@
 using System.Globalization;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.RegularExpressions;
+using QuestPDF.Fluent;
+#if WINDOWS
+using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 using Windows.Storage.Streams;
-using QuestPDF.Fluent;
 using WinPdf = Windows.Data.Pdf;
+#endif
 
 namespace ProductivityApp.Finance.Pdf;
 
 /// <summary>
 /// Gets positioned words out of a PDF. Pages with a text layer are read directly; pages that are
-/// only a picture (scans, photos printed to PDF) go through the text recognition built into Windows.
-/// Everything runs on this machine.
+/// only a picture (scans, photos printed to PDF) go through text recognition: the one built into Windows or macOS,
+/// Tesseract on Linux (PdfReader.Portable.cs). Everything runs on this machine.
 /// </summary>
 public static partial class PdfReader
 {
@@ -60,7 +62,7 @@ public static partial class PdfReader
                 if (scans.TryGetValue(index, out var scan))
                 {
                     try { read = await OcrImageAsync(scan.Image, scan.Left, scan.Top, scan.Width, scan.Height, pages[index], language).ConfigureAwait(false); }
-                    catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.Runtime.InteropServices.COMException) { ProductivityApp.Finance.Services.Diagnostics.Report("PdfReader OCR of the page's picture (the page is read whole instead)", e); read = null; }
+                    catch (Exception e) when (e is ArgumentException or InvalidOperationException or InvalidDataException or System.Runtime.InteropServices.COMException) { ProductivityApp.Finance.Services.Diagnostics.Report("PdfReader OCR of the page's picture (the page is read whole instead)", e); read = null; }
                 }
                 pages[index] = read ?? await OcrPageAsync(pdf, index, pages[index], language).ConfigureAwait(false);
                 pages[index] = new PageWords { Number = pages[index].Number, Width = pages[index].Width, Height = pages[index].Height, Words = RepairAmounts(pages[index].Words), FromOcr = true };
@@ -69,6 +71,7 @@ public static partial class PdfReader
         return pages;
     }
 
+#if WINDOWS
     public static bool OcrAvailable => OcrEngine.AvailableRecognizerLanguages.Count > 0;
 
     private static Windows.Globalization.Language PickOcrLanguage()
@@ -143,6 +146,7 @@ public static partial class PdfReader
             }
         return new PageWords { Number = original.Number, Width = original.Width, Height = original.Height, Words = words, FromOcr = true };
     }
+#endif
 
     [GeneratedRegex(@"^(?<lead>[-+(]?\$?)(?<num>[\dOoSsIl]{1,3}(?:,[\dOoSsIl]{3})*[\dOoSsIl]*)(?<trail>-|\))?$")]
     private static partial Regex DigitsOnly();
@@ -240,6 +244,7 @@ public static partial class PdfReader
         || (b[0] == 'G' && b[1] == 'I' && b[2] == 'F')
         || (b[0] == 'I' && b[1] == 'I' && b[2] == 42 && b[3] == 0) || (b[0] == 'M' && b[1] == 'M' && b[2] == 0 && b[3] == 42));
 
+#if WINDOWS
     /// <summary>
     /// A picture of a statement as a one-page PDF of the picture's size (96 pixels an inch), so it is read like a scanned
     /// statement (the page has no text, so it goes through text recognition) and its columns can be set on it.
@@ -281,4 +286,5 @@ public static partial class PdfReader
         await png.ReadAsync(bytes.AsBuffer(), (uint)bytes.Length, InputStreamOptions.None);
         return bytes;
     }
+#endif
 }

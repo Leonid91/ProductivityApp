@@ -1,12 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Web.WebView2.Core;
 using ProductivityApp.Finance.Services;
 
 namespace ProductivityApp.Host;
 
 /// <summary>
-/// Request/response channel between the interface and the engine over WebView2 web messages.
+/// Request/response channel between the interface and the engine over the web view's messages (WebView2 on Windows,
+/// Photino's system web view on macOS and Linux: <see cref="IPage"/>).
 /// The page sends {id, method, params}; the host answers {id, ok, result} or {id, ok:false, error}.
 /// The host can also push {event, data}.
 /// </summary>
@@ -18,8 +18,7 @@ internal sealed class Bridge
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
-    private readonly CoreWebView2 _web;
-    private readonly Control _ui;
+    private readonly IPage _page;
     private readonly Dictionary<string, Func<JsonElement, Task<object?>>> _methods = new(StringComparer.Ordinal);
     private readonly ActionLog _actions;
 
@@ -36,18 +35,10 @@ internal sealed class Bridge
         "fs.places", "fs.list", "report.defaults", "import.page", "import.preview"];
     private static readonly HashSet<string> Unlogged = ["logs.read", "logs.entry", "logs.write", "logs.watch"];
 
-    public Bridge(CoreWebView2 web, Control ui, ActionLog actions)
+    public Bridge(IPage page, ActionLog actions)
     {
         _actions = actions;
-        _web = web;
-        _ui = ui;
-        _web.WebMessageReceived += OnMessage;
-        // The browser process gone (a crash, or ended from outside), the browser control can no longer be used: its page
-        // is gone with it.
-        _web.ProcessFailed += (_, e) =>
-        {
-            if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited) Close($"the browser of the window ended ({e.Reason}, exit code {e.ExitCode})");
-        };
+        _page = page;
     }
 
     public void RegisterAsync(string method, Func<JsonElement, Task<object?>> handler) => _methods[method] = handler;
@@ -93,18 +84,17 @@ internal sealed class Bridge
         var asked = new System.Diagnostics.StackTrace(1, false);
         void Send()
         {
-            if (!_open || _ui.IsDisposed) { NotSent(what, asked); return; }
-            try { _web.PostWebMessageAsJson(json); }
+            if (!_open || _page.Gone) { NotSent(what, asked); return; }
+            try { _page.Send(json); }
             catch (Exception ex)
             {
                 Close($"{what} could not be sent ({ex.GetType().Name} 0x{ex.HResult:X8})");
                 throw;
             }
         }
-        if (!_ui.InvokeRequired) { Send(); return; }
-        try { _ui.BeginInvoke(Send); }
+        if (_page.OnUiThread) { Send(); return; }
         // The window is already gone (its handle destroyed): nothing can run on its thread any more.
-        catch (InvalidOperationException) when (_ui.IsDisposed || !_ui.IsHandleCreated)
+        if (!_page.TryInvoke(Send))
         {
             if (_open) _closedBecause = "the window was closed";
             NotSent(what, asked);
@@ -114,16 +104,13 @@ internal sealed class Bridge
     private void NotSent(string what, System.Diagnostics.StackTrace asked) =>
         _actions.WriteWithStack("debug", "engine", "Not sent to the page", DateTime.Now, asked.ToString().TrimEnd(), what, ": the page was gone (", _closedBecause, ").");
 
-    private async void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    /// <summary>A message from another page than the app's own: not heard, written to the log.</summary>
+    public void Refuse(string source, string raw) =>
+        _actions.Write("warning", "engine", "message refused", DateTime.Now, "source: ", source, "\nmessage: ", raw);
+
+    /// <summary>A request of the app's own page, as the JSON it sent (kept as received for the log).</summary>
+    public async void Receive(string raw)
     {
-        // Only the app's own page may talk to the engine.
-        if (!e.Source.StartsWith(MainForm.AppOrigin, StringComparison.OrdinalIgnoreCase) && !MainForm.IsDevSource(e.Source))
-        {
-            _actions.Write("warning", "engine", "message refused", DateTime.Now, "source: ", e.Source, "\nmessage: ", e.WebMessageAsJson);
-            return;
-        }
-        // The message as received, kept for the log (read here: it can only be read while the event is raised).
-        var raw = e.WebMessageAsJson;
         var started = DateTime.Now;
         string? id = null;
         string method = "";

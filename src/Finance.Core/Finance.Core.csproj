@@ -1,10 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <!-- Windows: its own PDF drawing and text recognition. Every other system (macOS, Linux): the portable target. -->
+    <TargetFrameworks>net10.0-windows10.0.19041.0;net10.0</TargetFrameworks>
+    <SupportedOSPlatformVersion Condition="$(TargetFramework.Contains('-windows'))">10.0.19041.0</SupportedOSPlatformVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Source paths written into the program (file names the PDF library records) start at the repository, not this machine. -->
+    <PathMap>$(MSBuildProjectDirectory)=src/$(MSBuildProjectName)</PathMap>
     <RootNamespace>ProductivityApp.Finance</RootNamespace>
     <AssemblyName>ProductivityApp.Finance</AssemblyName>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
@@ -15,6 +19,15 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
     <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="QuestPDF" Version="2026.9.1" />
+  </ItemGroup>
+
+  <!-- Pages drawn by PDFium, pictures read by Skia (and TIFF by LibTiff), on the systems without Windows' own. -->
+  <ItemGroup Condition="!$(TargetFramework.Contains('-windows'))">
+    <PackageReference Include="PDFtoImage" Version="5.4.0" />
+    <PackageReference Include="BitMiracle.LibTiff.NET" Version="2.4.660" />
+    <!-- The systems this target runs on (what the platform checks compare the libraries' own against). -->
+    <SupportedPlatform Remove="@(SupportedPlatform)" />
+    <SupportedPlatform Include="Linux;macOS;Windows" />
   </ItemGroup>
 
   <ItemGroup>

@@ -9,7 +9,7 @@ namespace ProductivityApp.Host;
 /// is removed in WM_NCCALCSIZE but the window keeps its resize/caption styles, so Windows still gives it a
 /// shadow, rounded corners, snapping, Win+arrow keys and the minimise/maximise animations.
 /// </summary>
-internal sealed class MainForm : Form
+internal sealed class MainForm : Form, IAppWindow
 {
     public const string AppHost = "finances.localhost";
     public const string AppOrigin = "https://" + AppHost + "/";
@@ -268,8 +268,20 @@ internal sealed class MainForm : Form
                 BeginInvoke(() => ReloadPage(core, $"the page's process ended ({e.Reason}, exit code {e.ExitCode})"));
         };
 
-        _bridge = new Bridge(core, this, _services.Logs);
+        _bridge = new Bridge(new WebViewPage(core, this), _services.Logs);
         var bridge = _bridge;
+        core.WebMessageReceived += (_, e) =>
+        {
+            // Only the app's own page may talk to the engine (the message is read while the event is raised).
+            if (!e.Source.StartsWith(AppOrigin, StringComparison.OrdinalIgnoreCase) && !IsDevSource(e.Source)) bridge.Refuse(e.Source, e.WebMessageAsJson);
+            else bridge.Receive(e.WebMessageAsJson);
+        };
+        // The browser process gone (a crash, or ended from outside), the browser control can no longer be used: its page
+        // is gone with it.
+        core.ProcessFailed += (_, e) =>
+        {
+            if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited) bridge.Close($"the browser of the window ended ({e.Reason}, exit code {e.ExitCode})");
+        };
         var logsChanged = () => bridge.Emit("logs.changed", null);
         _logsChanged = logsChanged;
         _services.Logs.Changed += logsChanged;
@@ -281,7 +293,7 @@ internal sealed class MainForm : Form
             // Its browser ended while the window is open: a new one, the interface loaded again (after this event).
             if (!_closing && !IsDisposed) BeginInvoke(() => RestartBrowser(why));
         };
-        Api.Register(_bridge, _services, this, nonClientRegions);
+        Api.Register(_bridge, _services, this, nonClientRegions, nativeFrame: false);
 
         if (_options.Capture is not null)
         {
@@ -427,6 +439,10 @@ internal sealed class MainForm : Form
         Native.SendMessage(Handle, Native.WM_NCLBUTTONDOWN, ht, IntPtr.Zero);
     }
 
+    public void Minimize() => WindowState = FormWindowState.Minimized;
+
+    public void CloseWindow() => BeginInvoke(Close);
+
     public void ToggleMaximize() => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
 
     public bool Maximized => WindowState == FormWindowState.Maximized;
@@ -436,6 +452,19 @@ internal sealed class MainForm : Form
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
         Native.SetForegroundWindow(Handle);
+    }
+
+    /// <summary>The page of the browser control, as the bridge reaches it.</summary>
+    private sealed class WebViewPage(CoreWebView2 web, Control ui) : IPage
+    {
+        public bool Gone => ui.IsDisposed;
+        public bool OnUiThread => !ui.InvokeRequired;
+        public bool TryInvoke(Action action)
+        {
+            try { ui.BeginInvoke(action); return true; }
+            catch (InvalidOperationException) when (ui.IsDisposed || !ui.IsHandleCreated) { return false; }
+        }
+        public void Send(string json) => web.PostWebMessageAsJson(json);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

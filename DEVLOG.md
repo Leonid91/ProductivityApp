@@ -1158,3 +1158,41 @@ real app with `tools/e2e/perf.mjs`.
   of its statements read in euros by a person whose currency is the Canadian dollar, each operation converted at the
   European Central Bank's rate of its day (Friday's on a weekend), the Livret A transfer one movement inside the bank.
   `tools/test.ps1` runs them all.
+
+## November 18th, 2026 - macOS and Linux; release files for every system - Commit 47
+
+### Added
+- macOS and Linux. The engine is built twice: for Windows as before (its own PDF drawing and text recognition), and for
+  every other system (`net10.0`): pages drawn by PDFium, pictures read by Skia (TIFF by LibTiff), scanned pages and
+  pictures read by the text recognition built into macOS (Vision, called through the Objective-C runtime) or by
+  Tesseract on Linux (`src/Finance.Core/Pdf/PdfReader.Portable.cs`, `TextRecognizer.cs`). French recognition is
+  preferred, English with it; a scanned page with no recognition on the machine says what to install.
+- The macOS and Linux window (`src/Finance.App/Photino`): a Photino window with the system's web view (WKWebView,
+  WebKitGTK) and the system's own title bar and edges (the interface draws its title bar and resize edges only on
+  Windows: `nativeFrame` in `app.init`). The interface is served from the program under `app://localhost/` with the
+  same content policy as on Windows; each of its messages starts with a key written into the page when it is served,
+  so no other page can talk to the engine. Nothing is sent to the page before it first speaks (the web view cannot take
+  it). One window per data folder through a local socket in that folder (a second launch brings the first forward).
+  The window comes back where it was, when that place is still on a screen. The file browser shows Home, the whole disk
+  and the disks plugged in (/Volumes on macOS; /media, /run/media and /mnt on Linux), not the system's own mounts;
+  "Show in folder" opens Finder with the file selected, or the file's folder on Linux.
+- `tools/Package`: the release files in `release/` - `ProductivityApp-<version>-windows-x64.exe`; a
+  `ProductivityApp.app` per Mac processor (Apple, Intel), zipped with its permissions, its icon and Info.plist (macOS 14
+  or later: the oldest the window library runs on; every program and library of the Apple build carries its signature,
+  which Apple processors need); a `.deb` per Linux processor (x64, ARM) that brings WebKitGTK, Tesseract with its English
+  and French data, ICU and OpenSSL, with a menu entry and an icon, and the same files as a `.tar.gz` for other
+  distributions.
+
+### Changed
+- The bridge no longer knows WebView2: it sends through `IPage` and asks the window through `IAppWindow`, so both windows
+  share it and the whole API.
+- The tests run on both targets of the engine (Windows' and the portable one): 2,604 unit and 411 integration tests
+  each; the two scanned-statement tests skip where the machine has no text recognition. The end-to-end suite also drives
+  the Photino window (built for Windows, served there under `http://app.localhost/` as its WebView2 cannot open a
+  scheme of its own), and skips its picture check where there is no text recognition.
+- The release builds of macOS and Linux leave out the debugger's files and the PDF merger, as the Windows one does.
+- Source paths written into the programs (the PDF library records the file names of its callers) start at the
+  repository: no folder of the machine that built them is in any release file.
+- The macOS and Linux window writes its own events to the log (created, page loaded, maximised, restored, closing); an
+  error inside the web view's calls is written to the log instead of ending the program.
+- README: how to install on Windows, macOS and Linux.

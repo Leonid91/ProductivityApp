@@ -1,8 +1,14 @@
-// Channel to the C# engine through WebView2 web messages.
+// Channel to the C# engine through the web view's messages: WebView2's on Windows, Photino's on macOS and Linux.
 
 interface WebViewHost {
   postMessage(message: unknown): void
   addEventListener(type: 'message', listener: (e: { data: unknown }) => void): void
+}
+
+/** Photino's channel: text both ways. */
+interface PhotinoExternal {
+  sendMessage(message: string): void
+  receiveMessage(listener: (message: string) => void): void
 }
 
 interface Reply {
@@ -14,7 +20,23 @@ interface Reply {
   data?: unknown
 }
 
-const host: WebViewHost | undefined = (window as unknown as { chrome?: { webview?: WebViewHost } }).chrome?.webview
+/**
+ * Photino's channel shaped as WebView2's. Each message starts with the key the app wrote into this page, so the engine
+ * only hears its own page.
+ */
+function photinoHost(): WebViewHost | undefined {
+  const external = (window as unknown as { external?: Partial<PhotinoExternal> }).external
+  const key = document.querySelector<HTMLMetaElement>('meta[name="bridge-key"]')?.content
+  if (!key || typeof external?.sendMessage !== 'function' || typeof external.receiveMessage !== 'function') return undefined
+  const { sendMessage, receiveMessage } = external as PhotinoExternal
+  return {
+    postMessage: (message) => sendMessage.call(external, key + '\n' + JSON.stringify(message)),
+    addEventListener: (_type, listener) => receiveMessage.call(external, (text) => listener({ data: JSON.parse(text) })),
+  }
+}
+
+// Photino's page first: it carries the app's key (Photino's WebView2 on Windows also shows WebView2's own channel).
+const host: WebViewHost | undefined = photinoHost() ?? (window as unknown as { chrome?: { webview?: WebViewHost } }).chrome?.webview
 
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
 const listeners = new Map<string, Set<(data: unknown) => void>>()

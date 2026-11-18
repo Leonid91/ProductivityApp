@@ -1,24 +1,33 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    Two windows over the same engine and interface: on Windows a Windows Forms window with WebView2 (net10.0-windows), on
+    macOS and Linux a Photino window with the system's web view (net10.0: WKWebView, WebKitGTK).
+  -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
-    <UseWindowsForms>true</UseWindowsForms>
+    <TargetFrameworks>net10.0-windows10.0.19041.0;net10.0</TargetFrameworks>
+    <IsWindowsTarget>$(TargetFramework.Contains('-windows'))</IsWindowsTarget>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Source paths written into the program (file names the PDF library records) start at the repository, not this machine. -->
+    <PathMap>$(MSBuildProjectDirectory)=src/$(MSBuildProjectName)</PathMap>
     <AssemblyName>ProductivityApp</AssemblyName>
     <RootNamespace>ProductivityApp.Host</RootNamespace>
-    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Product>Productivity</Product>
     <Version>0.1.0</Version>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(IsWindowsTarget)' == 'true'">
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
 
   <!-- Single self-contained file: nothing to install besides the WebView2 runtime that ships with Windows 10/11. -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' and '$(IsWindowsTarget)' == 'true'">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
@@ -41,6 +50,19 @@
     <CustomResourceTypesSupport>true</CustomResourceTypesSupport>
     <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
   </PropertyGroup>
+  <!--
+    macOS and Linux: published for one system at a time (-r osx-arm64, osx-x64, linux-x64, linux-arm64) into a folder that
+    tools/Package puts in the .app bundle or the .deb package. Nothing to unpack at start, nothing trimmed.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' and '$(IsWindowsTarget)' != 'true'">
+    <SelfContained>true</SelfContained>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(IsWindowsTarget)' != 'true'">
+    <SupportedPlatform Remove="@(SupportedPlatform)" />
+    <SupportedPlatform Include="Linux;macOS;Windows" />
+  </ItemGroup>
   <!-- E2E=true: a published build the end-to-end check can drive (debugging port allowed), never shipped. -->
   <PropertyGroup Condition="'$(E2E)' == 'true'">
     <DefineConstants>$(DefineConstants);E2E</DefineConstants>
@@ -63,20 +85,26 @@
     </ItemGroup>
   </Target>
   <!--
-    Never used by the app: the debugger's and crash dump's own files, and the PDF library's PDF merger (qpdf; its
-    default font Lato stays: it is the fallback of every text of a report).
+    Never used by the app: the debugger's and crash dump's own files (and on Linux the runtime's tracing provider), and
+    the PDF library's PDF merger (qpdf; its default font Lato stays: it is the fallback of every text of a report).
   -->
   <Target Name="DropDebuggerFiles" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(Configuration)' == 'Release'">
     <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="$([System.String]::new('%(Filename)').StartsWith('mscordaccore')) or '%(Filename)' == 'mscordbi' or '%(Filename)' == 'Microsoft.DiaSymReader.Native.amd64' or '%(Filename)' == 'createdump' or '%(Filename)' == 'qpdf'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="$([System.String]::new('%(Filename)').StartsWith('mscordaccore')) or $([System.String]::new('%(Filename)').StartsWith('libmscordaccore')) or '%(Filename)' == 'mscordbi' or '%(Filename)' == 'libmscordbi' or '%(Filename)' == 'Microsoft.DiaSymReader.Native.amd64' or '%(Filename)' == 'createdump' or '%(Filename)' == 'qpdf' or '%(Filename)' == 'libqpdf' or '%(Filename)' == 'libcoreclrtraceptprovider'" />
     </ItemGroup>
   </Target>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(IsWindowsTarget)' == 'true'">
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <Compile Remove="Photino\**" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(IsWindowsTarget)' != 'true'">
+    <PackageReference Include="Photino.NET" Version="4.0.16" />
+    <Compile Remove="MainForm.cs;Native.cs;Program.cs" />
+    <Using Include="System.Drawing" />
   </ItemGroup>
   <!-- The window is Windows Forms: the package's WPF control is never used (and needs another WindowsBase). -->
-  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences" Condition="'$(IsWindowsTarget)' == 'true'">
     <ItemGroup>
       <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
     </ItemGroup>

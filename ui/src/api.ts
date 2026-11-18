@@ -47,6 +47,9 @@ export interface InitInfo {
   dateFormats: string[]
   ocrAvailable: boolean
   nonClientRegions: boolean
+  /** The window has the system's own title bar and edges (macOS, Linux): the interface draws none. */
+  nativeFrame: boolean
+  platform: 'windows' | 'macos' | 'linux'
   maximized: boolean
   dataFolder: string
   /** The log file (it can be moved). */

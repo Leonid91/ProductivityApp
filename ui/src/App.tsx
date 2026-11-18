@@ -76,8 +76,9 @@ function Shell() {
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
-      <ResizeEdges maximized={maximized} />
-      <TitleBar maximized={maximized} />
+      {/* macOS and Linux: the system's own title bar and edges. */}
+      {!info.nativeFrame && <ResizeEdges maximized={maximized} />}
+      {!info.nativeFrame && <TitleBar maximized={maximized} />}
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Box component="nav" sx={{ width: 88, flex: '0 0 88px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5, pt: 1.5, pb: 2 }}>
           {nav.map((n) => (

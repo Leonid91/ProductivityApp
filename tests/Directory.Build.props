@@ -1,8 +1,9 @@
 <Project>
-  <!-- Settings shared by every project under tests/: the target of the engine they exercise, and nothing to publish. -->
+  <!-- Settings shared by every project under tests/: the targets of the engine they exercise, and nothing to publish. -->
   <PropertyGroup>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <!-- Both targets of the engine: Windows' own and the portable one of macOS and Linux. -->
+    <TargetFrameworks>net10.0-windows10.0.19041.0;net10.0</TargetFrameworks>
+    <SupportedOSPlatformVersion Condition="$(TargetFramework.Contains('-windows'))">10.0.19041.0</SupportedOSPlatformVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

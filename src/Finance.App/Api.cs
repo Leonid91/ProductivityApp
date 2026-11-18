@@ -11,7 +11,7 @@ namespace ProductivityApp.Host;
 /// <summary>Everything the interface can ask the engine. Each method takes and returns plain JSON.</summary>
 internal static class Api
 {
-    public static void Register(Bridge b, AppServices s, MainForm window, bool nonClientRegions)
+    public static void Register(Bridge b, AppServices s, IAppWindow window, bool nonClientRegions, bool nativeFrame)
     {
         // ------------------------------------------------------------ app & window
         b.Register("app.init", _ => new
@@ -23,14 +23,17 @@ internal static class Api
             dateFormats = Formatting.DateFormats,
             ocrAvailable = Finance.Pdf.PdfReader.OcrAvailable,
             nonClientRegions,
+            // macOS and Linux: the system's own title bar and edges (the interface draws none).
+            nativeFrame,
+            platform = OperatingSystem.IsMacOS() ? "macos" : OperatingSystem.IsLinux() ? "linux" : "windows",
             maximized = window.Maximized,
             dataFolder = s.DbFolder,
             logFile = s.Logs.FilePath,
         });
         b.Register("app.ready", _ => null);
-        b.Register("window.minimize", _ => { window.WindowState = FormWindowState.Minimized; return null; });
+        b.Register("window.minimize", _ => { window.Minimize(); return null; });
         b.Register("window.toggleMaximize", _ => { window.ToggleMaximize(); return new { maximized = window.Maximized }; });
-        b.Register("window.close", _ => { window.BeginInvoke(window.Close); return null; });
+        b.Register("window.close", _ => { window.CloseWindow(); return null; });
         b.Register("window.drag", _ => { window.StartDrag(); return null; });
         b.Register("window.resize", p => { window.StartResize(p.Get<string>("edge")); return null; });
 
@@ -341,7 +344,7 @@ internal static class Api
         {
             var path = p.Get<string>("path");
             if (!File.Exists(path) && !Directory.Exists(path)) throw new FileNotFoundException("It is no longer there.");
-            Process.Start(new ProcessStartInfo("explorer.exe", File.Exists(path) ? $"/select,\"{path}\"" : $"\"{path}\"") { UseShellExecute = true });
+            Reveal(path);
             return null;
         });
 
@@ -357,7 +360,7 @@ internal static class Api
             var folder = p.Opt<string>("folder") is { Length: > 0 } f ? f : ReportsFolder(s);
             if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("This folder does not exist.");
             var name = p.Opt<string>("fileName") is { Length: > 0 } n ? n.Trim() : ReportBuilder.FileName(report.Global);
-            if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new ArgumentException("The file name contains characters Windows does not allow.");
+            if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new ArgumentException(OperatingSystem.IsWindows() ? "The file name contains characters Windows does not allow." : "The file name contains characters a file name cannot hold.");
             if (!name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) name += ".pdf";
             var path = Path.Combine(folder, name);
             var pdf = ReportBuilder.Build(report, s.Setting("dateFormat"), DateTime.Now, ReportOptions(s),
@@ -550,12 +553,57 @@ internal static class Api
         Add("Documents", Environment.SpecialFolder.MyDocuments, "documents");
         var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         if (Directory.Exists(downloads)) list.Add(new { name = "Downloads", path = downloads, icon = "downloads" });
-        foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType is DriveType.Fixed or DriveType.Removable or DriveType.Network))
+        if (OperatingSystem.IsWindows())
         {
-            var label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? "Local disk" : drive.VolumeLabel;
-            list.Add(new { name = $"{label} ({drive.Name.TrimEnd('\\')})", path = drive.RootDirectory.FullName, icon = drive.DriveType == DriveType.Removable ? "usb" : "drive" });
+            foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType is DriveType.Fixed or DriveType.Removable or DriveType.Network))
+            {
+                var label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? "Local disk" : drive.VolumeLabel;
+                list.Add(new { name = $"{label} ({drive.Name.TrimEnd('\\')})", path = drive.RootDirectory.FullName, icon = drive.DriveType == DriveType.Removable ? "usb" : "drive" });
+            }
+            return list;
+        }
+        // macOS and Linux: the home folder, the whole disk, then the disks plugged in or mounted by hand (the system's own
+        // mounts, /proc, /sys and the like, are not places to look for statements).
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (Directory.Exists(home)) list.Insert(0, new { name = "Home", path = home, icon = "drive" });
+        list.Add(new { name = "Computer (/)", path = "/", icon = "drive" });
+        var user = Environment.UserName;
+        IEnumerable<string> mounts = OperatingSystem.IsMacOS() ? Sub("/Volumes") : [.. Sub($"/media/{user}"), .. Sub($"/run/media/{user}"), .. Sub("/mnt")];
+        foreach (var dir in mounts)
+        {
+            // macOS lists the startup disk under /Volumes too, as a link to /.
+            if (new DirectoryInfo(dir).LinkTarget is "/") continue;
+            list.Add(new { name = Path.GetFileName(dir), path = dir, icon = "usb" });
         }
         return list;
+
+        static List<string> Sub(string dir)
+        {
+            try { return Directory.Exists(dir) ? [.. Directory.EnumerateDirectories(dir).Order(StringComparer.CurrentCultureIgnoreCase)] : []; }
+            catch (UnauthorizedAccessException) { return []; }
+            catch (IOException) { return []; }
+        }
+    }
+
+    /// <summary>Shows a file selected in its folder (or a folder) in the system's file manager.</summary>
+    private static void Reveal(string path)
+    {
+        ProcessStartInfo start;
+        if (OperatingSystem.IsWindows())
+            start = new ProcessStartInfo("explorer.exe", File.Exists(path) ? $"/select,\"{path}\"" : $"\"{path}\"") { UseShellExecute = true };
+        else if (OperatingSystem.IsMacOS())
+        {
+            start = new ProcessStartInfo("open") { UseShellExecute = false };
+            if (File.Exists(path)) start.ArgumentList.Add("-R");
+            start.ArgumentList.Add(path);
+        }
+        else
+        {
+            // Linux file managers have no common way to select a file: its folder is opened.
+            start = new ProcessStartInfo("xdg-open") { UseShellExecute = false };
+            start.ArgumentList.Add(File.Exists(path) ? Path.GetDirectoryName(path)! : path);
+        }
+        Process.Start(start)?.Dispose();
     }
 
     private static object ListFolder(string path, bool foldersOnly)

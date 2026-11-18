@@ -20,7 +20,7 @@ export async function launch(exe, args, port) {
     if (exited !== null) throw new Error(`The app stopped at launch (exit code ${exited}).`)
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
-      target = list.find((t) => t.type === 'page' && t.url.startsWith('https://finances.localhost'))
+      target = list.find((t) => t.type === 'page' && (t.url.startsWith('https://finances.localhost') || t.url.startsWith('http://app.localhost')))
     } catch { /* not up yet */ }
   }
   if (!target) { child.kill(); throw new Error('The app did not start.') }
@@ -111,9 +111,16 @@ export async function launch(exe, args, port) {
     async engine(method, params = {}) {
       return page.eval(`new Promise((resolve, reject) => {
         const id = 'e2e-' + Math.random().toString(36).slice(2)
-        const on = (e) => { if (e.data && e.data.id === id) { window.chrome.webview.removeEventListener('message', on); e.data.ok ? resolve(e.data.result) : reject(new Error(e.data.error.message)) } }
+        // Photino's page (macOS/Linux window, tested on Windows) talks in text, each message after the page's key.
+        const key = document.querySelector('meta[name="bridge-key"]')?.content
+        const on = (e) => {
+          const m = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
+          if (m && m.id === id) { window.chrome.webview.removeEventListener('message', on); m.ok ? resolve(m.result) : reject(new Error(m.error.message)) }
+        }
         window.chrome.webview.addEventListener('message', on)
-        window.chrome.webview.postMessage({ id, method: ${JSON.stringify(method)}, params: ${JSON.stringify(params)} })
+        const message = { id, method: ${JSON.stringify(method)}, params: ${JSON.stringify(params)} }
+        if (key) window.external.sendMessage(key + '\\n' + JSON.stringify(message))
+        else window.chrome.webview.postMessage(message)
       })`)
     },
     async scrollMain(y) {

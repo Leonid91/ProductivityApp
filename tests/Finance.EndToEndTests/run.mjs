@@ -1620,9 +1620,13 @@ try {
   const pdfName = readdirSync(samples).find((f) => f.startsWith('Northwind Bank') && f.endsWith('.pdf'))
   const pdfDraft = await p.engine('import.parseBytes', { name: pdfName, base64: readFileSync(join(samples, pdfName)).toString('base64') })
   const page = await p.engine('import.page', { draftId: pdfDraft.id, page: 0, width: 1700 })
-  const photo = await p.engine('import.parseBytes', { name: 'statement photo.png', base64: page.png })
-  check('a picture of a statement is read like a scan', photo.usedOcr && photo.rows.length === pdfDraft.rows.length && photo.status === pdfDraft.status
-    && cents(photo.rows.reduce((s, r) => s + r.amount, 0)) === cents(pdfDraft.rows.reduce((s, r) => s + r.amount, 0)), `${photo.rows.length}/${pdfDraft.rows.length} lines, ${photo.status}`)
+  // Only where the machine has text recognition (Windows with a recognition language, Linux with Tesseract, macOS).
+  let photo = null
+  if ((await p.engine('app.init')).ocrAvailable) {
+    photo = await p.engine('import.parseBytes', { name: 'statement photo.png', base64: page.png })
+    check('a picture of a statement is read like a scan', photo.usedOcr && photo.rows.length === pdfDraft.rows.length && photo.status === pdfDraft.status
+      && cents(photo.rows.reduce((s, r) => s + r.amount, 0)) === cents(pdfDraft.rows.reduce((s, r) => s + r.amount, 0)), `${photo.rows.length}/${pdfDraft.rows.length} lines, ${photo.status}`)
+  } else console.log('SKIP  a picture of a statement is read like a scan  — no text recognition on this machine')
   const ofx = 'OFXHEADER:100\r\nDATA:OFXSGML\r\n\r\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>CAD<BANKACCTFROM><ACCTID>0000123456<ACCTTYPE>CHECKING</BANKACCTFROM><BANKTRANLIST>'
     + '<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260302<TRNAMT>-4.85<FITID>1<NAME>TIM HORTONS #2345</STMTTRN>'
     + '<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20260305<TRNAMT>2140.55<FITID>2<NAME>PAYROLL DEPOSIT EXAMPLE</STMTTRN>'
@@ -1636,7 +1640,7 @@ try {
   const two = (d) => d.rows.length === 2 && d.rows[0].amount === -4.85 && d.rows[1].amount === 2140.55 && d.rows[0].date === '2026-03-02'
   check('OFX / QFX, QIF and ".xls" web pages read by the app', two(ofxDraft) && ofxDraft.closing === 3135.70 && two(qifDraft) && two(xlsDraft) && xlsDraft.status === 'verified',
     `${ofxDraft.method} ${qifDraft.method} ${xlsDraft.method} ${xlsDraft.status}`)
-  for (const d of [pdfDraft, photo, ofxDraft, qifDraft, xlsDraft]) await p.engine('import.discard', { draftId: d.id })
+  for (const d of [pdfDraft, photo, ofxDraft, qifDraft, xlsDraft].filter(Boolean)) await p.engine('import.discard', { draftId: d.id })
 
   // dark theme, from the icon above the settings
   await p.click('nav [aria-label="Dark mode"]')
@@ -1885,7 +1889,7 @@ try {
   check('an entry of the interface (a page opened) has the interface’s call stack', !!pageWhole && /^\s*at .*(pageOpened|AppContext)/.test(stackOf(pageWhole.detail)), pageWhole?.detail.slice(0, 600))
   check('the log has every kind of entry: pages, messages, window events, actions, the start and the database',
     !!pageEntry && !!find((e) => heading(e) === 'App: toast')
-    && !!find((e) => heading(e) === 'Window: CoreWebView2.NavigationStarting') && !!find((e) => heading(e) === 'App: Start' && e.detail.includes('version: '))
+    && !!find((e) => heading(e) === 'Window: CoreWebView2.NavigationStarting' || heading(e) === 'Window: Load') && !!find((e) => heading(e) === 'App: Start' && e.detail.includes('version: '))
     && !!find((e) => heading(e) === 'App: Database.Open'),
     JSON.stringify([...new Set(fullLog.map(heading))].slice(0, 60)))
   check('no clicks, keys or scrolls in the log', !find((e) => /^You: (click|keydown|scroll|drag|change)$/.test(heading(e))))

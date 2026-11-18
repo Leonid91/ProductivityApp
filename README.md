@@ -1,27 +1,43 @@
-# Productivity — Finances
+# ProductivityApp
 
-## Run the app
+## Windows
 
-Windows 10 or 11 (64-bit). Copy `ProductivityApp.exe` anywhere and double-click it. Nothing else to install: the
-.NET runtime is inside the file, and the WebView2 runtime it uses is part of Windows.
+1. Download `ProductivityApp-0.1.0-windows-x64.exe` from the Releases page.
+2. Double-click it. If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
 
-Data stays on the computer, in `%LOCALAPPDATA%\ProductivityApp`.
+## macOS
 
-## Build the exe from the source
+1. Download from the Releases page `ProductivityApp-0.1.0-macos-apple-silicon.zip` (Apple processor) or `ProductivityApp-0.1.0-macos-intel.zip` (Intel processor).
+2. Double-click the zip file.
+3. Drag `ProductivityApp.app` to the Applications folder.
+4. In Terminal, run:
 
-1. Install the .NET 10 SDK from https://dotnet.microsoft.com/download and Node.js 22 or later (LTS) from https://nodejs.org.
-2. In PowerShell, from this folder:
-
-   ```powershell
-   .\tools\build.ps1
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/ProductivityApp.app
    ```
 
-   The result is `publish\ProductivityApp.exe`.
+5. Open ProductivityApp from the Applications folder.
 
-## Run the tests
+## Linux
 
-```powershell
-.\tools\test.ps1
-```
+Debian and Ubuntu:
 
-They use fictitious statements generated on the fly. The end-to-end part starts the app off-screen, so no window appears.
+1. Download `productivityapp_0.1.0_amd64.deb` (ARM processor: `productivityapp_0.1.0_arm64.deb`) from the Releases page.
+2. In the download folder, run:
+
+   ```bash
+   sudo apt install ./productivityapp_0.1.0_amd64.deb
+   ```
+
+3. Open ProductivityApp from the applications menu.
+
+Other distributions:
+
+1. Install WebKitGTK 4.1, libnotify and Tesseract with its English and French data with the package manager.
+2. Download `ProductivityApp-0.1.0-linux-x64.tar.gz` (ARM processor: `ProductivityApp-0.1.0-linux-arm64.tar.gz`) from the Releases page.
+3. In the download folder, run:
+
+   ```bash
+   tar -xzf ProductivityApp-0.1.0-linux-x64.tar.gz
+   ./ProductivityApp/ProductivityApp
+   ```
