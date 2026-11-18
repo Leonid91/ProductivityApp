@@ -1196,3 +1196,8 @@ real app with `tools/e2e/perf.mjs`.
 - The macOS and Linux window writes its own events to the log (created, page loaded, maximised, restored, closing); an
   error inside the web view's calls is written to the log instead of ending the program.
 - README: how to install on Windows, macOS and Linux.
+
+## November 18th, 2026 - The release files in the repository - Commit 48
+
+### Added
+- The release files of version 0.1.0 in `release/` (no longer ignored), each linked from the README.

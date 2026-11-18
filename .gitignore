@@ -2,7 +2,6 @@
 bin/
 obj/
 publish/
-release/
 TestResults/
 ui/node_modules/
 ui/dist/
