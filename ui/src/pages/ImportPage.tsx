@@ -17,6 +17,7 @@ import { ConfirmDialog, PageHeader, SectionCard } from '../components/common'
 import { useRowOrder } from '../components/order'
 import { ROW_ACTIONS_WIDTH, RowActions } from '../components/RowActions'
 import { TextCell } from '../components/amounts'
+import { baseName } from '../paths'
 
 /** An imported statement changed from its pencil: the bank and the name of its account, and the account's currency. */
 function StatementDialog({ statement, onClose }: { statement: StatementInfo | null; onClose: () => void }) {
@@ -173,7 +174,7 @@ export function ImportPage() {
 
   const addPaths = (paths: string[]) => {
     setBrowsing(false)
-    setQueue((q) => [...q, ...paths.map((p) => ({ name: p.split('\\').pop() ?? p, run: () => api.imports.parseFile(p) }))])
+    setQueue((q) => [...q, ...paths.map((p) => ({ name: baseName(p), run: () => api.imports.parseFile(p) }))])
   }
 
   const onDrop = (e: React.DragEvent) => {

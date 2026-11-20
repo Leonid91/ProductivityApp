@@ -17,6 +17,7 @@ import Storage from '@mui/icons-material/StorageRounded'
 import Usb from '@mui/icons-material/UsbRounded'
 import { api, type FolderListing, type Place } from '../api'
 import { fileSize, shortDate } from '../format'
+import { isInside, pathCrumbs } from '../paths'
 
 const placeIcons: Record<string, React.ReactNode> = {
   desktop: <Desktop fontSize="small" />, documents: <Description fontSize="small" />, downloads: <Download fontSize="small" />,
@@ -87,11 +88,9 @@ export function FileBrowser({ open, mode, title, initialPath, onClose, onPick }:
     setSelected(next)
   }
 
-  const crumbs = useMemo(() => {
-    if (!listing) return []
-    const parts = listing.path.replace(/\\+$/, '').split('\\')
-    return parts.map((name, i) => ({ name: i === 0 ? name + '\\' : name, path: parts.slice(0, i + 1).join('\\') + (i === 0 ? '\\' : '') }))
-  }, [listing])
+  const crumbs = useMemo(() => (listing ? pathCrumbs(listing.path) : []), [listing])
+  // The place the folder shown is in: the closest one (Desktop, not the whole disk it is on).
+  const place = useMemo(() => (listing ? places.filter((p) => isInside(listing.path, p.path)).sort((a, b) => b.path.length - a.path.length)[0]?.path : undefined), [listing, places])
 
   const pdfs = entries.filter((e) => !e.isFolder)
 
@@ -102,7 +101,7 @@ export function FileBrowser({ open, mode, title, initialPath, onClose, onPick }:
           <Typography variant="overline" color="text.secondary" sx={{ px: 1.5 }}>Places</Typography>
           <List dense disablePadding sx={{ mt: 0.5 }}>
             {places.map((p) => (
-              <ListItemButton key={p.path} selected={listing?.path.toLowerCase().startsWith(p.path.toLowerCase().replace(/\\$/, ''))} onClick={() => void load(p.path)} sx={{ mb: 0.25 }}>
+              <ListItemButton key={p.path} selected={p.path === place} onClick={() => void load(p.path)} sx={{ mb: 0.25 }}>
                 <ListItemIcon sx={{ minWidth: 32 }}>{placeIcons[p.icon] ?? <Folder fontSize="small" />}</ListItemIcon>
                 <ListItemText primary={p.name} slotProps={{ primary: { noWrap: true, sx: { fontSize: 13.5 } } }} />
               </ListItemButton>

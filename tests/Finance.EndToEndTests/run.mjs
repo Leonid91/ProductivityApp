@@ -148,7 +148,16 @@ try {
   await p.clickText('Select all', { selector: '[role=dialog] button' })
   const files = readdirSync(samples).filter((f) => f.endsWith('.pdf') || f.endsWith('.csv'))
   await p.clickText(`Import ${files.length} files`, { selector: '[role=dialog] button' })
-  await p.waitFor(`document.querySelectorAll('[data-draft]').length === ${files.length}`, 180000, 'all drafts')
+  // Without text recognition on the machine (the macOS/Linux window tested on Windows), a scanned statement cannot be
+  // read: it says what to install, and every other file is read.
+  const ocr = (await p.engine('app.init')).ocrAvailable
+  const scans = ocr ? [] : files.filter((f) => f.includes('(scan)'))
+  await p.waitFor(`document.querySelectorAll('[data-draft]').length === ${files.length - scans.length}`, 180000, 'all drafts')
+  if (scans.length > 0) {
+    await p.waitFor(`document.body.innerText.includes(${JSON.stringify(scans[0])}) && document.body.innerText.includes('text recognition is not installed')`, 20000, 'scan refused').catch(() => false)
+    check('a scanned statement with no text recognition says what to install', await p.eval(`document.body.innerText.includes('text recognition is not installed')`))
+    console.log(`SKIP  reading ${scans.join(', ')} — no text recognition on this machine`)
+  }
   await sleep(500)
   // A file is read once its bank is chosen: before, no balance check, no status, only the files whose table is not
   // recognised ask for their columns.
@@ -270,7 +279,7 @@ try {
   // Read at its bank, every statement balances to the cent, but the card histories (PDF and CSV), which print no
   // balance to check against.
   const verified = statuses.filter((s) => s[1] === 'verified').length
-  check('statements read and balanced to the cent', verified === files.length - 2, `${verified}/${files.length}: ${JSON.stringify(statuses.filter((s) => s[1] !== 'verified'))}`)
+  check('statements read and balanced to the cent', verified === files.length - scans.length - 2, `${verified}/${files.length - scans.length}: ${JSON.stringify(statuses.filter((s) => s[1] !== 'verified'))}`)
   check('BNC card exports read without balances', statuses.filter((s) => s[0].startsWith('BNC 2025-10-01-120000') && s[1] === 'other').length === 2)
   await sleep(600)
   const accounts = await p.engine('accounts.list')

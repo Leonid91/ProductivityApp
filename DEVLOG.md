@@ -1227,3 +1227,21 @@ real app with `tools/e2e/perf.mjs`.
 - `tools/Package` checks every macOS zip before finishing (`tools/Package/MacCheck.cs`): entries made by Unix, the program
   executable and named by Info.plist, the seal binding this Info.plist and these files, every Apple-processor program and
   library signed with page hashes matching its code.
+
+## November 19th, 2026 - The file browser on macOS and Linux - Commit 50
+
+### Fixed
+- The file browser's path bar cut paths at backslashes only: on macOS and Linux ("/Users/alex/Downloads") it showed
+  one crumb ending in a backslash, and clicking it asked for a folder that does not exist. Paths are now cut at
+  slashes from the root "/" on macOS and Linux, at backslashes from the drive on Windows (`ui/src/paths.ts`).
+- The import queue named a file by its whole path on macOS and Linux: it shows the file's name on every system.
+- The places of the file browser: only the closest place holding the folder shown is highlighted (Desktop, not also
+  the disk it is on; on macOS "Computer (/)" was highlighted everywhere).
+
+### Added
+- `ui/tests/paths.test.ts`: paths of Windows, macOS and Linux cut, named and compared.
+
+### Changed
+- The end-to-end suite on a machine without text recognition (the macOS and Linux window tested on Windows): the
+  scanned statement must say what to install, every other file is read; it stopped at the first import before. Both
+  windows pass all 236 checks.
