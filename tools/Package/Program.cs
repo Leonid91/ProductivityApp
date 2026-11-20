@@ -21,6 +21,7 @@ var version = Regex.Match(File.ReadAllText(appProject), "<Version>([^<]+)</Versi
 var work = Path.Combine(root, "publish", "release-work");
 if (Directory.Exists(work)) Directory.Delete(work, true);
 Directory.CreateDirectory(output);
+const string BundleId = "app.productivity.finances";
 var icon = IconPngs(Path.Combine(root, "src", "Finance.App", "Assets", "app.ico"));
 
 // Windows
@@ -64,22 +65,50 @@ void Copy(string from, string name) => File.Copy(from, Path.Combine(output, name
 void MacZip(string dir, string zipPath)
 {
     File.Delete(zipPath);
-    using var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create);
     const string app = "ProductivityApp.app/";
-    foreach (var d in new[] { app, app + "Contents/", app + "Contents/MacOS/", app + "Contents/Resources/" }) Entry(zip, d, null, 0x41ED); // drwxr-xr-x
-    Entry(zip, app + "Contents/Info.plist", Encoding.UTF8.GetBytes(InfoPlist()), 0x81A4);                       // -rw-r--r--
-    Entry(zip, app + "Contents/Resources/app.icns", Icns(), 0x81A4);
-    foreach (var f in Directory.EnumerateFiles(dir).Order(StringComparer.Ordinal))
+    // The files of Contents/, signed as a bundle before they are zipped.
+    var contents = new SortedDictionary<string, byte[]>(StringComparer.Ordinal)
     {
-        var name = Path.GetFileName(f);
-        Entry(zip, app + "Contents/MacOS/" + name, File.ReadAllBytes(f), name == "ProductivityApp" ? 0x81ED : 0x81A4); // -rwxr-xr-x for the program
+        ["Info.plist"] = Encoding.UTF8.GetBytes(InfoPlist()),
+        ["Resources/app.icns"] = Icns(),
+    };
+    foreach (var f in Directory.EnumerateFiles(dir)) contents["MacOS/" + Path.GetFileName(f)] = File.ReadAllBytes(f);
+    MacSign.Bundle(contents, "ProductivityApp", BundleId);
+    using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+    {
+        foreach (var d in new[] { "", "Contents/", "Contents/MacOS/", "Contents/Resources/", "Contents/_CodeSignature/" }) Entry(zip, app + d, null, 0x41ED); // drwxr-xr-x
+        foreach (var (path, data) in contents)
+            Entry(zip, app + "Contents/" + path, data, path == "MacOS/ProductivityApp" ? 0x81ED : 0x81A4); // -rwxr-xr-x for the program, -rw-r--r-- the rest
     }
+    MadeByUnix(zipPath);
+    MacCheck.Zip(zipPath);
+}
+
+// Zip writers on Windows mark every entry "made by MS-DOS": macOS (Archive Utility, ditto, unzip) then ignores the Unix
+// permissions and the program inside the .app is not executable ("The application can't be opened"). Each entry of
+// the central directory is marked "made by Unix" (3) instead, keeping its version.
+static void MadeByUnix(string zipPath)
+{
+    var b = File.ReadAllBytes(zipPath);
+    var end = b.Length - 22;
+    while (end >= 0 && BitConverter.ToUInt32(b, end) != 0x06054b50) end--;
+    if (end < 0) throw new InvalidDataException($"{zipPath}: no end of central directory.");
+    int count = BitConverter.ToUInt16(b, end + 10);
+    var at = BitConverter.ToUInt32(b, end + 16);
+    if (count == 0xFFFF || at == 0xFFFFFFFF) throw new InvalidDataException($"{zipPath}: Zip64 is not handled.");
+    for (var i = 0; i < count; i++)
+    {
+        if (BitConverter.ToUInt32(b, (int)at) != 0x02014b50) throw new InvalidDataException($"{zipPath}: broken central directory.");
+        b[at + 5] = 3;
+        at += 46u + BitConverter.ToUInt16(b, (int)at + 28) + BitConverter.ToUInt16(b, (int)at + 30) + BitConverter.ToUInt16(b, (int)at + 32);
+    }
+    File.WriteAllBytes(zipPath, b);
 }
 
 void Entry(ZipArchive zip, string name, byte[]? data, int unixMode)
 {
     var e = zip.CreateEntry(name, data is null ? CompressionLevel.NoCompression : CompressionLevel.SmallestSize);
-    // Unix permissions in the high 16 bits (made by "Unix": Archive Utility and unzip keep them).
+    // Unix permissions in the high 16 bits (kept by macOS once the entry is marked made by Unix: see MadeByUnix).
     e.ExternalAttributes = unixMode << 16;
     if (data is null) return;
     using var s = e.Open();
@@ -93,7 +122,7 @@ string InfoPlist() => $"""
     <dict>
       <key>CFBundleName</key><string>ProductivityApp</string>
       <key>CFBundleDisplayName</key><string>ProductivityApp</string>
-      <key>CFBundleIdentifier</key><string>app.productivity.finances</string>
+      <key>CFBundleIdentifier</key><string>{BundleId}</string>
       <key>CFBundleExecutable</key><string>ProductivityApp</string>
       <key>CFBundleIconFile</key><string>app.icns</string>
       <key>CFBundlePackageType</key><string>APPL</string>

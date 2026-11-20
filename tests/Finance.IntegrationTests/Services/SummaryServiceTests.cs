@@ -306,6 +306,61 @@ public sealed class SummaryServiceTests : IDisposable
         Assert.Contains(summary.Movements, m => (m.From, m.To, m.Amount) == ("Chequing", Movements.OutsideInvestments, 500m));
     }
 
+    /// <summary>February and March 2026: chequing pays a card on February 5 and on March 5, a salary comes in.</summary>
+    private Task ChequingPayingACardAsync() => _store.ImportAsync("chq.csv", ChequingCsv(
+    [
+        new(D(2026, 2, 5), "Paiement Mastercard", "Paiement carte de credit", -50m),
+        new(D(2026, 3, 5), "Paiement Mastercard", "Paiement carte de credit", -80.10m),
+        new(D(2026, 3, 15), "Employeur Inc", "Revenus", 2000m),
+    ], 1000), accountName: "Chequing");
+
+    /// <summary>The card's own file: a purchase on March 4 and the payment it received on March 5.</summary>
+    private Task CardOfMarchAsync() => _store.ImportAsync("card.csv", Encoding.UTF8.GetBytes(
+        "Date;\"Numero de Carte\";Description;Categorie;Debit;Credit\n\"2026-03-05\";\"************1111\";\"Paiement recu merci!\";\"Paiement carte de credit\";\"0\";\"80.10\"\n\"2026-03-04\";\"************1111\";IGA;Epicerie;\"80.10\";\"0\"\n"),
+        kind: AccountKind.CreditCard, accountName: "Card");
+
+    private PeriodSummary FebruaryAndMarch() =>
+        _store.Summaries.Report(D(2026, 2, 1), D(2026, 3, 31), Granularity.Range, "CAD", new ExchangeRates(_store.Db)).Global;
+
+    [Fact]
+    public async Task Report_CardPaymentsWithNoCardImported_AreCardStatementSpending()
+    {
+        await ChequingPayingACardAsync();
+
+        var summary = FebruaryAndMarch();
+
+        Assert.Equal((130.10m, 1869.90m), (summary.Expenses, summary.Balance));
+        Assert.Equal(130.10m, summary.ByCategory.Single(x => x.Key == Categories.CardSpending).Amount);
+    }
+
+    [Fact]
+    public async Task Report_CardPaymentBeforeTheImportedCardsDays_IsCardStatementSpendingAndTheOneItCoversAMovement()
+    {
+        await ChequingPayingACardAsync();
+        await CardOfMarchAsync();
+
+        var summary = FebruaryAndMarch();
+
+        // February's payment pays purchases no imported file holds; March's is paid for by the card's own purchase.
+        Assert.Equal((130.10m, 50m, 80.10m), (summary.Expenses, summary.ByCategory.Single(x => x.Key == Categories.CardSpending).Amount,
+            summary.ByCategory.Single(x => x.Key == "groceries").Amount));
+        Assert.Equal(80.10m, summary.TransfersOut);
+    }
+
+    [Fact]
+    public async Task Report_CardFileImportedAfterThePayments_TurnsTheOnesItCoversIntoMovements()
+    {
+        await ChequingPayingACardAsync();
+        var before = FebruaryAndMarch();
+
+        await CardOfMarchAsync();
+        var after = FebruaryAndMarch();
+
+        Assert.Equal((130.10m, 130.10m), (before.ByCategory.Single(x => x.Key == Categories.CardSpending).Amount, before.Expenses));
+        Assert.Equal((50m, 130.10m), (after.ByCategory.Single(x => x.Key == Categories.CardSpending).Amount, after.Expenses));
+        Assert.Contains(after.Movements, m => (m.From, m.To, m.Amount) == ("Chequing", "Card", 80.10m) && m.OtherId is not null);
+    }
+
     [Fact]
     public async Task Summarize_CardPurchaseOfTheAmountOfACardPayment_StaysSpending()
     {

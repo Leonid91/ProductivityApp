@@ -280,21 +280,31 @@ public static class TransferMatcher
     }
 
     /// <summary>
-    /// With no credit card account imported, paying the card from chequing is the only trace of what was bought with
-    /// it: those payments count as "Card statement spending". Once a card account exists they are card payments again.
+    /// Paying a card on a day no imported card account covers (no card imported, or not that card's statements of the
+    /// time: an older card, a card replaced) is the only trace of what was bought with it: that payment counts as
+    /// "Card statement spending". On a day an imported card covers, the card's own lines hold the purchases: the payment
+    /// is a card payment, a movement paired with the card's line. A card covers its statements' periods, or the days from
+    /// its first operation to its last.
     /// </summary>
     private static int CardSpendingWithoutCard(Database db, Dictionary<long, Account> accounts)
     {
-        var hasCard = accounts.Values.Any(a => a.Kind == AccountKind.CreditCard);
+        var cards = accounts.Values.Where(a => a.Kind == AccountKind.CreditCard).Select(a => a.Id).ToHashSet();
+        var all = db.AllTransactions();
+        var spans = all.Where(t => cards.Contains(t.AccountId)).GroupBy(t => t.AccountId)
+            .Select(g => (From: g.Min(t => t.Date), To: g.Max(t => t.Date)))
+            .Concat(db.Statements().Where(s => cards.Contains(s.AccountId) && s.PeriodStart is not null && s.PeriodEnd is not null)
+                .Select(s => (From: s.PeriodStart!.Value, To: s.PeriodEnd!.Value)))
+            .ToList();
         var changed = 0;
         db.InTransaction(() =>
         {
-            foreach (var t in db.AllTransactions().Where(t => t.CategorySource != ValueSource.User && t.Amount < 0))
+            foreach (var t in all.Where(t => t.CategorySource != ValueSource.User && t.Amount < 0))
             {
                 var kind = accounts.GetValueOrDefault(t.AccountId)?.Kind;
                 if (kind == AccountKind.CreditCard) continue;
-                var next = !hasCard && t.CategoryId == Categories.CardPayments ? Categories.CardSpending
-                    : hasCard && t.CategoryId == Categories.CardSpending ? Categories.CardPayments
+                var covered = spans.Any(s => t.Date >= s.From && t.Date <= s.To);
+                var next = !covered && t.CategoryId == Categories.CardPayments ? Categories.CardSpending
+                    : covered && t.CategoryId == Categories.CardSpending ? Categories.CardPayments
                     : null;
                 if (next is null) continue;
                 t.CategoryId = next;

@@ -295,10 +295,12 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
                 .ToDictionary(g => g.Key, g => (g.Min(t => t.Date), g.Max(t => t.Date)));
             return spans.TryGetValue(id, out var span) ? span : null;
         }
+        // Only operations of the same amount can be the same: looked up by amount, not searched among all of them.
+        var byAmount = pool.ToLookup(t => t.Amount);
         foreach (var r in unmatched)
         {
-            var near = pool
-                .Where(t => left.Contains(t.Id) && t.Amount == r.Amount && t.Date != r.Date && Math.Abs(t.Date.DayNumber - r.Date.DayNumber) <= DateShift)
+            var near = byAmount[r.Amount]
+                .Where(t => left.Contains(t.Id) && t.Date != r.Date && Math.Abs(t.Date.DayNumber - r.Date.DayNumber) <= DateShift)
                 .Where(t => SameOperation(t.RawLabel, r.Label))
                 .Where(t => (t.Date >= fileFrom && t.Date <= fileTo) || (Covers(t.StatementId) is { } c && r.Date >= c.From && r.Date <= c.To))
                 .OrderBy(t => Math.Abs(t.Date.DayNumber - r.Date.DayNumber)).ThenBy(t => t.Id)

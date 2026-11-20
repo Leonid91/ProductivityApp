@@ -1201,3 +1201,29 @@ real app with `tools/e2e/perf.mjs`.
 
 ### Added
 - The release files of version 0.1.0 in `release/` (no longer ignored), each linked from the README.
+
+## November 19th, 2026 - Large imports without freezing; card payments counted where no card covers them; macOS app signed as a bundle - Commit 49
+
+### Fixed
+- The import card froze on large files (a 20,000-line export left the page frozen for more than 20 minutes, its memory
+  at 6.9 GB): every line of the file was drawn at once, and drawn again at each key typed in the account's name or bank
+  name. Only the lines in view (and a few around) are drawn now, each line again only when it changes itself: typing the
+  account's name runs at 239 fps (lowest 119 fps) on that file. Finding the lines already imported looks the stored
+  operations up by amount instead of going through all of them for each line.
+- Card payments counted nowhere: paying a card was "Card statement spending" only while no credit card account existed
+  at all. Once one card was imported, every payment became a movement to a card, also the payments of the years before
+  that card's statements (an older card, a card replaced): the purchases they paid were in no file, so they were counted
+  nowhere and the balance of All time was far too high. A card payment is now "Card statement spending" on every day no
+  imported card covers (its statements' periods, or its first to its last operation), and a card payment paired with the
+  card's own line on the days a card covers (`TransferMatcher`). Importing an older card's statements turns the payments
+  of their days back into movements, and their purchases count instead.
+- macOS: "The application "ProductivityApp" can't be opened". The .NET build signs the program on its own
+  (identifier "apphost"), and inside an .app macOS rejects that signature: "code has no resources but signature
+  indicates they must be present" (codesign on macOS 14.6). `tools/Package` now signs each .app as a bundle, ad hoc as
+  codesign does (`tools/Package/MacSign.cs`): every file of Contents/ sealed in _CodeSignature/CodeResources, the program
+  signed again with the bundle's identifier, binding Info.plist and that seal; `codesign --verify --deep --strict` on
+  macOS says both zips (Apple processor, Intel) are valid and satisfy their requirement. The zip entries are also marked
+  made by Unix (they said MS-DOS, and unzip tools other than Finder's then drop the permissions).
+- `tools/Package` checks every macOS zip before finishing (`tools/Package/MacCheck.cs`): entries made by Unix, the program
+  executable and named by Info.plist, the seal binding this Info.plist and these files, every Apple-processor program and
+  library signed with page hashes matching its code.

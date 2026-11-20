@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, InputBase, MenuItem, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material'
@@ -45,6 +45,116 @@ function DraftRowDialog({ row, onClose, onSave }: {
     </Dialog>
   )
 }
+
+type LineActions = {
+  edit: (index: number, change: Partial<DraftEdit>) => void
+  changeCategory: (index: number, id: string, brand: string) => Promise<void>
+  open: (index: number) => void
+}
+
+/** Lines drawn above and below the ones in view, so a quick scroll shows no gap. */
+const LINES_AROUND = 12
+
+/**
+ * The lines of the statement being imported. A file can hold tens of thousands: only the lines in view (and a few
+ * around) are drawn, the others are kept as the height they take, and the lines are drawn again only when they change
+ * (not when the account's name, bank or currency is typed above them).
+ */
+const DraftLines = memo(function DraftLines({ rows, edits, currency, dateFormat, actions }: {
+  rows: Draft['rows']
+  edits: Map<number, DraftEdit>
+  currency: string
+  dateFormat: string
+  actions: LineActions
+}) {
+  const box = useRef<HTMLDivElement>(null)
+  const [lineHeight, setLineHeight] = useState(41)
+  const [view, setView] = useState({ top: 0, height: 420 })
+  const frame = useRef(0)
+  const onScroll = () => {
+    if (frame.current) return
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0
+      const b = box.current
+      if (b) setView({ top: b.scrollTop, height: b.clientHeight })
+    })
+  }
+  useEffect(() => () => cancelAnimationFrame(frame.current), [])
+  // The height of one line, read from a drawn line (every line has the same: one line of text each).
+  useLayoutEffect(() => {
+    const line = box.current?.querySelector<HTMLElement>('tbody tr[data-line]')
+    const b = box.current
+    if (b) setView((v) => (v.height === b.clientHeight ? v : { top: b.scrollTop, height: b.clientHeight }))
+    if (line && Math.abs(line.offsetHeight - lineHeight) > 0.5) setLineHeight(line.offsetHeight)
+  }, [rows, lineHeight])
+  const first = Math.max(0, Math.floor(view.top / lineHeight) - LINES_AROUND)
+  const last = Math.min(rows.length, Math.ceil((view.top + view.height) / lineHeight) + LINES_AROUND)
+  return (
+    <Box ref={box} onScroll={onScroll} data-draft-lines sx={{ maxHeight: 420, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: '16px' }}>
+      <Table size="small" stickyHeader sx={{ '& th': { bgcolor: 'background.paper' } }}>
+        <TableHead>
+          <TableRow>
+            <TableCell padding="checkbox" />
+            <TableCell>Date</TableCell>
+            <TableCell>Statement label</TableCell>
+            <TableCell>Brand Name</TableCell>
+            <TableCell>Category</TableCell>
+            <TableCell>Tags</TableCell>
+            <TableCell align="right">Amount</TableCell>
+            <TableCell sx={{ width: ROW_EDIT_WIDTH, px: 0 }} />
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {first > 0 && <tr aria-hidden style={{ height: first * lineHeight }} />}
+          {rows.slice(first, last).map((r) => (
+            <DraftLine key={r.index} row={r} edit={edits.get(r.index)} currency={currency} dateFormat={dateFormat} actions={actions} />
+          ))}
+          {last < rows.length && <tr aria-hidden style={{ height: (rows.length - last) * lineHeight }} />}
+        </TableBody>
+      </Table>
+    </Box>
+  )
+})
+
+/** One line of the statement being imported: drawn again only when it changes. */
+const DraftLine = memo(function DraftLine({ row: r, edit: e, currency, dateFormat, actions }: {
+  row: Draft['rows'][number]
+  edit: DraftEdit | undefined
+  currency: string
+  dateFormat: string
+  actions: LineActions
+}) {
+  const categoryTagsOf = useCategoryTags()
+  const include = !r.duplicate && (e?.include ?? true)
+  const brand = e?.brand ?? r.brand
+  const categoryId = e?.categoryId ?? r.categoryId
+  return (
+    <TableRow data-line sx={{ opacity: include ? 1 : 0.45, '& > td': { whiteSpace: 'nowrap' } }}>
+      <TableCell padding="checkbox">
+        <Tooltip title={r.duplicate ? 'Already imported' : ''}>
+          <span><Checkbox size="small" checked={include} disabled={r.duplicate} onChange={(ev) => actions.edit(r.index, { include: ev.target.checked })} /></span>
+        </Tooltip>
+      </TableCell>
+      <TableCell className="tnum" sx={{ color: 'text.secondary' }}>{formatDate(r.date, dateFormat)}</TableCell>
+      <TableCell sx={{ maxWidth: 280 }}>
+        <Typography variant="body2" noWrap title={r.label} className="selectable">{r.label}</Typography>
+      </TableCell>
+      <TableCell sx={{ minWidth: 150 }}>
+        <InputBase
+          value={brand}
+          onChange={(ev) => actions.edit(r.index, { brand: ev.target.value })}
+          sx={{ fontSize: 13.5, fontWeight: 520, width: '100%', px: 1, mx: -1, borderRadius: 2, '&:hover, &.Mui-focused': { bgcolor: 'action.hover' } }}
+        />
+      </TableCell>
+      <TableCell><CategoryPill id={categoryId} onChange={(id) => void actions.changeCategory(r.index, id, brand)} /></TableCell>
+      <TableCell sx={{ '& > div': { flexWrap: 'nowrap' } }}><TagList ids={categoryTagsOf(categoryId)} /></TableCell>
+      <TableCell align="right"><Money value={r.amount} currency={currency} sign /></TableCell>
+      <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
+        <RowActions editLabel="Edit the line" onEdit={() => actions.open(r.index)} />
+      </TableCell>
+    </TableRow>
+  )
+})
 
 /** The state of a read statement; amounts in <currency>, the currency of the account it is imported into. */
 export function StatusChip({ draft, currency }: { draft: Draft; currency: string }) {
@@ -113,7 +223,6 @@ function BalanceCheck({ draft, currency }: { draft: Draft; currency: string }) {
 /** A statement read from a PDF, waiting for the person to check it and save it. */
 export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (saved: boolean) => void }) {
   const { accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
-  const categoryTagsOf = useCategoryTags()
   const [draft, setDraft] = useState(initial)
   // Nothing is chosen for the person: the file waits until they say which account it belongs to.
   const [accountId, setAccountId] = useState<number | 'new' | ''>('')
@@ -157,18 +266,18 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
   const read = draft.dateFormat !== null
   const chosen = read && !draft.dateFormatMismatch && accountId !== '' && (accountId !== 'new' || (kind !== '' && bankId !== '' && (bankId !== 'new' || bankName.trim() !== '')))
 
-  const edit = (index: number, change: Partial<DraftEdit>) => setEdits((prev) => {
+  const edit = useCallback((index: number, change: Partial<DraftEdit>) => setEdits((prev) => {
     const next = new Map(prev)
     const current = next.get(index) ?? { index, brand: null, categoryId: null, include: true }
     next.set(index, { ...current, ...change })
     return next
-  })
+  }), [])
 
   /** A new category for one line: for it only, or for every line of the same brand (and learned for later imports). */
-  const changeCategory = async (index: number, id: string, brandNow?: string) => {
+  const changeCategory = useCallback(async (index: number, id: string, brandNow: string) => {
     const row = draft.rows.find((r) => r.index === index)
     if (!row) return
-    const brand = brandNow ?? edits.get(index)?.brand ?? row.brand
+    const brand = brandNow
     const all = await askScope(brand, category(id).name)
     if (all === null) return
     setEdits((prev) => {
@@ -180,10 +289,13 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
       }
       return next
     })
-  }
+  }, [draft.rows, askScope, category])
+
+  // What the lines call: the same functions while the file's lines stay the same, so typing above them draws no line.
+  const lineActions = useMemo<LineActions>(() => ({ edit, changeCategory, open: setEditingRow }), [edit, changeCategory])
 
   const included = useMemo(() => draft.rows.filter((r) => !r.duplicate && (edits.get(r.index)?.include ?? true)), [draft.rows, edits])
-  const duplicates = draft.rows.filter((r) => r.duplicate).length
+  const duplicates = useMemo(() => draft.rows.filter((r) => r.duplicate).length, [draft.rows])
 
   const commit = async () => {
     setBusy(true)
@@ -321,56 +433,7 @@ export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (s
           </Box>
           {draft.dateFormatMismatch && <Alert severity="warning" sx={{ mb: 2 }} data-date-format-mismatch>{draft.dateFormatMismatch}</Alert>}
 
-          {read && (
-          <Box sx={{ maxHeight: 420, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: '16px' }}>
-            <Table size="small" stickyHeader sx={{ '& th': { bgcolor: 'background.paper' } }}>
-              <TableHead>
-                <TableRow>
-                  <TableCell padding="checkbox" />
-                  <TableCell>Date</TableCell>
-                  <TableCell>Statement label</TableCell>
-                  <TableCell>Brand Name</TableCell>
-                  <TableCell>Category</TableCell>
-                  <TableCell>Tags</TableCell>
-                  <TableCell align="right">Amount</TableCell>
-                  <TableCell sx={{ width: ROW_EDIT_WIDTH, px: 0 }} />
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {draft.rows.map((r) => {
-                  const e = edits.get(r.index)
-                  const include = !r.duplicate && (e?.include ?? true)
-                  return (
-                    <TableRow key={r.index} sx={{ opacity: include ? 1 : 0.45 }}>
-                      <TableCell padding="checkbox">
-                        <Tooltip title={r.duplicate ? 'Already imported' : ''}>
-                          <span><Checkbox size="small" checked={include} disabled={r.duplicate} onChange={(ev) => edit(r.index, { include: ev.target.checked })} /></span>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell className="tnum" sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>{formatDate(r.date, settings.dateFormat)}</TableCell>
-                      <TableCell sx={{ maxWidth: 280 }}>
-                        <Typography variant="body2" noWrap title={r.label} className="selectable">{r.label}</Typography>
-                      </TableCell>
-                      <TableCell sx={{ minWidth: 150 }}>
-                        <InputBase
-                          value={e?.brand ?? r.brand}
-                          onChange={(ev) => edit(r.index, { brand: ev.target.value })}
-                          sx={{ fontSize: 13.5, fontWeight: 520, width: '100%', px: 1, mx: -1, borderRadius: 2, '&:hover, &.Mui-focused': { bgcolor: 'action.hover' } }}
-                        />
-                      </TableCell>
-                      <TableCell><CategoryPill id={e?.categoryId ?? r.categoryId} onChange={(id) => void changeCategory(r.index, id)} /></TableCell>
-                      <TableCell><TagList ids={categoryTagsOf(e?.categoryId ?? r.categoryId)} /></TableCell>
-                      <TableCell align="right"><Money value={r.amount} currency={currency} sign /></TableCell>
-                      <TableCell padding="none" align="right" sx={{ pr: 0.5 }}>
-                        <RowActions editLabel="Edit the line" onEdit={() => setEditingRow(r.index)} />
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </Box>
-          )}
+          {read && <DraftLines rows={draft.rows} edits={edits} currency={currency} dateFormat={settings.dateFormat} actions={lineActions} />}
           {(() => {
             const r = editingRow === null ? undefined : draft.rows.find((x) => x.index === editingRow)
             const e = r && edits.get(r.index)
