@@ -217,6 +217,9 @@ public static partial class StatementParser
     {
         if (f.Length > 40) return null;
         if (HasWord(f, "SOLDE", "BALANCE")) return ColumnRole.Balance;
+        // The amount in the currency paid abroad ("Montant devise"): not what moved on the account (the column in the
+        // statement's own currency beside it is).
+        if (HasWord(f, "MONTANT", "AMOUNT", "MONTANTS", "AMOUNTS") && HasWord(f, "DEVISE", "DEVISES", "ORIGINE", "ORIGINAL", "ORIGINALE", "FOREIGN")) return ColumnRole.Ignore;
         if (HasWord(f, "CATEGORIE", "CATEGORIES", "CATEGORY", "CATEGORY")) return ColumnRole.Category;
         if (HasWord(f, "DATE", "JOUR", "DATES"))
             return HasWord(f, "VALEUR", "VALUE", "POST", "POSTED", "POSTING", "INSCRIPTION", "COMPTABILISATION", "COMPTABLE") ? ColumnRole.ValueDate : ColumnRole.Date;
@@ -827,8 +830,11 @@ public static partial class StatementParser
         var a = r.Amount!.Value;
         if (kind == AccountKind.CreditCard)
         {
-            // On a card, unmarked amounts are purchases; "-", "CR" and "+" mark payments and refunds.
-            var v = a.Marker is SignMarker.Minus or SignMarker.Credit or SignMarker.Plus ? a.Magnitude : -a.Magnitude;
+            // On a card, unmarked amounts are purchases; "-", "CR" and "+" mark payments and refunds, and so does a refund's
+            // own word when nothing marks it ("AVOIR").
+            var back = a.Marker is SignMarker.Minus or SignMarker.Credit or SignMarker.Plus
+                || (a.Marker == SignMarker.None && Keywords.ContainsAny(" " + TextNorm.Fold(r.Label) + " ", Keywords.CardCredits));
+            var v = back ? a.Magnitude : -a.Magnitude;
             return (v, true, v);
         }
         switch (a.Marker)
@@ -898,6 +904,8 @@ public static partial class StatementParser
     private static (decimal? Opening, decimal? Closing) FindBalances(DocumentContext ctx, Layout layout, AccountKind kind, (DateOnly Start, DateOnly End)? period, DateOrder order)
     {
         decimal? opening = null, closing = null;
+        // Closed by what a deferred debit card's month takes from the account: that month started from nothing.
+        var taken = false;
         var asOf = new List<(DateOnly? Date, decimal Value)>();
         foreach (var line in ctx.Lines.OrderBy(l => l.Page).ThenBy(l => l.Top))
         {
@@ -915,7 +923,7 @@ public static partial class StatementParser
             switch (k)
             {
                 case SummaryKind.Opening: opening ??= value; break;
-                case SummaryKind.Closing: closing = value; break;
+                case SummaryKind.Closing: closing = value; taken = Keywords.ContainsAny(f, Keywords.MonthTaken); break;
                 case SummaryKind.BalanceAsOf:
                     DateOnly? d = null;
                     var tokens = line.Tokens;
@@ -940,6 +948,7 @@ public static partial class StatementParser
                 closing ??= asOf[^1].Value;
             }
         }
+        if (taken && closing is not null) opening ??= 0m;
         return (opening, closing);
     }
 

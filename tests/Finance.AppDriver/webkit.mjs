@@ -42,6 +42,30 @@ export async function launch(exe, args, port) {
     const json = text.slice(text.indexOf('\n') + 1)
     await app.eval(`window.external.sendMessage(document.querySelector('meta[name="bridge-key"]').content + '\\n' + ${JSON.stringify(json)})`)
   })
+  // Every size observer of the page, tagged with where it was made: a "ResizeObserver loop" reported by the browser
+  // comes with the observers told of sizes just before it (page.sizeLoops, read by the suite's checks).
+  const sizeLoops = []
+  await wk.exposeBinding('__sizeLoop', (_, text) => { sizeLoops.push(text) })
+  await wk.addInitScript(() => {
+    const Observer = window.ResizeObserver
+    const told = []
+    const name = (t) => String(t.dataset?.section ?? t.dataset?.period ?? t.dataset?.partBlock ?? t.className?.baseVal ?? t.className ?? t.tagName).slice(0, 40)
+    window.ResizeObserver = class extends Observer {
+      constructor(callback) {
+        const where = (new Error().stack || '').split(String.fromCharCode(10)).slice(1, 3).join(' < ').replace(/https?:\/\/[^/]+\/assets\//g, '')
+        super((entries, observer) => {
+          told.push([performance.now(), where, entries.slice(0, 5).map((e) => name(e.target) + ' ' + Math.round(e.contentRect.width) + 'x' + Math.round(e.contentRect.height)).join(', ') + ' (' + entries.length + ')'])
+          if (told.length > 400) told.shift()
+          return callback(entries, observer)
+        })
+      }
+    }
+    window.addEventListener('error', (e) => {
+      if (!/ResizeObserver/.test(e.message)) return
+      const now = performance.now()
+      window.__sizeLoop(told.filter((t) => now - t[0] < 40).map((t) => Math.round(now - t[0]) + 'ms ' + t[1] + ' :: ' + t[2]).join(' | '))
+    })
+  })
   await wk.addInitScript(() => {
     const listeners = []
     window.__fromEngine = (text) => listeners.forEach((l) => l(text))
@@ -63,6 +87,7 @@ export async function launch(exe, args, port) {
   const page = {
     child: app.child,
     consoleErrors,
+    sizeLoops,
     browser: browser.version(),
     async eval(expression) {
       return wk.evaluate(expression)

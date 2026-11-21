@@ -79,23 +79,41 @@ if (args.Length == 2 && args[0] == "scotia")
 }
 if (args.Length == 2 && args[0] == "bourso")
 {
-    // bourso <folder>: fictitious BoursoBank statement (PDF) and both CSV exports
+    // bourso <folder>: fictitious BoursoBank statements (current account on several pages with a deferred card's month,
+    // Boursorama Banque overdrawn, Livret A, deferred debit card) and every export (both CSV, card CSV, OFX, QIF)
     var dir = Directory.CreateDirectory(args[1]).FullName;
-    var s = BoursobankGenerator.Sample();
+    var card = BoursobankGenerator.DeferredCard();
+    var s = BoursobankGenerator.Sample(cards: 70, deferred: card);
     Write(Path.Combine(dir, "BoursoBank 2025-09.pdf"), BoursobankGenerator.Pdf(s));
+    Write(Path.Combine(dir, "Boursorama 2022-03 overdrawn.pdf"), BoursobankGenerator.Pdf(BoursobankGenerator.Sample(2022, 3, seed: 3, opening: -215.40m, brand: "Boursorama Banque")));
+    Write(Path.Combine(dir, "BoursoBank Livret A 2025-12.pdf"), BoursobankGenerator.Pdf(BoursobankGenerator.Savings()));
+    Write(Path.Combine(dir, "BoursoBank card 2025-09.pdf"), BoursobankGenerator.CardPdf(card));
     Write(Path.Combine(dir, "BoursoBank export 2025-09 old.csv"), BoursobankGenerator.OldCsv(s));
     Write(Path.Combine(dir, "BoursoBank export 2025-09 new.csv"), BoursobankGenerator.NewCsv(s));
-    Console.WriteLine($"open={s.Opening} close={s.Closing} lines={s.Lines.Count}");
+    Write(Path.Combine(dir, "BoursoBank card export 2025-09.csv"), BoursobankGenerator.CardCsv(card));
+    Write(Path.Combine(dir, "BoursoBank 2025-09.ofx"), BoursobankGenerator.Ofx(s));
+    Write(Path.Combine(dir, "BoursoBank 2025-09.qif"), BoursobankGenerator.Qif(s));
+    Console.WriteLine($"open={s.Opening} close={s.Closing} lines={s.Lines.Count} card={card.Total}");
     return 0;
 }
 if (args.Length == 2 && args[0] == "fortuneo")
 {
-    // fortuneo <folder>: fictitious Fortuneo statement (PDF) and CSV export
+    // fortuneo <folder>: fictitious Fortuneo statements (current account on several pages with a deferred card's month,
+    // a first statement, overdrawn, Livret +, deferred debit card) and every export (CSV, Libre, Excel, QIF, OFX)
     var dir = Directory.CreateDirectory(args[1]).FullName;
-    var s = FortuneoGenerator.Sample();
+    var card = FortuneoGenerator.DeferredCard();
+    var s = FortuneoGenerator.Sample(cards: 70, deferred: card);
     Write(Path.Combine(dir, "Fortuneo 2026-08.pdf"), FortuneoGenerator.Pdf(s));
+    Write(Path.Combine(dir, "Fortuneo 2021-04 first.pdf"), FortuneoGenerator.Pdf(FortuneoGenerator.Sample(2021, 4, seed: 4, first: true)));
+    Write(Path.Combine(dir, "Fortuneo 2023-11 overdrawn.pdf"), FortuneoGenerator.Pdf(FortuneoGenerator.Sample(2023, 11, seed: 5, opening: -342.18m)));
+    Write(Path.Combine(dir, "Fortuneo Livret+ 2026-08.pdf"), FortuneoGenerator.Pdf(FortuneoGenerator.Livret()));
+    Write(Path.Combine(dir, "Fortuneo card 2026-08.pdf"), FortuneoGenerator.CardPdf(card));
     Write(Path.Combine(dir, "Fortuneo export 2026-08.csv"), FortuneoGenerator.Csv(s));
-    Console.WriteLine($"open={s.Opening} close={s.Closing} lines={s.Lines.Count}");
+    Write(Path.Combine(dir, "Fortuneo export 2026-08 libre.txt"), FortuneoGenerator.Libre(s));
+    Write(Path.Combine(dir, "Fortuneo export 2026-08.xls"), FortuneoGenerator.Xls(s));
+    Write(Path.Combine(dir, "Fortuneo export 2026-08.qif"), FortuneoGenerator.Qif(s));
+    Write(Path.Combine(dir, "Fortuneo export 2026-08.ofx"), FortuneoGenerator.Ofx(s));
+    Console.WriteLine($"open={s.Opening} close={s.Closing} lines={s.Lines.Count} card={card.Total}");
     return 0;
 }
 if (args.Length == 2 && args[0] == "revolut")

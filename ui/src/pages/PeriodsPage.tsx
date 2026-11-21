@@ -197,7 +197,17 @@ export function PeriodsPage() {
       const period = s?.closest('section[data-period]') ?? s
       anchor = s && period && scroller.scrollTop > 0 ? { el: s, offset: s.getBoundingClientRect().top - y, period, periodOffset: period.getBoundingClientRect().top - y, top: scroller.scrollTop } : null
     }
-    const ro = new ResizeObserver(() => {
+    // The place is put back at the start of a frame, before the page is laid out and shown: measured (and the page
+    // scrolled) while the browser tells sizes, WebKit would lay out again the parts of periods the scroll brings near
+    // the screen in that same frame (it reports a loop of size changes). What changes the periods' sizes is their
+    // content (a period drawn, loaded, another view): put back in the frame that shows it. A size changed with nothing
+    // in them changed (a font read, a part drawn again near the screen) is put back at the next frame.
+    let asked = 0
+    const ask = () => { asked ||= requestAnimationFrame(() => { asked = 0; keepInPlace() }) }
+    const ro = new ResizeObserver(ask)
+    const changes = new MutationObserver(ask)
+    changes.observe(el, { childList: true, subtree: true, attributes: true, characterData: true })
+    const keepInPlace = () => {
       if (!anchor) return
       if (!anchor.el.isConnected) {
         if (!anchor.period.isConnected) return
@@ -222,13 +232,13 @@ export function PeriodsPage() {
         own = scroller.scrollTop
       }
       lastHeight = scroller.scrollHeight
-    })
+    }
     const watch = () => { for (const c of el.children) ro.observe(c) }
     watch()
     const mo = new MutationObserver(watch)
     mo.observe(el, { childList: true })
     scroller.addEventListener('scroll', pick, { passive: true })
-    return () => { ro.disconnect(); mo.disconnect(); scroller.removeEventListener('scroll', pick) }
+    return () => { ro.disconnect(); mo.disconnect(); changes.disconnect(); cancelAnimationFrame(asked); scroller.removeEventListener('scroll', pick) }
   }, [empty])
 
   return (

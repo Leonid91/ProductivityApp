@@ -19,6 +19,8 @@ internal static class Keywords
     [
         "NOUVEAU SOLDE", "SOLDE DE CLOTURE", "SOLDE FINAL", "SOLDE DE FIN", "SOLDE EN FIN DE PERIODE", "SOLDE A LA FIN",
         "SOLDE DU RELEVE", "SOLDE ACTUEL",
+        // What a deferred debit card's month takes from the account ("A VOTRE DEBIT LE 30/09/2025", "MONTANT DÉBITÉ LE ...").
+        "A VOTRE DEBIT", "MONTANT DEBITE", "MONTANT A DEBITER", "TOTAL A DEBITER",
         "CLOSING BALANCE", "NEW BALANCE", "ENDING BALANCE", "FINAL BALANCE", "BALANCE AT END", "STATEMENT BALANCE", "CURRENT BALANCE",
     ];
 
@@ -55,6 +57,12 @@ internal static class Keywords
         "ALLOCATION", "PENSION", "DIVIDEND", "CASHBACK", "PAYMENT - THANK YOU", "PAIEMENT - MERCI", "PAYMENT THANK YOU", "PAIEMENT MERCI",
         "PAIEMENT RECU", "PAYMENT RECEIVED",
     ];
+
+    /// <summary>What a deferred debit card's month takes from the account, closing its statement (the month starts from nothing).</summary>
+    public static readonly string[] MonthTaken = ["A VOTRE DEBIT", "MONTANT DEBITE", "MONTANT A DEBITER", "TOTAL A DEBITER"];
+
+    /// <summary>On a card, an operation giving money back though its amount is not marked ("AVOIR 12/09/25 ...").</summary>
+    public static readonly string[] CardCredits = [" AVOIR ", " REMBOURSEMENT ", " REFUND ", " RETURN "];
 
     public static readonly string[] KnownBanks =
     [

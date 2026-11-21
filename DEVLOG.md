@@ -1382,3 +1382,41 @@ real app with `tools/e2e/perf.mjs`.
   come the next frame). Measuring the page where the period read is kept in place makes WebKit draw again the parts of
   periods near the screen at the new width, which changes their size in that same frame. Two ways of avoiding it
   (answering size changes a frame later, re-reading sizes the next frame) were tried and did not remove it.
+
+## November 21st, 2026 - Every form of BoursoBank's and Fortuneo's statements; no loop of size changes in WebKit - Commit 54
+
+### Fixed
+- WebKit (the macOS and Linux windows): the page could report "ResizeObserver loop completed with undelivered
+  notifications" (written to the log as an error) after a view was switched or the width of the page changed (the
+  window resized, a scrollbar coming or going). Keeping the period read in place measured the page and scrolled it
+  while the browser was telling sizes; the scroll brought parts of other periods near the screen, which WebKit laid out
+  again in that same frame. The place is now put back at the start of a frame, before the page is laid out and shown:
+  in the frame that shows a change of the periods' content (a period drawn, loaded, another view), at the next one for a
+  size changed with nothing in them changed. A part whose width changed is laid out again from the next frame too, not
+  while sizes are told. Found by tagging every size observer (the WebKit end-to-end driver now names those told of
+  sizes just before such a loop); checked in WebKit: 4 runs of width changes in Statements, Analytics and Transfers and
+  8 rounds of the view switch where it was seen, no loop and the month in place; the end-to-end suite changes the width
+  while the charts are drawn.
+- A file that names no currency (a CSV of card operations, a QIF) is read in the currency of the account or bank chosen
+  for it, no longer in the person's own currency.
+
+### Added
+- BoursoBank and Fortuneo, every form of their statements, with invented statements in their layouts (2021-2026):
+  - BoursoBank: the monthly PDF of the current account (several pages; overdrawn; under the Boursorama Banque name
+    before 2024; a deferred debit card's month in one line, "Relevé différé Carte ..."), of a savings account
+    ("Compte d'épargne : LIVRET A") and of a deferred debit card ("Relevé de Carte": PAIEMENT CARTE, AVOIR, CION OP.ETR,
+    the amount in the currency paid and in euros, "A VOTRE DEBIT LE ..."); the CSV exports of an account (older and
+    newer) and of a card, OFX and QIF.
+  - Fortuneo: the monthly PDF of the current account (several pages; the first one, "ANCIEN SOLDE" without a date;
+    overdrawn, "DÉBITEUR"; a deferred card's month in one line), of a Livret + (no IBAN) and of a deferred debit card;
+    the exports CSV, "Libre" (tab-separated), Excel (.xls), QIF and OFX.
+  Every operation of every form is read; every statement that prints balances is balanced to the cent.
+- PDF statements, for any bank: an amount column in the currency paid abroad ("Montant devise", "original") is not the
+  money that moved on the account; "A VOTRE DEBIT", "MONTANT DÉBITÉ" close a deferred card's month, which starts from
+  nothing; on a card, a refund named so ("AVOIR", "REMBOURSEMENT") gives money back though its amount is not marked.
+- `SampleStatements bourso|fortuneo` write every form.
+
+### Checked
+- End-to-end: 240/240 in WebKit (twice) and 240/240 in WebView2. Unit 5226/5226, integration 884 (2 skipped: text
+  recognition, not on this machine for the macOS and Linux build), page 7/7. 0 compiler warnings, 65 lint warnings as
+  before. The released exe started for the first time in a folder of its own: no warning or error.

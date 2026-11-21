@@ -231,7 +231,11 @@ export function useRealHeights(ref: React.RefObject<HTMLElement | null>, key: un
         }
       }
     })
-    // Laid out (being changed, or near the screen): its height as it is. Skipped with a new width: laid out again.
+    // Laid out (being changed, or near the screen): its height as it is. Skipped with a new width: laid out again,
+    // from the next frame (laid out from here, it and the ones it is in would change size while their sizes are being
+    // told: the browser reports a loop of size changes).
+    let relayout: HTMLElement[] = []
+    let relayoutAsked = 0
     const ro = new ResizeObserver((entries) => {
       for (const e of entries) {
         const x = e.target as HTMLElement
@@ -241,7 +245,15 @@ export function useRealHeights(ref: React.RefObject<HTMLElement | null>, key: un
         const h = e.contentRect.height
         const w = e.borderBoxSize[0].inlineSize
         if (open.has(x) || (k && Math.abs(h - k.h) > 0.01)) keep(x, h, w)
-        else if (!k || Math.abs(w - k.w) > 0.5) opened(x)
+        else if (!k || Math.abs(w - k.w) > 0.5) relayout.push(x)
+      }
+      if (relayout.length > 0 && !relayoutAsked) {
+        relayoutAsked = requestAnimationFrame(() => {
+          relayoutAsked = 0
+          const now = relayout
+          relayout = []
+          for (const x of now) if (x.isConnected) opened(x)
+        })
       }
     })
     for (const x of root.querySelectorAll<HTMLElement>(UNIT)) { ro.observe(x); opened(x) }
@@ -252,6 +264,7 @@ export function useRealHeights(ref: React.RefObject<HTMLElement | null>, key: un
     return () => {
       mo.disconnect(); ro.disconnect()
       cancelAnimationFrame(asked)
+      cancelAnimationFrame(relayoutAsked)
       document.fonts.removeEventListener('loadingdone', fonts)
       for (const [u, o] of open) u.style.contentVisibility = o.before
     }

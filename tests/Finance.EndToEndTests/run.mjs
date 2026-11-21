@@ -1067,6 +1067,17 @@ try {
   check('the October diagram: every bank with movements as a box, amounts in the display currency', octFlow.banks.includes("Caisse d'Epargne") && octFlow.banks.includes('Northwind Bank')
     && octFlow.labels.length > 0 && octFlow.labels.every((l) => l.includes('$') && !l.includes('€')), JSON.stringify(octFlow))
   await analyticsPart(p, 'General')
+  // The width of the page changing (the window resized, a scrollbar coming and going) while the charts are drawn:
+  // the month read stays where it is, and the browser reports no loop of size changes.
+  await p.eval(`window.__sizeLoops = 0; window.addEventListener('error', (e) => { if (/ResizeObserver/.test(e.message)) window.__sizeLoops++ })`)
+  // Where the month is once the charts are drawn and the page no longer moves.
+  const octTop = () => p.eval(`Math.round(document.querySelector('${octSec}').getBoundingClientRect().top)`)
+  let octBefore = await octTop()
+  for (let i = 0, same = 0; i < 40 && same < 4; i++) { await sleep(250); const t = await octTop(); same = t === octBefore ? same + 1 : 0; octBefore = t }
+  for (let i = 0; i < 12; i++) { await p.eval(`document.querySelector('main').style.paddingRight = '${i % 2 ? 0 : 23}px'`); await sleep(350) }
+  await sleep(1500)
+  const widened = await p.eval(`({ loops: window.__sizeLoops, top: Math.round(document.querySelector('${octSec}').getBoundingClientRect().top) })`)
+  check('the width changing while the charts are drawn: the month stays in place, no loop of size changes', widened.loops === 0 && Math.abs(widened.top - octBefore) <= 2, `${JSON.stringify(widened)}, before ${octBefore}`)
   await p.clickText('Statements', { selector: '[data-period-view] button' })
   await sleep(600)
   // Folded, October shows the global balance: every bank together, in the display currency.
@@ -1990,7 +2001,7 @@ try {
   await p.engine('logs.move', { folder: data })
 
   check('no phrase joined to the next by a semicolon on any screen photographed', semicolons.length === 0, semicolons.slice(0, 3).join(' | '))
-  check('no script errors in the interface', p.consoleErrors.length === 0, p.consoleErrors.slice(0, 3).join(' | '))
+  check('no script errors in the interface', p.consoleErrors.length === 0, p.consoleErrors.slice(0, 3).join(' | ') + (p.sizeLoops?.length ? ' | size observers before each loop: ' + p.sizeLoops.join(' || ') : ''))
 } catch (e) {
   failed = true
   console.error('ERROR', e.message)
