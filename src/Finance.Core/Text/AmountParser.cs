@@ -57,7 +57,7 @@ public static partial class AmountParser
     }
 
     [GeneratedRegex(
-        @"^(?<lead>[-+(]|-\s*\(|\(\s*-)?\s*(?<cur1>CA\$|C\$|US\$|" + CurrencyCodes + @"|\p{Sc})?\s*(?<lead2>[-+])?\s*(?<num>\d{1,3}(?:[ .,']\d{3})+|\d+)(?<dec>[.,]\d{2,3})?\s*(?<cur2>\$\s*CA|\$\s*US|CA\$|" + CurrencyCodes + @"|\p{Sc})?\s*(?<trail>-|\)|CR|DR|DB|CRE|CREDIT|DEBIT)?\.?$",
+        @"^(?<lead>[-+(]|-\s*\(|\(\s*-)?\s*(?<cur1>CA\$|C\$|US\$|" + CurrencyCodes + @"|\p{Sc})?\s*(?<lead2>[-+])?\s*(?<num>\d{1,3}(?:[ .,']\d{3})+|\d+)?(?<dec>[.,]\d{2,3})?\s*(?<cur2>\$\s*CA|\$\s*US|CA\$|" + CurrencyCodes + @"|\p{Sc})?\s*(?<trail>-|\)|CR|DR|DB|CRE|CREDIT|DEBIT)?\.?$",
         RegexOptions.CultureInvariant)]
     private static partial Regex AmountRegex();
 
@@ -72,6 +72,12 @@ public static partial class AmountParser
 
         var num = m.Groups["num"].Value;
         var dec = m.Groups["dec"].Value;
+        // Less than one, printed without its 0 (".50", as Scotiabank does): only with its cents.
+        if (num.Length == 0)
+        {
+            if (dec.Length != 3) return false;
+            num = "0";
+        }
         // Two decimals, or the decimals of the currency written beside the amount: none for the yen or the won
         // ("¥1,200"), three for the dinars ("KWD 12.500"). Without a currency, two decimals only ("1,200" and "1,234"
         // are not amounts).

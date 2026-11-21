@@ -23,6 +23,9 @@ public class AmountParserTests
     [InlineData("12,34 €", 12.34, SignMarker.None)]
     [InlineData("1 234 567,89", 1234567.89, SignMarker.None)]
     [InlineData("0.50", 0.50, SignMarker.None)]
+    [InlineData(".50", 0.50, SignMarker.None)]
+    [InlineData("-.42", 0.42, SignMarker.Minus)]
+    [InlineData(",50", 0.50, SignMarker.None)]
     public void TryParse_FrenchOrEnglishAmount_ReturnsMagnitudeAndSignMarker(string text, double magnitude, SignMarker marker)
     {
         var parsed = AmountParser.TryParse(text, out var amount);
@@ -76,6 +79,8 @@ public class AmountParserTests
     [InlineData("$1,200")]
     [InlineData("12.500 EUR")]
     [InlineData("¥1,200")]
+    [InlineData(".5")]
+    [InlineData(".")]
     public void TryParse_TextThatIsNotMoney_ReturnsFalse(string text)
     {
         var parsed = AmountParser.TryParse(text, out _);

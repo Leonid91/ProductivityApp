@@ -155,6 +155,23 @@ public static partial class CsvStatementReader
         return true;
     }
 
+    /// <summary>
+    /// How many lines of <paramref name="balance"/> follow the line before by the amount of <paramref name="amount"/>
+    /// (the oldest operation first, or the newest first).
+    /// </summary>
+    private static int Running(List<List<string>> data, int balance, int amount, Func<int, char> sep)
+    {
+        decimal? Value(List<string> r, int i) => i < r.Count && TryNumber(r[i], sep(i), out var v) ? v : null;
+        var n = 0;
+        for (var i = 1; i < data.Count; i++)
+        {
+            if (Value(data[i], balance) is not { } now || Value(data[i - 1], balance) is not { } before) continue;
+            if (Value(data[i], amount) is { } a && now - before == a) n++;
+            else if (Value(data[i - 1], amount) is { } b && before - now == b) n++;
+        }
+        return n;
+    }
+
     private static char DecimalSeparator(IEnumerable<string> cells)
     {
         int comma = 0, dot = 0;
@@ -275,6 +292,8 @@ public static partial class CsvStatementReader
 
         var cols = new Dictionary<Col, int>();
         var descExtra = new List<int>();
+        // A second column named as a balance (BoursoBank's newer export names the amount and the balance "Solde").
+        int? twinBalance = null;
         if (headerIndex >= 0)
         {
             var h = table[headerIndex];
@@ -282,13 +301,31 @@ public static partial class CsvStatementReader
             {
                 var role = Classify(h[i]);
                 if (role == Col.None) continue;
+                if (role == Col.Balance && cols.ContainsKey(Col.Balance) && twinBalance is null) { twinBalance = i; continue; }
                 if (role == Col.Date && cols.ContainsKey(Col.Date)) role = Col.ValueDate;
                 if (role == Col.Description && cols.ContainsKey(Col.Description)) role = Col.Description2;
                 if (role == Col.Description2) { descExtra.Add(i); continue; }
                 cols.TryAdd(role, i);
             }
         }
+        // Each column of money writes its decimals its own way (BoursoBank: the amount "-1 100,50", the balance
+        // "13853.59"): read from its own numbers, the whole file's way when they do not tell.
+        char SepAt(int index)
+        {
+            if (decimalSeparator is { } known) return known;
+            var cells = data.Select(r => index < r.Count ? r[index] : "").ToList();
+            var commas = cells.Count(c => Regex.IsMatch(c, @"\d,\d{1,2}(\D*)$"));
+            var dots = cells.Count(c => Regex.IsMatch(c, @"\d\.\d{1,2}(\D*)$"));
+            return commas > dots ? ',' : dots > commas ? '.' : decimalSep;
+        }
+        if (twinBalance is { } twin && !cols.ContainsKey(Col.Amount) && !cols.ContainsKey(Col.Debit) && !cols.ContainsKey(Col.Credit))
+        {
+            // The balance is the one whose lines follow each other by the other one's amounts (in either order of lines).
+            var first = cols[Col.Balance];
+            (cols[Col.Amount], cols[Col.Balance]) = Running(data, first, twin, SepAt) >= Running(data, twin, first, SepAt) ? (twin, first) : (first, twin);
+        }
         InferMissingColumns(cols, data, decimalSep, descExtra);
+        char Sep(Col c) => cols.TryGetValue(c, out var i) ? SepAt(i) : decimalSep;
         // Without a header, every text column says something ("Point of sale purchase", then the shop): in their order.
         var labelColumns = (cols.TryGetValue(Col.Description, out var mainText) ? new[] { mainText } : []).Concat(descExtra);
         if (headerIndex < 0) labelColumns = labelColumns.OrderBy(i => i);
@@ -341,20 +378,20 @@ public static partial class CsvStatementReader
             decimal amount;
             if (cols.ContainsKey(Col.Debit) || cols.ContainsKey(Col.Credit))
             {
-                TryNumber(Cell(r, Col.Debit), decimalSep, out var debit);
-                TryNumber(Cell(r, Col.Credit), decimalSep, out var credit);
+                TryNumber(Cell(r, Col.Debit), Sep(Col.Debit), out var debit);
+                TryNumber(Cell(r, Col.Credit), Sep(Col.Credit), out var credit);
                 amount = Math.Abs(credit) - Math.Abs(debit);
                 if (!cols.ContainsKey(Col.Debit) && credit < 0) amount = credit;
                 if (!cols.ContainsKey(Col.Credit) && debit < 0) amount = -debit;
             }
-            else if (!TryNumber(Cell(r, Col.Amount), decimalSep, out amount)) continue;
+            else if (!TryNumber(Cell(r, Col.Amount), Sep(Col.Amount), out amount)) continue;
             var type = TextNorm.Fold(Cell(r, Col.Type));
             if (type is "DEBIT" or "DR" or "D" or "WITHDRAWAL" or "RETRAIT") amount = -Math.Abs(amount);
             else if (type is "CREDIT" or "CR" or "C" or "DEPOSIT" or "DEPOT") amount = Math.Abs(amount);
 
-            decimal? balance = TryNumber(Cell(r, Col.Balance), decimalSep, out var b) ? b : null;
+            decimal? balance = TryNumber(Cell(r, Col.Balance), Sep(Col.Balance), out var b) ? b : null;
             var label = Label(labelIndexes.Select(x => x < r.Count ? r[x] : ""));
-            var fee = TryNumber(Cell(r, Col.Fee), decimalSep, out var f) ? Math.Abs(f) : 0;
+            var fee = TryNumber(Cell(r, Col.Fee), Sep(Col.Fee), out var f) ? Math.Abs(f) : 0;
             if (amount == 0 && fee == 0) { skippedZero++; if (balance is null) continue; }
             // The bank's sub-category says more ("Revenus" / "Salaire") when the app knows it.
             var bankCategory = Cell(r, Col.SubCategory) is { Length: > 0 } sub && BankCategories.Map(sub, amount) is not null ? sub : Cell(r, Col.Category);

@@ -28,6 +28,27 @@ public sealed class ScotiabankImportTests : IDisposable
     }
 
     [Fact]
+    public async Task ParseAsync_EStatement2026_ReadsEveryOperationBalancedToTheCent()
+    {
+        var statement = ScotiaGenerator.EStatement();
+
+        var result = await ReadAsync("August 2026 e-statement.pdf", ScotiaGenerator.EStatementPdf(statement));
+
+        Assert.Equal((VerificationStatus.Verified, AccountKind.Bank, statement.Lines.Count), (result.Status, result.Kind, result.Rows.Count));
+        Assert.Equal((statement.Opening, statement.Closing), (result.OpeningBalance!.Value, result.ClosingBalance!.Value));
+        Assert.Equal(statement.Lines.Select(l => (l.Date, l.Amount)), result.Rows.Select(r => (r.Date, r.Amount)));
+    }
+
+    [Fact]
+    public async Task ParseAsync_EStatement2026_ReadsAmountsUnderOneDollarWrittenWithoutTheirZero()
+    {
+        var result = await ReadAsync("August 2026 e-statement.pdf", ScotiaGenerator.EStatementPdf(ScotiaGenerator.EStatement()));
+
+        Assert.Contains(result.Rows, r => r.Amount == -0.50m && r.Label.StartsWith("Service charge", StringComparison.Ordinal));
+        Assert.Contains(result.Rows, r => r.Amount == 0.42m && r.Label.StartsWith("Interest", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ParseAsync_ChequingPdfWithTwoLinesOfDescription_JoinsTheKindOfOperationAndTheShop()
     {
         var result = await ReadAsync("chequing.pdf", ScotiaGenerator.ChequingPdf(Chequing));

@@ -1336,3 +1336,49 @@ real app with `tools/e2e/perf.mjs`.
   request answered, the interface drawn, no warning or error, "The app ended." (exit code 0, a 1.5 KB log).
 - End-to-end: 238/238 in WebKit and 238/238 in WebView2. Unit 5208/5208, integration 826 (2 skipped), page 7/7.
   0 compiler warnings; the 65 lint warnings of the interface are those there were.
+
+## November 21st, 2026 - Scotiabank e-statements read; no rate before the central bank publishes it; BoursoBank and Fortuneo; Settings > Information - Commit 53
+
+### Fixed
+- Scotiabank's chequing e-statements (2026) were read as having no operation, on every system: their fonts give the
+  words of the text no height, so every word was a line of its own. A word without a height now takes the height of
+  the size its letters are printed at, around their baseline (`PdfReader`), for any bank's PDF made that way.
+- Amounts under one printed without their 0 (".50", "-.42", as Scotiabank does) are read; ".5" is still not money.
+- Exchange rates: a day after the last day of the central bank's file kept the last rate published, so the calendar
+  showed rates for days to come and an operation dated after the download was converted at a rate not published yet.
+  A file of rates now holds the days up to the day it was downloaded (or its newest rate): up to then a weekend or a
+  holiday takes the rate of the working day before, as the central banks say; after it, a day has no rate.
+- CSV exports: each column of money reads its decimals its own way (an amount "-1 100,50" beside a balance "1234.56"
+  was read as -110050); two columns named as a balance (BoursoBank's newer export names the amount and the balance
+  after it "Solde") are told apart by their numbers: the balance is the one that follows the other's amounts.
+
+### Added
+- BoursoBank (formerly Boursorama Banque) and Fortuneo, French online banks, in their 2021-2026 forms, with invented
+  statements in their layouts (`BoursobankGenerator`, `FortuneoGenerator`, `SampleStatements bourso|fortuneo`):
+  BoursoBank's PDF "Extrait de votre compte" (SOLDE AU, Nouveau solde en EUR, "1.234,56") and both CSV exports (the
+  older one with English column names, the newer one with French ones); Fortuneo's PDF "Relevé de Compte N° ..." (days
+  without their year, ANCIEN SOLDE / TOTAL DES OPÉRATIONS DU RELEVÉ / NOUVEAU SOLDE, "2 000,00", the date it was
+  issued up the margin) and its CSV export (ISO-8859-1, Débit and Crédit). Every operation is read; the PDFs are
+  balanced to the cent.
+- The Scotiabank e-statement of 2026 (`ScotiaGenerator.EStatement`): "Amounts" on a line of its own above the column
+  names, the dollar sign apart from its number, a period from the last day of the month before.
+- Settings > Information, after Definitions: the banks whose statements are read by themselves, a table per country
+  with its flag (Canada, France, United Kingdom): Name, Considered (made and tested for, in invented statements of
+  their layouts), Confirmed (read from a real statement: Banque Nationale and Scotiabank). The list is in the engine
+  (`SupportedBanks`, request `banks.supported`); the flags are drawn (Windows shows no flag emoji).
+
+### Checked
+- The real Scotiabank e-statement given (redacted): every line still in its text is read (0 before); its redacted lines
+  were turned into shapes under black boxes, so it cannot balance. The invented one of the same layout balances.
+- End-to-end: 239/239 in WebView2, 238/239 in WebKit (below). Unit 5226/5226, integration 850 (2 skipped: text
+  recognition, not on this machine for the macOS and Linux build), page 7/7. 0 compiler warnings, 65 lint warnings as
+  before. The released exe started for the first time in a folder of its own: no warning or error.
+
+### Known
+- A redacted statement whose hidden lines were turned into shapes cannot balance: its lines still in the text are read
+  and the difference is shown.
+- WebKit only, rarely: after the width of the window changes while Analytics is open, the page can report "ResizeObserver
+  loop completed with undelivered notifications" (written to the log as an error; nothing on screen changes, the sizes
+  come the next frame). Measuring the page where the period read is kept in place makes WebKit draw again the parts of
+  periods near the screen at the new width, which changes their size in that same frame. Two ways of avoiding it
+  (answering size changes a frame later, re-reading sizes the next frame) were tried and did not remove it.

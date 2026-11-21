@@ -315,7 +315,8 @@ public sealed class HolidaysTests : IDisposable
         _store.Enter(account, "2026-12-10", 150m, "Refund", "otherincome");
         _store.Enter(account, "2026-12-11", -80m, "Market", "groceries");
         var rates = new ExchangeRates(_store.Db, () => "ecb");
-        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2026-12-01,1.5000,"));
+        // Downloaded after the salaries (rates are known up to the day of their download).
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2026-12-01,1.5000,"), new DateOnly(2026, 12, 31));
         return (holidays, rates);
     }
 

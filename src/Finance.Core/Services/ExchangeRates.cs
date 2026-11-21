@@ -45,7 +45,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     private readonly DownloadStore _store = new(db.DownloadsFolder);
 
     /// <summary>Each source's copy in use, read from its file: each currency's rates as text (units of the currency per unit of the base), read into numbers when used.</summary>
-    private readonly Dictionary<string, (Dictionary<string, string> Raw, bool FromPrevious)> _copies = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (Dictionary<string, string> Raw, bool FromPrevious, DateOnly Until)> _copies = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Source, string Currency), (DateOnly[] Days, decimal[] PerBase)> _series = [];
     private List<RateSource>? _sources;
     private readonly Lock _gate = new();
@@ -63,14 +63,19 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     /// <summary>The downloads kept for a source, the latest first (its files are in <see cref="DownloadStore.ExchangeRates"/>).</summary>
     public List<DownloadStore.Copy> Copies(RateSource source) => _store.Copies(DownloadStore.ExchangeRates, source.Name);
 
-    private (Dictionary<string, string> Raw, bool FromPrevious) Loaded(RateSource source)
+    /// <summary>
+    /// The rates of a source as its copy in use gives them, and the last day they hold: the day the copy was downloaded
+    /// (or its newest rate, when later). Up to that day, a day without a rate of its own (a weekend, a holiday) takes the
+    /// last rate published before it; after it, no rate is known yet (the central bank has not published it).
+    /// </summary>
+    private (Dictionary<string, string> Raw, bool FromPrevious, DateOnly Until) Loaded(RateSource source)
     {
         lock (_gate)
         {
             if (_copies.TryGetValue(source.Id, out var known)) return known;
             // The latest copy, or the one before it when the latest is missing or cannot be read.
             var bank = CentralBank.Find(source.Format);
-            var loaded = (Raw: new Dictionary<string, string>(), FromPrevious: false);
+            var loaded = (Raw: new Dictionary<string, string>(), FromPrevious: false, Until: DateOnly.MinValue);
             foreach (var (copy, i) in Copies(source).Take(DownloadStore.Kept).Select((c, i) => (c, i)))
             {
                 var file = copy.Files.FirstOrDefault(f => f.StartsWith("rates.", StringComparison.Ordinal));
@@ -79,7 +84,8 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
                 {
                     var (series, _) = Parse(File.ReadAllBytes(Path.Combine(copy.Folder, file)), bank);
                     if (series.Count == 0 || !series.Values.All(Readable)) continue;
-                    loaded = (series, i > 0);
+                    var newest = Newest(series) is { } n ? DateOnly.ParseExact(n, "yyyy-MM-dd", CultureInfo.InvariantCulture) : copy.Day;
+                    loaded = (series, i > 0, newest > copy.Day ? newest : copy.Day);
                     break;
                 }
                 catch (Exception e) when (e is RatesFileException or IOException or InvalidDataException or JsonException or FormatException or UnauthorizedAccessException)
@@ -102,7 +108,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
 
     private (DateOnly[] Days, decimal[] PerBase)? Series(RateSource source, string currency)
     {
-        var (raw, _) = Loaded(source);
+        var (raw, _, _) = Loaded(source);
         lock (_gate)
         {
             if (_series.TryGetValue((source.Id, currency), out var known)) return known;
@@ -165,7 +171,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
 
     public RatesStatus Status(RateSource source)
     {
-        var (raw, previous) = Loaded(source);
+        var (raw, previous, _) = Loaded(source);
         var newest = Newest(raw);
         var oldest = raw.Values.Where(v => v.Length > 10).Select(v => v.TrimEnd(';')).Select(v => v[(v.LastIndexOf(';') + 1)..][..10]).DefaultIfEmpty().Min();
         return new RatesStatus(source.Id, source.Name, source.Base, source.Url, db.GetSetting($"rates.{source.Id}.updatedAt"),
@@ -181,7 +187,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
         var current = Source.Id;
         return [.. Sources().Select(s =>
         {
-            var (raw, _) = Loaded(s);
+            var (raw, _, _) = Loaded(s);
             return new RateSourceView(s.Id, s.Name, s.Format, s.Url, s.Base, raw.Count > 0 ? Newest(raw) : null,
                 raw.Count > 0 ? raw.Count + 1 : 0, db.GetSetting($"rates.{s.Id}.updatedAt"),
                 db.GetSetting($"rates.{s.Id}.error") is { Length: > 0 } e ? e : null, s.Id == current);
@@ -246,6 +252,8 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
 
     private (decimal PerBase, DateOnly Day)? PerBase(RateSource source, string currency, DateOnly day)
     {
+        // A day after the rates in use: not published yet (the rate of a day before it would be a guess).
+        if (day > Loaded(source).Until) return null;
         if (currency == source.Base) return (1m, day);
         if (Series(source, currency) is not { } s) return null;
         var i = Array.BinarySearch(s.Days, day);

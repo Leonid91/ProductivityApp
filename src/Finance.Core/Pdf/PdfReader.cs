@@ -35,7 +35,7 @@ public static partial class PdfReader
                 var h = page.Height;
                 var words = page.GetWords()
                     .Where(w => !string.IsNullOrWhiteSpace(w.Text))
-                    .Select(w => new Word(w.Text.Trim(), w.BoundingBox.Left, w.BoundingBox.Right, h - w.BoundingBox.Top, h - w.BoundingBox.Bottom))
+                    .Select(w => FromPdf(w, h))
                     .ToList();
                 words = RemoveMarginCodes(words, page.Width);
                 if (words.Count < MinWordsForTextLayer && page.GetImages().Any())
@@ -218,6 +218,27 @@ public static partial class PdfReader
     /// the same position, stacked a few points apart. They are not text of the statement, and left in they would join
     /// the lines beside them.
     /// </summary>
+    /// <summary>
+    /// A word of the text layer, its top and bottom counted from the top of the page. Some PDFs (fonts without glyph boxes,
+    /// as in Scotiabank's e-statements) give every word a box of no height: its height then comes from the size its
+    /// letters are printed at, around their baseline, so the words of a line still share it.
+    /// </summary>
+    private static Word FromPdf(UglyToad.PdfPig.Content.Word w, double pageHeight)
+    {
+        var box = w.BoundingBox;
+        if (box.Height >= 0.5 || w.Letters.Count == 0) return new Word(w.Text.Trim(), box.Left, box.Right, pageHeight - box.Top, pageHeight - box.Bottom);
+        var size = w.Letters.Max(l => l.PointSize);
+        var baseline = w.Letters.Average(l => l.StartBaseLine.Y);
+        return WithHeight(w.Text.Trim(), box.Left, box.Right, pageHeight - baseline, size);
+    }
+
+    /// <summary>A word printed at <paramref name="size"/> points on a baseline (from the top of the page): the box of its letters.</summary>
+    internal static Word WithHeight(string text, double left, double right, double baseline, double size)
+    {
+        var s = size > 0 ? size : 10;
+        return new Word(text, left, right, baseline - 0.75 * s, baseline + 0.2 * s);
+    }
+
     internal static List<Word> RemoveMarginCodes(List<Word> words, double pageWidth)
     {
         var marks = words.Where(w => w.Text.Length <= 2 && (w.Right < pageWidth * 0.2 || w.Left > pageWidth * 0.8)).ToList();

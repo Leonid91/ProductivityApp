@@ -29,6 +29,10 @@ export const dateFormats: { value: DateFormat; label: string }[] = [
 
 /** dateFormat: null when adding a bank, for the format of its country and banking system. */
 export interface Bank { id: number; name: string; country: string; system: BankingSystem; currency: string; dateFormat: DateFormat | null }
+/** A bank read by itself: made and tested for its statements (considered), read from a real statement (confirmed). */
+export interface SupportedBank { name: string; considered: boolean; confirmed: boolean }
+/** The banks of a country, by its ISO 3166 code. */
+export interface SupportedCountry { code: string; name: string; banks: SupportedBank[] }
 
 export const currencies = ['CAD', 'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'JPY', 'MXN']
 
@@ -463,6 +467,8 @@ export const api = {
   },
   banks: {
     list: () => invoke<Bank[]>('banks.list'),
+    /** The banks read by themselves, by country. */
+    supported: () => invoke<SupportedCountry[]>('banks.supported'),
     save: (bank: Bank) => invoke<Bank[]>('banks.save', { bank }),
     remove: (id: number) => invoke<Bank[]>('banks.delete', { id }),
   },

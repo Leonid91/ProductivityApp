@@ -649,6 +649,15 @@ try {
   // ---- categories: made, nested, coloured, and picked for an operation
   // Categories are only in Settings, under Definitions.
   check('categories not in the side bar', !(await p.eval(`[...document.querySelectorAll('nav button')].some(b => b.innerText.includes('Categories'))`)))
+  // Settings > Information, after Definitions: the banks read by themselves, a table per country with its flag.
+  await p.clickText('Settings', { selector: 'nav button' })
+  await p.clickText('Information', { selector: 'button' })
+  await p.waitFor(`document.querySelectorAll('[data-supported-bank]').length > 0`, 10000, 'supported banks')
+  const supported = await p.eval(`({ tabs: [...document.querySelectorAll('main button[value]')].map(b => b.innerText).join(), tables: [...document.querySelectorAll('[data-country]')].map(t => ({ code: t.dataset.country, flag: !!t.closest('[data-supported-banks] > *').querySelector('svg'), head: [...t.querySelectorAll('thead th')].map(h => h.innerText).join('|'), banks: [...t.querySelectorAll('[data-supported-bank]')].map(r => r.dataset.supportedBank + (r.querySelector('[data-confirmed="true"]') ? '*' : '')) })) })`)
+  check('Settings > Information after Definitions: the banks read by themselves, a table with its flag per country', supported.tabs === 'General,Bank Configuration,Definitions,Information'
+    && supported.tables.map((t) => t.code).join() === 'CA,FR,GB' && supported.tables.every((t) => t.flag && t.head === 'Name|Considered|Confirmed')
+    && supported.tables[0].banks.join() === 'National Bank of Canada*,Scotiabank*' && supported.tables[1].banks.join() === 'BoursoBank,Caisse d\'Epargne,CIC,Fortuneo', JSON.stringify(supported))
+  await shot(p, '10z-information.png')
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('Definitions', { selector: 'button' })
   await p.clickText('Categories', { selector: 'main button' })

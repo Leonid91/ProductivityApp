@@ -445,7 +445,34 @@ public sealed class ExchangeRatesTests : IDisposable
 
         rates.Reload();
 
-        Assert.Equal((1.61m, true), (rates.Convert(1m, "EUR", "CAD", October10)!.Amount, rates.Status().FromPrevious));
+        Assert.Equal((1.61m, true), (rates.Convert(1m, "EUR", "CAD", October10.AddDays(-1))!.Amount, rates.Status().FromPrevious));
+        // Its rates end on the day it was downloaded: the next day's rate is only in the copy that cannot be read.
+        Assert.Null(rates.Convert(1m, "EUR", "CAD", October10));
+    }
+
+    [Fact]
+    public void Convert_DayAfterTheRatesInUseWereDownloaded_HasNoRate()
+    {
+        var rates = new ExchangeRates(_store.Db);
+        rates.Save(RateSource.Ecb, Ecb("2025-10-08", "1.5000"), Day1);
+
+        var tomorrow = rates.Convert(100m, "EUR", "CAD", Day1.AddDays(1));
+        var daily = rates.Daily("EUR", "CAD", Day1, Day1.AddDays(5));
+
+        Assert.Null(tomorrow);
+        Assert.Equal(["2025-10-08"], daily.Select(d => d.Day));
+    }
+
+    [Fact]
+    public void Convert_WeekendBeforeTheDownload_TakesTheRateOfTheFridayBefore()
+    {
+        var rates = new ExchangeRates(_store.Db);
+        // Friday October 10, 2025, downloaded on Monday 13: Saturday and Sunday have no rate of their own.
+        rates.Save(RateSource.Ecb, Ecb("2025-10-10", "1.6200"), new DateOnly(2025, 10, 13));
+
+        var sunday = rates.Convert(100m, "EUR", "CAD", new DateOnly(2025, 10, 12));
+
+        Assert.Equal(new Converted(162.00m, 1.62m, October10), sunday);
     }
 
     [Fact]

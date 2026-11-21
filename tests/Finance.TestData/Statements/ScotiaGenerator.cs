@@ -145,6 +145,112 @@ public static class ScotiaGenerator
         .GeneratePdf();
     }
 
+    /// <summary>
+    /// The chequing e-statement as Scotiabank prints it in 2026: the period runs from the last day of the month before,
+    /// "Amounts" on a line of its own above "Date | Transactions | withdrawn ($) | deposited ($) | Balance ($)", the
+    /// dollar sign apart from its number in the summary and on the closing line, and amounts under one dollar written
+    /// without their 0 (".42").
+    /// </summary>
+    public static Statement EStatement(int year = 2026, int month = 8, int seed = 11)
+    {
+        var rng = new Random(seed);
+        var start = new DateOnly(year, month, 1).AddDays(-1);
+        var end = new DateOnly(year, month, 1).AddMonths(1).AddDays(-2);
+        var lines = new List<Line>
+        {
+            new(start, "Point of sale purchase", "Sobeys #4521 Brampton ON", -64.18m),
+            new(start.AddDays(9), "Deposit", "76543210 MB-Email Money Trf", 250.00m),
+            new(start.AddDays(14), "Payroll dep.", "Example Corp", 2140.55m),
+            new(start.AddDays(20), "Service charge", "MB-Email Money Trf", -0.50m),
+            new(end, "Interest", "", 0.42m),
+        };
+        for (var i = 0; i < 14; i++)
+        {
+            var x = Spending[rng.Next(Spending.Length)];
+            var amount = x.Min == x.Max ? x.Min : Math.Round(x.Min + (decimal)rng.NextDouble() * (x.Max - x.Min), 2);
+            lines.Add(new Line(start.AddDays(rng.Next(1, end.DayNumber - start.DayNumber)), x.Type, x.Detail, -amount));
+        }
+        return new Statement(start, end, 1204.37m, lines.OrderBy(l => l.Date).ToList());
+    }
+
+    /// <summary>An amount as the e-statement prints it: under one dollar without its 0 (".42").</summary>
+    private static string EMoney(decimal v)
+    {
+        var text = Money(v);
+        return text.StartsWith("0.", StringComparison.Ordinal) ? text[1..] : text.StartsWith("-0.", StringComparison.Ordinal) ? "-" + text[2..] : text;
+    }
+
+    public static byte[] EStatementPdf(Statement s)
+    {
+        QuestPDF.Settings.License = LicenseType.Community;
+        var en = CultureInfo.InvariantCulture;
+        return Document.Create(c => c.Page(page =>
+        {
+            page.Size(PageSizes.Letter);
+            page.MarginHorizontal(73);
+            page.MarginVertical(40);
+            page.DefaultTextStyle(x => x.FontFamily("Lato").FontSize(9));
+            page.Header().Text("Scotiabank").FontSize(18).Bold();
+            page.Content().PaddingTop(150).Column(col =>
+            {
+                col.Item().Text("Your Preferred Package account summary").FontSize(14).Bold();
+                col.Item().PaddingTop(12).Width(370).Column(sum =>
+                {
+                    void Line(string label, decimal v, bool bold, float indent) => sum.Item().Row(r =>
+                    {
+                        var t = r.RelativeItem().PaddingLeft(indent).Text(label);
+                        var d = r.ConstantItem(20).Text("$");
+                        var a = r.ConstantItem(50).AlignRight().Text(Money(v));
+                        if (bold) { t.Bold(); d.Bold(); a.Bold(); }
+                    });
+                    Line($"Opening Balance on {s.Start.ToString("MMMM d, yyyy", en)}", s.Opening, true, 0);
+                    Line("Minus total withdrawals", s.Withdrawals, false, 12);
+                    Line("Plus total deposits", s.Deposits, false, 12);
+                    Line($"Closing Balance on {s.End.ToString("MMMM d, yyyy", en)}", s.Closing, true, 0);
+                });
+                col.Item().PaddingTop(30).Text("Here's what happened in your account this statement period").FontSize(10).Bold();
+                col.Item().PaddingTop(8).Table(t =>
+                {
+                    t.ColumnsDefinition(cd => { cd.ConstantColumn(40); cd.RelativeColumn(); cd.ConstantColumn(66); cd.ConstantColumn(66); cd.ConstantColumn(64); });
+                    static IContainer Head(IContainer x) => x.PaddingVertical(1);
+                    static IContainer Cell(IContainer x) => x.PaddingVertical(4);
+                    t.Header(hd =>
+                    {
+                        hd.Cell().Element(Head); hd.Cell().Element(Head);
+                        hd.Cell().Element(Head).AlignRight().Text("Amounts");
+                        hd.Cell().Element(Head).AlignRight().Text("Amounts");
+                        hd.Cell().Element(Head);
+                        hd.Cell().Element(Head).Text("Date");
+                        hd.Cell().Element(Head).Text("Transactions");
+                        hd.Cell().Element(Head).AlignRight().Text("withdrawn ($)");
+                        hd.Cell().Element(Head).AlignRight().Text("deposited ($)");
+                        hd.Cell().Element(Head).AlignRight().Text("Balance ($)");
+                    });
+                    t.Cell().Element(Cell).Text(Day(s.Start));
+                    t.Cell().Element(Cell).Text("Opening Balance");
+                    t.Cell().Element(Cell); t.Cell().Element(Cell);
+                    t.Cell().Element(Cell).AlignRight().Text(EMoney(s.Opening));
+                    var bal = s.Opening;
+                    foreach (var l in s.Lines)
+                    {
+                        bal += l.Amount;
+                        t.Cell().Element(Cell).Text(Day(l.Date));
+                        t.Cell().Element(Cell).Column(d => { d.Item().Text(l.Type); if (l.Detail.Length > 0) d.Item().Text(l.Detail); });
+                        t.Cell().Element(Cell).AlignRight().Text(l.Amount < 0 ? EMoney(-l.Amount) : "");
+                        t.Cell().Element(Cell).AlignRight().Text(l.Amount > 0 ? EMoney(l.Amount) : "");
+                        t.Cell().Element(Cell).AlignRight().Text(EMoney(bal));
+                    }
+                    t.Cell().Element(Cell).Text(Day(s.End));
+                    t.Cell().Element(Cell).Text("Closing Balance");
+                    t.Cell().Element(Cell); t.Cell().Element(Cell);
+                    t.Cell().Element(Cell).AlignRight().Row(r => { r.AutoItem().PaddingRight(6).Text("$"); r.AutoItem().Text(EMoney(s.Closing)); });
+                });
+            });
+            page.Footer().AlignRight().Text(t => { t.Span("Page "); t.CurrentPageNumber(); t.Span(" of "); t.TotalPages(); });
+        })).WithMetadata(new DocumentMetadata { CreationDate = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero), ModifiedDate = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero) })
+        .GeneratePdf();
+    }
+
     /// <summary>A card statement: purchases are positive amounts, payments and returns are credits ("57.96-").</summary>
     public sealed record Card(DateOnly Start, DateOnly End, decimal Previous, List<(DateOnly Trans, DateOnly Post, string Detail, string? Second, decimal Charge)> Lines)
     {

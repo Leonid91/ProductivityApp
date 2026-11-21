@@ -17,6 +17,7 @@ import { useRowOrder } from '../components/order'
 import { BrandsPanel } from './BrandsPage'
 import { CategoriesPanel } from './CategoriesPage'
 import { TagsPanel } from './TagsPage'
+import { InformationPanel } from './InformationPanel'
 import { HolidaysTable, useHolidayCalendars } from './HolidaysPanel'
 import { SOURCE_LINE, SourceError, inlineInput, sourceLine, sourceRow, visuallyHidden } from '../components/sourceTable'
 import { ROW_ACTIONS_WIDTH, RowActions } from '../components/RowActions'
@@ -720,7 +721,7 @@ function BanksTable({ confirm }: { confirm: (c: Confirm) => void }) {
 
 export function SettingsPage() {
   const { refreshAccounts, refreshBanks, fail, view, takeView } = useApp()
-  const [tab, setTab] = useState<'general' | 'banks' | 'definitions'>(view === 'rates' ? 'definitions' : 'general')
+  const [tab, setTab] = useState<'general' | 'banks' | 'definitions' | 'information'>(view === 'rates' ? 'definitions' : 'general')
   const [definition, setDefinition] = useState<'bank' | 'rates' | 'brands' | 'categories' | 'tags' | 'holidays'>(view === 'rates' ? 'rates' : 'bank')
   const [addingSource, setAddingSource] = useState(false)
   const rates = useRateSources(tab === 'definitions' && definition === 'rates')
@@ -739,10 +740,11 @@ export function SettingsPage() {
     <Box sx={{ maxWidth: 1080, mx: 'auto', pt: 3, pb: 6, display: 'grid', gap: 3 }}>
       <PageHeader title="Settings" />
       <Box sx={{ mt: -1.5 }}>
-        <Tabs value={tab} onChange={setTab} tabs={[{ value: 'general', label: 'General' }, { value: 'banks', label: 'Bank Configuration' }, { value: 'definitions', label: 'Definitions' }]} />
+        <Tabs value={tab} onChange={setTab} tabs={[{ value: 'general', label: 'General' }, { value: 'banks', label: 'Bank Configuration' }, { value: 'definitions', label: 'Definitions' }, { value: 'information', label: 'Information' }]} />
       </Box>
       {tab === 'general' && <General confirm={setConfirm} onEditRates={editRates} />}
       {tab === 'banks' && <BankConfiguration confirm={setConfirm} />}
+      {tab === 'information' && <InformationPanel />}
       {tab === 'definitions' && (
         <>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>

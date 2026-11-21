@@ -72,6 +72,30 @@ if (args.Length == 2 && args[0] == "scotia")
     var card = ScotiaGenerator.VisaCard();
     Write(Path.Combine(dir, "Scotia visa 2026-05.pdf"), ScotiaGenerator.CardPdf(card));
     Console.WriteLine($"card previous={card.Previous} new={card.New} credits={card.Credits} debits={card.Debits} lines={card.Lines.Count}");
+    var e = ScotiaGenerator.EStatement();
+    Write(Path.Combine(dir, "Scotia August 2026 e-statement.pdf"), ScotiaGenerator.EStatementPdf(e));
+    Console.WriteLine($"e-statement open={e.Opening} close={e.Closing} lines={e.Lines.Count}");
+    return 0;
+}
+if (args.Length == 2 && args[0] == "bourso")
+{
+    // bourso <folder>: fictitious BoursoBank statement (PDF) and both CSV exports
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    var s = BoursobankGenerator.Sample();
+    Write(Path.Combine(dir, "BoursoBank 2025-09.pdf"), BoursobankGenerator.Pdf(s));
+    Write(Path.Combine(dir, "BoursoBank export 2025-09 old.csv"), BoursobankGenerator.OldCsv(s));
+    Write(Path.Combine(dir, "BoursoBank export 2025-09 new.csv"), BoursobankGenerator.NewCsv(s));
+    Console.WriteLine($"open={s.Opening} close={s.Closing} lines={s.Lines.Count}");
+    return 0;
+}
+if (args.Length == 2 && args[0] == "fortuneo")
+{
+    // fortuneo <folder>: fictitious Fortuneo statement (PDF) and CSV export
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    var s = FortuneoGenerator.Sample();
+    Write(Path.Combine(dir, "Fortuneo 2026-08.pdf"), FortuneoGenerator.Pdf(s));
+    Write(Path.Combine(dir, "Fortuneo export 2026-08.csv"), FortuneoGenerator.Csv(s));
+    Console.WriteLine($"open={s.Opening} close={s.Closing} lines={s.Lines.Count}");
     return 0;
 }
 if (args.Length == 2 && args[0] == "revolut")
@@ -217,7 +241,7 @@ if (args.Length == 2 && args[0] == "bench")
     await Bench.Run(args[1]);
     return 0;
 }
-Console.Error.WriteLine("usage: generate <folder> | big <folder> | bench <folder> | parse <file.pdf> | words <file.pdf>");
+Console.Error.WriteLine("usage: generate <folder> | big <folder> | bench <folder> | parse <file.pdf> | words <file.pdf> | scotia | bourso | fortuneo | caisse | cic | revolut | twobanks <folder> | inspect <file> [bank|card]");
 return 2;
 
 static void Write(string path, byte[] bytes) { File.WriteAllBytes(path, bytes); Console.WriteLine(path); }
