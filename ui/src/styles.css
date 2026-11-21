@@ -98,3 +98,9 @@ input[type='number']::-webkit-outer-spin-button {
 ::highlight(find-current) {
   background-color: rgba(249, 115, 22, 0.75);
 }
+/* Where highlights are missing (Safari before 17.4): the element of the current match. */
+[data-find-current] {
+  outline: 2px solid rgba(249, 115, 22, 0.9);
+  outline-offset: 1px;
+  border-radius: 2px;
+}

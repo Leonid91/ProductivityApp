@@ -61,6 +61,8 @@ let installed = false
 export function installActionLog() {
   if (installed) return
   installed = true
+  // Errors keep their whole call stack (the browser keeps only the last 10 calls by default).
+  ;(Error as ErrorConstructor & { stackTraceLimit: number }).stackTraceLimit = 200
   window.addEventListener('error', (e) => record('error', {
     message: e.message, filename: e.filename, lineno: e.lineno, colno: e.colno, error: e.error, page,
   }, 'app', 'error'))

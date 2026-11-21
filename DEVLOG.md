@@ -1275,3 +1275,64 @@ real app with `tools/e2e/perf.mjs`.
 ### Known
 - In WebKit, switching Analytics back to Statements can leave the page on another month (the month read was let go of
   while away and is not drawn again as soon as in WebView2). The WebKit suite passes its first 114 checks and stops there.
+
+## November 20th, 2026 - The month kept in WebKit; every error of the first-launch log with its call stack; start scripts and macOS checked - Commit 52
+
+### Fixed
+- WebKit (the macOS and Linux windows): everything drawn a piece at a time came about four times slower than in
+  WebView2. The pacer (`ui/src/pace.ts`) draws only early in a frame, counted from the frame's start, and WebKit tells
+  that a frame is shown much later than Chromium's engine (26 to 31 thousandths of a second in WebKit 27.2, 0.1 in
+  WebView2): almost every frame was taken as late. The time of a frame is now counted from the engine's own usual
+  delay (the lowest of the last 240 frames); WebView2 draws as before.
+- Statements, Analytics, Transfers and back: the page could land on another month (June or May instead of October).
+  When what was read is gone (another view drawn), its period is kept in place; kept as deep inside as before, a period
+  that is now shorter put the next periods on the screen. Such a period now keeps its top at the top of the screen.
+  Checked in WebKit and WebView2: October stays at the top through every switch.
+- Ctrl+F / Cmd+F on macOS 14.0 to 14.3 (Safari 17.0 to 17.3): the find bar used `checkVisibility` and highlights,
+  which that Safari does not have. It now falls back to the text's box and outlines the element of the current match.
+- start.sh on Linux checked a library file that does not exist (`libPhotino.Native.so`): missing libraries were never
+  found. Every library of the app is now checked (WebKitGTK, libnotify, fontconfig...). A release with dots in its
+  version (0.1.0) was unpacked into a folder named `ProductivityApp-0` and a new release would never have been unpacked.
+- Test windows (off-screen, test build only) could bring another window to the front: on taking focus the test window
+  gave it back to the window that was in front when the test started, even when the person had moved to another one
+  since. The window is now never made the active window (a hook on its thread refuses it as it is made); it also has no
+  taskbar button from the start, and is drawn as if in front.
+- A period scrolled far away and quickly brought back could still let go of a piece of it (the browser tells that it is
+  near the screen again only after the next frame): its chart was taken away and drawn again (its lines gone for about
+  two seconds in WebKit). Each piece is now let go of only while the period is really far from the screen.
+- Building from the source on macOS and Linux failed: the projects also named the Windows target, which the SDK of those
+  systems refuses. The Windows target is now named on Windows only.
+- Holidays and exchange rates: a new download of the same day replaces that day's folder (taken away, then the new one
+  put in) while the holidays or rates could be read from it: "Could not find file ...holidays-2024.json" in the log,
+  and the copy before was used meanwhile. Downloads are now kept, renamed and deleted only while nothing reads them.
+- End-to-end suite: after a reload it could read the old page (WebKit) and click on it; it now waits for the new one.
+  Its checks of call stacks also read Safari's form (`name@file:line`), and its check for phrases joined by a semicolon
+  leaves out the raw details of log entries (a browser's name holds "Windows NT 10.0; Win64"). The message of a scanned
+  statement that cannot be read is checked whenever it was shown (it stays a few seconds; 38 files take longer).
+
+### Changed
+- The first-launch log writes every warning and error with the full call stack of where it was written, after its
+  details (an exception's own call stack is in them); a failed request with its whole exception. Errors are never cut
+  short (each part of their details at most 16 KB). The interface's errors keep up to 200 calls of their stack, and an
+  error React cannot recover from is written with the components it happened in.
+- start.sh: macOS 14 or later is checked first; on Linux, Tesseract, OpenSSL and a display are noted in the log.
+  Earlier releases unpacked in `.run/` are removed when a new one is.
+- start.cmd removes the download mark of the exe (as start.sh does on macOS), so Windows does not stop it first.
+- `.gitattributes`: start.sh always with LF line endings, start.cmd as it is, the release files as binary.
+- `publish/ProductivityApp.exe`, the app as built for this computer, is now in the repository with the release files
+  (it was left out by .gitignore), built again with every change; the pre-commit hook refuses a commit without it.
+- README: "Build from the source" again (removed with the release files of Commit 47), for every system; macOS 14 or
+  later; start.sh names the missing libraries on Linux.
+
+### Known
+- During a long import, a file that cannot be read is told only in a message that goes after a few seconds.
+
+### Checked
+- macOS release: every native library is built for its processor (arm64, x86_64); Info.plist; Photino's Edit menu has
+  cut, copy, paste and select all (no undo and redo: Cmd+Z does nothing in text fields); files and folders open with
+  the system's `open`; the interface uses nothing newer than Safari 17.0 apart from the find bar above.
+- start.sh run through on stand-ins of macOS and Linux commands: unpacking, the log, missing libraries, macOS 13 refused.
+- The released Windows exe started for the first time in a folder of its own and closed as a person closes it: every
+  request answered, the interface drawn, no warning or error, "The app ended." (exit code 0, a 1.5 KB log).
+- End-to-end: 238/238 in WebKit and 238/238 in WebView2. Unit 5208/5208, integration 826 (2 skipped), page 7/7.
+  0 compiler warnings; the 65 lint warnings of the interface are those there were.

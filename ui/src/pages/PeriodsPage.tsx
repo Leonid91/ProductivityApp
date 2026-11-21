@@ -203,6 +203,13 @@ export function PeriodsPage() {
         if (!anchor.period.isConnected) return
         anchor = { ...anchor, el: anchor.period, offset: anchor.periodOffset }
       }
+      // Kept by its period (what was read is gone: another view drawn): a period now too short for the place read in it
+      // stays on the screen, its top at the top (kept that far in, the screen would show the periods after it).
+      if (anchor.el === anchor.period && anchor.offset < 0) {
+        const h = anchor.period.getBoundingClientRect().height
+        const deepest = -(h - Math.min(h, scroller.clientHeight / 2))
+        if (anchor.offset < deepest) anchor.offset = Math.min(0, deepest)
+      }
       // A page that got shorter at the bottom is pulled up by the browser: not the person's scroll.
       const pulled = scroller.scrollHeight < lastHeight && scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 1
       if (pulled) anchor.top = scroller.scrollTop

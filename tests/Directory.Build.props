@@ -2,7 +2,9 @@
   <!-- Settings shared by every project under tests/: the targets of the engine they exercise, and nothing to publish. -->
   <PropertyGroup>
     <!-- Both targets of the engine: Windows' own and the portable one of macOS and Linux. -->
-    <TargetFrameworks>net10.0-windows10.0.19041.0;net10.0</TargetFrameworks>
+    <!-- The Windows target is built on Windows only (the SDK of macOS and Linux cannot build it). -->
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('Windows'))">net10.0-windows10.0.19041.0;net10.0</TargetFrameworks>
+    <TargetFrameworks Condition="!$([MSBuild]::IsOSPlatform('Windows'))">net10.0</TargetFrameworks>
     <SupportedOSPlatformVersion Condition="$(TargetFramework.Contains('-windows'))">10.0.19041.0</SupportedOSPlatformVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

@@ -59,14 +59,32 @@ const WORK = 1.5
 /** When the frame being shown started; frames waited in a row (after a few, one piece is drawn anyway). */
 let frameStart = 0
 let waited = 0
+/**
+ * How long after a frame's start its message comes when nothing is in the way: the lowest of the last frames. It is
+ * the engine's own delay, not lateness (Chromium's engine: about none; WebKit's, as in the macOS and Linux windows:
+ * up to a whole frame and more), so the time of a frame is counted from there.
+ */
+const gaps = new Float64Array(240).fill(Infinity)
+let gapAt = 0
+let delay = Infinity
+function measured(gap: number) {
+  const old = gaps[gapAt]
+  gaps[gapAt] = gap
+  gapAt = (gapAt + 1) % gaps.length
+  if (gap <= delay) delay = gap
+  // The lowest one left the window: the lowest of those kept.
+  else if (old <= delay) { delay = Infinity; for (const g of gaps) if (g < delay) delay = g }
+}
 /** When the page was last scrolled. */
 let lastScroll = 0
 document.addEventListener('scroll', () => { lastScroll = performance.now() }, { capture: true, passive: true })
 
 function frame(now: number) {
   asked = 0
+  measured(now - frameStart)
+  const start = frameStart + delay
   // The frame was late in being shown, or other work came first: the pieces wait for the next one.
-  if (now - frameStart > UNTIL - 1 && waited < 3) { waited++; ask(); return }
+  if (now - start > UNTIL - 1 && waited < 3) { waited++; ask(); return }
   waited = 0
   // Pieces that can wait: only when nothing else waits and the page has not just been scrolled, one a frame.
   const calm = ![...jobs].some((j) => !j.idle) && now - lastScroll > 200
@@ -89,7 +107,7 @@ function frame(now: number) {
     flushSync(job.run)
     // The next frame draws what the pieces changed, at about the time they took again: a little more each frame.
     work += performance.now() - t0
-    if (work > WORK || performance.now() - frameStart > UNTIL) break
+    if (work > WORK || performance.now() - start > UNTIL) break
   }
   if (jobs.size > 0) ask()
 }

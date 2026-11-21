@@ -16,7 +16,7 @@ internal static class Program
         }
         // The first launch of this build writes its own short log (first-launch.txt), the whole run long.
         FirstLaunchLog.Start(options, args, "WebView2");
-        AppDomain.CurrentDomain.UnhandledException += (_, e) => FirstLaunchLog.Current?.Write("error: the app stopped: " + e.ExceptionObject);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (FirstLaunchLog.Current is { Mirrored: false } first) first.Write("error: the app stopped: " + e.ExceptionObject, whole: true); };
         try
         {
             var code = Run(options, args);
@@ -43,7 +43,7 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         using var services = new AppServices(options.DataDir, $"version: {typeof(Program).Assembly.GetName().Version}\nexe: {Environment.ProcessPath}\nprocessId: {Environment.ProcessId}\nargs: {string.Join(' ', args)}\ndataDir: {options.DataDir}\nos: {Environment.OSVersion}\nruntime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
-        if (FirstLaunchLog.Current is { } firstLaunch) services.Logs.Mirror = firstLaunch.Mirror;
+        if (FirstLaunchLog.Current is { } firstLaunch) { services.Logs.Mirror = firstLaunch.Mirror; firstLaunch.Mirrored = true; }
         _ = Task.Run(services.Warm);
         Application.ThreadException += (_, e) => services.Log(e.Exception, "ui");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (e.ExceptionObject is Exception ex) services.Log(ex, "fatal"); };

@@ -136,9 +136,11 @@ internal sealed class Bridge
             var message = expected ? ex.Message : "Something went wrong. The details were written to the log.";
             var reply = JsonSerializer.Serialize(new { id, ok = false, error = new { message } }, Json);
             Post(reply, "answer to " + (method.Length > 0 ? method : "an unreadable message"));
-            FirstLaunchLog.Current?.Write("request " + (method.Length > 0 ? method : "(unreadable)") + ": failed: " + (expected ? ex.Message : ex.ToString()));
-            // The full exception: its type, message, inner exceptions and call stack.
-            if (!Unlogged.Contains(method) || !expected)
+            // The full exception: its type, message, inner exceptions and call stack (in the first-launch log too).
+            var logged = !Unlogged.Contains(method) || !expected;
+            if (FirstLaunchLog.Current is { } first)
+                first.Write("request " + (method.Length > 0 ? method : "(unreadable)") + ": failed" + (logged && first.Mirrored ? " (in full below)" : ": " + ex), whole: true);
+            if (logged)
                 _actions.Write(expected ? "warning" : "error", "engine", method.Length > 0 ? method : "unreadable message", DateTime.Now,
                     Started(started), "\nrequest: ", raw, "\nanswer: ", reply, "\nexception: ", ex.ToString());
         }

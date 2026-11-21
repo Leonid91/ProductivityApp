@@ -61,7 +61,7 @@ internal sealed class PhotinoHost : IAppWindow, IPage
             UseOsDefaultSize = false,
             UseOsDefaultLocation = false,
             // Only for the test build on Windows (WebView2's own switches): lets the end-to-end check drive the page.
-            BrowserControlInitParameters = OperatingSystem.IsWindows() && options.CdpPort is { } port ? $"--remote-debugging-port={port}" : null!,
+            BrowserControlInitParameters = OperatingSystem.IsWindows() ? TestSwitches(options) : null!,
             TemporaryFilesPath = Path.Combine(options.DataDir, "WebView"),
         };
         // Linux shows this icon on the window (macOS takes the .app's own).
@@ -198,25 +198,50 @@ internal sealed class PhotinoHost : IAppWindow, IPage
 
 #if DEBUG || E2E
     /// <summary>
-    /// Automated checks of this window on Windows (the test build): the window off-screen never takes the keyboard from
-    /// the window the person is using (focus goes back to it at once).
+    /// Automated checks of this window on Windows (the test build): the window off-screen is never made the active window,
+    /// so it never takes the keyboard or comes in front of what the person is using, and has no taskbar button. Done as the
+    /// window is made (a hook on this thread's windows): set afterwards, Windows would already have activated it once.
     /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private void KeepInBackground()
+    private static void KeepInBackground()
     {
-        var previous = GetForegroundWindow();
-        _window.RegisterWindowCreatedHandler((_, _) =>
+        _cbt = (code, w, l) =>
         {
-            const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
-            SetWindowLongPtrW(_window.WindowHandle, GWL_EXSTYLE, GetWindowLongPtrW(_window.WindowHandle, GWL_EXSTYLE) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-        });
-        _window.RegisterFocusInHandler((_, _) => { if (previous != 0) SetForegroundWindow(previous); });
+            const int HCBT_CREATEWND = 3, HCBT_ACTIVATE = 5;
+            if (code == HCBT_ACTIVATE) return 1;
+            if (code == HCBT_CREATEWND && IntPtr.Size == 8)
+            {
+                // CBT_CREATEWND.lpcs -> CREATESTRUCTW: hwndParent at 24, dwExStyle at 72 (64-bit layout).
+                var cs = System.Runtime.InteropServices.Marshal.ReadIntPtr(l);
+                if (System.Runtime.InteropServices.Marshal.ReadIntPtr(cs, 24) == 0)
+                {
+                    const int WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
+                    var ex = System.Runtime.InteropServices.Marshal.ReadInt32(cs, 72);
+                    System.Runtime.InteropServices.Marshal.WriteInt32(cs, 72, ex | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+                }
+            }
+            return CallNextHookEx(0, code, w, l);
+        };
+        const int WH_CBT = 5;
+        SetWindowsHookExW(WH_CBT, _cbt, 0, GetCurrentThreadId());
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint GetForegroundWindow();
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hwnd);
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint GetWindowLongPtrW(nint hwnd, int index);
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint SetWindowLongPtrW(nint hwnd, int index, nint value);
+    /// <summary>The test build's WebView2 switches: DevTools for the end-to-end check; off-screen, drawn as if in front.</summary>
+    private static string TestSwitches(AppOptions options)
+    {
+        var args = new List<string>();
+        if (options.Offscreen) args.AddRange(["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-features=CalculateNativeWinOcclusion"]);
+        if (options.CdpPort is { } port) args.Add($"--remote-debugging-port={port}");
+        return args.Count == 0 ? null! : string.Join(' ', args);
+    }
+
+    private delegate nint HookProc(int code, nint w, nint l);
+    private static HookProc? _cbt;
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint SetWindowsHookExW(int id, HookProc proc, nint module, uint thread);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint CallNextHookEx(nint hook, int code, nint w, nint l);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+#else
+    private static string TestSwitches(AppOptions options) => null!;
 #endif
 
     // ---------------------------------------------------------------- IPage

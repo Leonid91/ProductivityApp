@@ -43,8 +43,8 @@ public sealed class ActionLog : IDisposable
     /// <summary>Raised (on the writer's thread, at most a few times a second) when entries were written or cleared, while <see cref="Watched"/>.</summary>
     public event Action? Changed;
 
-    /// <summary>Told of each entry as it is written (type, heading, details): the first launch's own log.</summary>
-    public Action<string, string, string[]>? Mirror { get; set; }
+    /// <summary>Told of each entry as it is written (type, heading, details, call stack): the first launch's own log.</summary>
+    public Action<string, string, string[], string>? Mirror { get; set; }
 
     /// <summary>The Logs page is open: only then is it told of new entries (nothing is sent to the window otherwise).</summary>
     public bool Watched { get; set; }
@@ -83,7 +83,7 @@ public sealed class ActionLog : IDisposable
     public void WriteWithStack(string level, string source, string action, DateTime time, string stack, params string[] detail)
     {
         if (!Levels.Contains(level)) throw new ArgumentException($"Unknown type of log entry '{level}'.");
-        Mirror?.Invoke(level, Heading(source, action), detail);
+        Mirror?.Invoke(level, Heading(source, action), detail, stack);
         try { _queue.Add(new Pending(time, level, Heading(source, action), detail, stack)); Interlocked.Increment(ref _added); }
         catch (InvalidOperationException) { /* closing: nothing more is written */ }
     }

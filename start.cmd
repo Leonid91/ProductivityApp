@@ -8,4 +8,6 @@ if not defined exe (
   pause
   exit /b 1
 )
+rem A file downloaded with a browser is marked as such: Windows would stop it with a warning first.
+powershell -NoProfile -NonInteractive -Command "Unblock-File -LiteralPath $env:exe" >nul 2>&1
 start "" "%exe%"

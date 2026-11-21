@@ -244,6 +244,8 @@ function usualHeight(kind: string, count?: number): number {
 
 /** How far from the screen a period not drawn yet is drawn in the background to know its height (in pixels). */
 const REACH = 60000
+/** How near the screen a period holds its data (in pixels): further away, it lets go of it. */
+const NEAR = 1500
 
 /** The width of the page, once it stops changing (the window resized). */
 const widthListeners = new Set<(w: number) => void>()
@@ -633,7 +635,7 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
       // Its height as drawn last (not while it is still the outline of one not loaded yet).
       if (!near && hasData.current && el.offsetHeight > 0) setHeight(el.offsetHeight)
       setVisible(near)
-    }, { root: el.closest('main'), rootMargin: '1500px 0px' })
+    }, { root: el.closest('main'), rootMargin: `${NEAR}px 0px` })
     io.observe(el)
     const on = new IntersectionObserver((entries) => setOnScreen(entries.some((e) => e.isIntersecting)), { root: el.closest('main') })
     on.observe(el)
@@ -652,7 +654,16 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
     if (!wanted) {
       if (drawnParts.current < 0) return
       let stop = () => {}
-      const next = (n: number) => { stop = pace(ref.current, () => { if (n > 0) { setKept(n - 1); next(n - 1) } else { setReport(null); setKept(null) } }) }
+      // Brought back near the screen before the browser told it (it tells after the next frame): nothing more is let go
+      // of meanwhile (a piece taken away there would be drawn again at once).
+      const near = () => {
+        const el = ref.current
+        const main = el?.closest('main')
+        if (!el || !main) return false
+        const r = el.getBoundingClientRect(), v = main.getBoundingClientRect()
+        return r.bottom > v.top - NEAR && r.top < v.bottom + NEAR
+      }
+      const next = (n: number) => { stop = pace(ref.current, () => { if (near()) next(n); else if (n > 0) { setKept(n - 1); next(n - 1) } else { setReport(null); setKept(null) } }) }
       next(drawnParts.current)
       return () => { stop(); setKept(null) }
     }

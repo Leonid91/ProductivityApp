@@ -25,7 +25,7 @@ internal static class Program
         }
         // The first launch of this build writes its own short log (first-launch.txt), the whole run long.
         FirstLaunchLog.Start(options, args, OperatingSystem.IsMacOS() ? "WKWebView (Photino)" : OperatingSystem.IsLinux() ? "WebKitGTK (Photino)" : "WebView2 (Photino)");
-        AppDomain.CurrentDomain.UnhandledException += (_, e) => FirstLaunchLog.Current?.Write("error: the app stopped: " + e.ExceptionObject);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (FirstLaunchLog.Current is { Mirrored: false } first) first.Write("error: the app stopped: " + e.ExceptionObject, whole: true); };
         try
         {
             var code = Run(options, args);
@@ -45,7 +45,7 @@ internal static class Program
         new Thread(UnpackedCopies.RemoveOld) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
 
         using var services = new AppServices(options.DataDir, $"version: {typeof(Program).Assembly.GetName().Version}\nexe: {Environment.ProcessPath}\nprocessId: {Environment.ProcessId}\nargs: {string.Join(' ', args)}\ndataDir: {options.DataDir}\nos: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}\nruntime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
-        if (FirstLaunchLog.Current is { } firstLaunch) services.Logs.Mirror = firstLaunch.Mirror;
+        if (FirstLaunchLog.Current is { } firstLaunch) { services.Logs.Mirror = firstLaunch.Mirror; firstLaunch.Mirrored = true; }
         _ = Task.Run(services.Warm);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (e.ExceptionObject is Exception ex) services.Log(ex, "fatal"); };
         TaskScheduler.UnobservedTaskException += (_, e) => { services.Log(e.Exception, "task"); e.SetObserved(); };

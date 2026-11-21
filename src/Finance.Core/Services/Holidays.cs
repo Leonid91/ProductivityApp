@@ -177,10 +177,13 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null, 
             db.SaveHolidayCalendar(saved);
             if (old is not null && old.Url != url) db.ClearHolidays(saved.Id);
         });
-        // Its downloads follow its name; a new address drops them.
-        if (old is not null) _store.Rename(DownloadStore.Holidays, old.Location, location);
-        if (old is not null && old.Url != url) _store.Delete(DownloadStore.Holidays, location);
-        Reload();
+        // Its downloads follow its name; a new address drops them. (Changed while no one reads them: see Loaded.)
+        lock (_gate)
+        {
+            if (old is not null) _store.Rename(DownloadStore.Holidays, old.Location, location);
+            if (old is not null && old.Url != url) _store.Delete(DownloadStore.Holidays, location);
+            Reload();
+        }
         return saved;
     }
 
@@ -212,8 +215,11 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null, 
         {
             foreach (var c in gone) db.RemoveHolidayCalendar(c.Id);
         });
-        foreach (var c in gone) _store.Delete(DownloadStore.Holidays, c.Location);
-        Reload();
+        lock (_gate)
+        {
+            foreach (var c in gone) _store.Delete(DownloadStore.Holidays, c.Location);
+            Reload();
+        }
     }
 
     /// <summary>An address the app downloads from: absolute, https, at most 2,000 characters ("{year}" allowed in it).</summary>
@@ -380,8 +386,12 @@ public sealed class Holidays(Database db, Func<string?>? weekendSetting = null, 
     {
         var c = Find(id) ?? throw new ArgumentException("This calendar no longer exists.");
         if (files.Sum(f => Parse(f.Bytes).Count) == 0) throw new HolidaysFileException("The file at this address holds no holidays.");
-        _store.Save(DownloadStore.Holidays, c.Location, day, [.. files.Select(f => (DownloadStore.FileName("holidays", f.Year, f.Bytes), f.Bytes))]);
-        Reload();
+        // The copy of the same day is replaced while no one reads it (its folder is taken away, then the new one put in).
+        lock (_gate)
+        {
+            _store.Save(DownloadStore.Holidays, c.Location, day, [.. files.Select(f => (DownloadStore.FileName("holidays", f.Year, f.Bytes), f.Bytes))]);
+            Reload();
+        }
     }
 
     /// <summary>The same for a calendar of one file.</summary>

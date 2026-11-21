@@ -5,6 +5,24 @@ import KeyboardArrowUp from '@mui/icons-material/KeyboardArrowUpRounded'
 import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDownRounded'
 import Close from '@mui/icons-material/CloseRounded'
 
+// Safari before 17.4 (macOS 14.0 to 14.3) has neither checkVisibility nor highlights: the text's box tells whether it
+// is shown, and the current match's element is outlined instead of its words being highlighted.
+const visible = (e: Element) => (typeof e.checkVisibility === 'function' ? e.checkVisibility() : e.getClientRects().length > 0)
+const canHighlight = typeof CSS !== 'undefined' && 'highlights' in CSS && typeof Highlight === 'function'
+
+function mark(ranges: Range[], current: number) {
+  for (const e of document.querySelectorAll('[data-find-current]')) e.removeAttribute('data-find-current')
+  if (canHighlight) {
+    if (ranges.length) {
+      CSS.highlights.set('find', new Highlight(...ranges))
+      CSS.highlights.set('find-current', new Highlight(ranges[current]))
+    } else {
+      CSS.highlights.delete('find')
+      CSS.highlights.delete('find-current')
+    }
+  } else if (ranges.length) ranges[current].startContainer.parentElement?.setAttribute('data-find-current', '')
+}
+
 /** Every visible piece of text on screen that contains the query (case ignored), in reading order. */
 function findRanges(query: string, skip: Element | null): Range[] {
   const q = query.toLowerCase()
@@ -13,7 +31,7 @@ function findRanges(query: string, skip: Element | null): Range[] {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     const parent = n.parentElement
-    if (!parent || skip?.contains(parent) || parent.closest('style, script') || !parent.checkVisibility()) continue
+    if (!parent || skip?.contains(parent) || parent.closest('style, script') || !visible(parent)) continue
     const text = (n.textContent ?? '').toLowerCase()
     for (let at = text.indexOf(q); at >= 0; at = text.indexOf(q, at + q.length)) {
       const r = new Range()
@@ -50,19 +68,15 @@ export function FindBar() {
   const show = (q: string, i: number) => {
     const ranges = findRanges(q, bar.current)
     const n = ranges.length === 0 ? 0 : ((i % ranges.length) + ranges.length) % ranges.length
-    CSS.highlights.set('find', new Highlight(...ranges))
-    if (ranges.length) {
-      CSS.highlights.set('find-current', new Highlight(ranges[n]))
-      ranges[n].startContainer.parentElement?.scrollIntoView({ block: 'center' })
-    } else CSS.highlights.delete('find-current')
+    mark(ranges, n)
+    if (ranges.length) ranges[n].startContainer.parentElement?.scrollIntoView({ block: 'center' })
     setCount(ranges.length)
     setIndex(n)
   }
 
   const close = () => {
     setOpen(false)
-    CSS.highlights.delete('find')
-    CSS.highlights.delete('find-current')
+    mark([], 0)
   }
 
   if (!open) return null

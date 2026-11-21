@@ -20,10 +20,15 @@ internal sealed class FirstLaunchLog : IDisposable
     public const string FileName = "first-launch.txt";
     private const long MaxBytes = 1024 * 1024;
     private const int MaxDetail = 8 * 1024;
+    /// <summary>Each part of an error's details is cut beyond this; its call stack never is.</summary>
+    private const int MaxErrorPart = 16 * 1024;
     private const string BuildMark = "build: ";
 
     /// <summary>This process's log, while it is the first launch of its build (null otherwise).</summary>
     public static FirstLaunchLog? Current { get; private set; }
+
+    /// <summary>The app's log is mirrored here (<see cref="Mirror"/>): its errors come with their call stacks that way.</summary>
+    public bool Mirrored { get; set; }
 
     private readonly object _gate = new();
     private readonly StreamWriter _writer;
@@ -73,15 +78,15 @@ internal sealed class FirstLaunchLog : IDisposable
         }
     }
 
-    /// <summary>A line (or more), with the time of day; long text is cut.</summary>
-    public void Write(string text)
+    /// <summary>A line (or more), with the time of day; long text is cut (unless <paramref name="whole"/>).</summary>
+    public void Write(string text, bool whole = false)
     {
         lock (_gate)
         {
             if (_full) return;
             try
             {
-                if (text.Length > MaxDetail) text = text[..MaxDetail] + " [cut]";
+                if (!whole && text.Length > MaxDetail) text = text[..MaxDetail] + " [cut]";
                 if (_writer.BaseStream.Length + text.Length * 3 > MaxBytes)
                 {
                     _full = true;
@@ -96,12 +101,19 @@ internal sealed class FirstLaunchLog : IDisposable
 
     /// <summary>
     /// An entry of the app's log, mirrored: what happened (no details for ordinary steps, whose details can hold the
-    /// person's data), warnings and errors in full. The interface's requests are written by the bridge itself.
+    /// person's data), warnings and errors in full with the full call stack of where they were written (an exception's
+    /// own call stack is in its details). The interface's requests are written by the bridge itself.
     /// </summary>
-    public void Mirror(string level, string heading, string[] detail)
+    public void Mirror(string level, string heading, string[] detail, string stack)
     {
         if (heading.StartsWith("Engine:", StringComparison.Ordinal) && level is "info" or "debug") return;
-        if (level is "warning" or "error") Write(level + ": " + heading + "\n" + string.Concat(detail));
+        if (level is "warning" or "error")
+        {
+            var text = new StringBuilder(level).Append(": ").Append(heading).Append('\n');
+            foreach (var part in detail) text.Append(part.Length > MaxErrorPart ? part[..MaxErrorPart] + " [cut]" : part);
+            text.Append("\nCall stack:\n").Append(stack.Length > 0 ? stack : "(empty)");
+            Write(text.ToString(), whole: true);
+        }
         else if (level == "info") Write(heading);
     }
 

@@ -20,11 +20,17 @@ const check = (name, ok, detail = '') => { checks.push({ name, ok: !!ok, detail 
 // Every screen photographed is also read: no phrase of the interface is joined to the next by a semicolon.
 const semicolons = []
 const shot = async (p, name) => {
-  const text = await p.eval(`document.body.innerText`).catch(() => '')
+  // (The raw details of the log's entries are data, not phrases of the interface: left out.)
+  const text = await p.eval(`(() => { const hidden = [...document.querySelectorAll('[data-log-detail]')]; hidden.forEach((d) => { d.dataset.e2eDisplay = d.style.display; d.style.display = 'none' }); const t = document.body.innerText; hidden.forEach((d) => { d.style.display = d.dataset.e2eDisplay; delete d.dataset.e2eDisplay }); return t })()`).catch(() => '')
   for (const m of String(text).matchAll(/[A-Za-z0-9)]; [A-Za-z]/g)) semicolons.push(`${name}: ${String(text).slice(Math.max(0, m.index - 30), m.index + 30).replace(/\s+/g, ' ')}`)
   return p.shot(join(out, name))
 }
 const text = (p) => p.eval('document.body.innerText')
+// The page loaded again: waits for the new document (the old one can still answer for a moment after the reload is asked).
+const reload = async (p) => {
+  await p.eval('window.__oldPage = true; setTimeout(() => location.reload(), 0)')
+  await p.waitFor(`!window.__oldPage && document.querySelector('nav') !== null`, 20000, 'the page loaded again')
+}
 // Analytics has two parts: General (the charts) and Transfers (the money moved, over time and in total).
 // A period drawn in full: it appears a piece at a time (the nearest to the screen first), so wait until nothing more
 // has come in it for a moment.
@@ -151,6 +157,8 @@ try {
   await shot(p, '02-file-browser.png')
   await p.clickText('Select all', { selector: '[role=dialog] button' })
   const files = readdirSync(samples).filter((f) => f.endsWith('.pdf') || f.endsWith('.csv'))
+  // The messages shown while the files are read (each stays a few seconds): kept for the checks below.
+  await p.eval(`(() => { window.__messages = []; new MutationObserver(() => { for (const a of document.querySelectorAll('.MuiAlert-message')) if (!window.__messages.includes(a.innerText)) window.__messages.push(a.innerText) }).observe(document.body, { childList: true, subtree: true, characterData: true }) })()`)
   await p.clickText(`Import ${files.length} files`, { selector: '[role=dialog] button' })
   // Without text recognition on the machine (the macOS/Linux window tested on Windows), a scanned statement cannot be
   // read: it says what to install, and every other file is read.
@@ -158,8 +166,8 @@ try {
   const scans = ocr ? [] : files.filter((f) => f.includes('(scan)'))
   await p.waitFor(`document.querySelectorAll('[data-draft]').length === ${files.length - scans.length}`, 180000, 'all drafts')
   if (scans.length > 0) {
-    await p.waitFor(`document.body.innerText.includes(${JSON.stringify(scans[0])}) && document.body.innerText.includes('text recognition is not installed')`, 20000, 'scan refused').catch(() => false)
-    check('a scanned statement with no text recognition says what to install', await p.eval(`document.body.innerText.includes('text recognition is not installed')`))
+    await p.waitFor(`window.__messages.some((m) => m.includes(${JSON.stringify(scans[0])}) && m.includes('text recognition is not installed'))`, 20000, 'scan refused').catch(() => false)
+    check('a scanned statement with no text recognition says what to install', await p.eval(`window.__messages.some((m) => m.includes(${JSON.stringify(scans[0])}) && m.includes('text recognition is not installed'))`), await p.eval(`window.__messages.join(' | ')`))
     console.log(`SKIP  reading ${scans.join(', ')} — no text recognition on this machine`)
   }
   await sleep(500)
@@ -532,7 +540,7 @@ try {
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${augAll} [data-category-lines]') !== null`, 30000, 'period back')
   await sleep(800)
-  check('chosen lines kept after scrolling away and back', (await lineCount()) === 2)
+  check('chosen lines kept after scrolling away and back', (await lineCount()) === 2, `${await lineCount()} lines`)
   // Pies: shares with two decimals, so a small share never reads 0%.
   const shares = await p.eval(`[...document.querySelectorAll('${sec} [data-pie] li')].map(l => l.innerText.split('\\n').pop())`)
   check('pie shares with two decimals', shares.length > 0 && shares.every((x) => /^\d+\.\d\d%$/.test(x)) && !shares.includes('0.00%'), shares.slice(-3).join(' '))
@@ -1186,7 +1194,7 @@ try {
     && octEur.banks.filter((b) => b.native === 'CAD').every((b) => b.summary.transactions.every((t) => t.currency === 'EUR' && t.originalCurrency === 'CAD')))
   await p.engine('settings.set', { key: 'currency', value: 'CAD' })
   // The calendar: every bank together, the month's totals in its header; a euro operation shows what the bank wrote.
-  await p.eval('location.reload()')
+  await reload(p)
   await p.waitFor(`document.querySelector('nav') !== null`, 20000, 'reloaded')
   await p.clickText('Calendar', { selector: 'nav button' })
   await sleep(1200)
@@ -1706,7 +1714,7 @@ try {
   await visit('categories', definition('Categories'))
   // (the test tags are deleted by now: one made for the check, deleted after)
   const pencilTag = (await p.engine('tags.create', { name: 'Pencil check', color: null })).tags.find((t) => t.name === 'Pencil check')
-  await p.eval('location.reload()')
+  await reload(p)
   await p.waitFor(`document.querySelector('nav') !== null`, 20000, 'reloaded with the tag')
   await visit('tags', definition('Tags'))
   await p.engine('tags.delete', { id: pencilTag.id })
@@ -1901,7 +1909,7 @@ try {
   // What the interface writes carries the interface's own call stack.
   const pageEntry = find((e) => heading(e) === 'App: page' && e.detail.includes('"to":"logs"'))
   const pageWhole = pageEntry ? await p.engine('logs.entry', { n: pageEntry.n }) : null
-  check('an entry of the interface (a page opened) has the interface’s call stack', !!pageWhole && /^\s*at .*(pageOpened|AppContext)/.test(stackOf(pageWhole.detail)), pageWhole?.detail.slice(0, 600))
+  check('an entry of the interface (a page opened) has the interface’s call stack', !!pageWhole && /^\s*(at .*|\S*@.*)(pageOpened|AppContext)/.test(stackOf(pageWhole.detail)), pageWhole?.detail.slice(0, 600))
   check('the log has every kind of entry: pages, messages, window events, actions, the start and the database',
     !!pageEntry && !!find((e) => heading(e) === 'App: toast')
     && !!find((e) => heading(e) === 'Window: CoreWebView2.NavigationStarting' || heading(e) === 'Window: Load') && !!find((e) => heading(e) === 'App: Start' && e.detail.includes('version: '))
@@ -1987,6 +1995,12 @@ if (!failed) {
   check('the first launch wrote its log: build, requests, what was drawn, the end', /  build: .+ bytes/.test(first) && first.includes('request app.init: ok')
     && /interface drawn: \{"menu":true,"elements":\d{3,}/.test(first) && first.includes('The app ended.') && Buffer.byteLength(first) < 1024 * 1024,
     `${Buffer.byteLength(first)} bytes`)
+  // Every warning and error in it comes with the full call stack of where it was written.
+  const entries = first.split(/\n(?=\d\d:\d\d:\d\d  )/).map((e) => e.slice(10))
+  const errors = entries.filter((e) => /^(warning|error): /.test(e))
+  const failedRequests = entries.filter((e) => /^request \S+: failed: /.test(e))
+  check('each warning and error of the first-launch log with its call stack', errors.every((e) => /\n {10}Call stack:\n {10}\s*\S/.test(e) && /\n {10}\s*(at |\S*@)/.test(e))
+    && failedRequests.every((e) => /\n {10}   at /.test(e)), `${errors.length} warnings and errors, ${failedRequests.length} failed requests written whole`)
 }
 writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, consoleErrors: p.consoleErrors }, null, 1))
 const bad = checks.filter((c) => !c.ok).length

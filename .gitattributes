@@ -1,0 +1,5 @@
+# start.sh keeps LF line endings (a CR breaks it on macOS and Linux); start.cmd keeps its CRLF.
+*.sh text eol=lf
+*.cmd -text
+release/** binary
+publish/** binary

@@ -211,8 +211,11 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
             db.SaveRateSource(saved);
             if (changedAddress && old is not null) db.ClearRates(saved.Id);
         });
-        if (changedAddress && old is not null) _store.Delete(DownloadStore.ExchangeRates, saved.Name);
-        Reload();
+        lock (_gate)
+        {
+            if (changedAddress && old is not null) _store.Delete(DownloadStore.ExchangeRates, saved.Name);
+            Reload();
+        }
         return saved;
     }
 
@@ -220,7 +223,7 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     {
         if (Find(id) is null) return;
         if (Source.Id == id) throw new InvalidOperationException("This bank is in use: choose another one first.");
-        _store.Delete(DownloadStore.ExchangeRates, Find(id)!.Name);
+        lock (_gate) _store.Delete(DownloadStore.ExchangeRates, Find(id)!.Name);
         db.RemoveRateSource(id);
         Reload();
     }
@@ -367,8 +370,12 @@ public sealed class ExchangeRates(Database db, Func<string?>? sourceSetting = nu
     {
         var (series, _) = Parse(file, CentralBank.Find(source.Format));
         if (series.Count == 0) throw new RatesFileException("The file at this address holds no exchange rates.");
-        _store.Save(DownloadStore.ExchangeRates, source.Name, day, [(DownloadStore.FileName("rates", null, file), file)]);
-        Reload();
+        // The copy of the same day is replaced while no one reads it (its folder is taken away, then the new one put in).
+        lock (_gate)
+        {
+            _store.Save(DownloadStore.ExchangeRates, source.Name, day, [(DownloadStore.FileName("rates", null, file), file)]);
+            Reload();
+        }
     }
 
     /// <summary>

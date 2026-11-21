@@ -1,7 +1,9 @@
 # Build output
 bin/
 obj/
-publish/
+# publish/: only the app as built for this computer (publish\ProductivityApp.exe) is kept, as the release files are.
+/publish/*
+!/publish/ProductivityApp.exe
 TestResults/
 ui/node_modules/
 ui/dist/
