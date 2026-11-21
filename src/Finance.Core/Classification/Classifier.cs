@@ -271,7 +271,16 @@ public sealed class Classifier
     public static string DisplayName(string rawLabel, string key)
     {
         var raw = TextNorm.CollapseSpaces(rawLabel);
-        if (key.Length == 0) return raw.Any(char.IsLower) ? raw : TextNorm.TitleCase(raw);
+        if (key.Length == 0)
+        {
+            // Only a shop's code ("CARTE 06/12/24 HETM049 4 CB*5940"): its letters, rather than the whole line.
+            var code = Normalize(rawLabel).Split(' ')
+                .Where(w => w.Any(char.IsDigit))
+                .Select(w => new string([.. w.Where(char.IsLetter)]))
+                .FirstOrDefault(w => w.Length >= 3 && !Noise.Contains(w) && !Cities.Contains(w));
+            if (code is not null) return TextNorm.TitleCase(code);
+            return raw.Any(char.IsLower) ? raw : TextNorm.TitleCase(raw);
+        }
         if (!raw.Any(char.IsLower)) return TextNorm.TitleCase(key);
         var wanted = key.Split(' ').ToList();
         var picked = new List<string>();
@@ -306,6 +315,8 @@ public sealed class Classifier
         "POINT", "SALE", "OPOS", "APOS", "FPOS", "MISC", "AUTHORIZED", "PREAUTHORIZED", "MEMO", "ONCD", "ONC",
         // French transfers: "VIR SEPA", "VIR INST RECU" (instant transfer received).
         "VIR", "INST",
+        // French card refunds: "AVOIR 02/12/24 SHOP"; the reference of a transfer ("Réf : SCT...", BoursoBank's "Rèf").
+        "AVOIR", "REF",
     ];
 
     private static readonly HashSet<string> Cities =
@@ -357,12 +368,21 @@ public sealed class Classifier
     private static readonly (string Category, string[] Words, int Sign)[] PaddedKeywordRules =
         KeywordRules.Select(r => (r.Category, r.Words.Select(w => " " + w + " ").ToArray(), r.Sign)).ToArray();
 
+    /// <summary>A payment by card at a shop ("CARTE 06/12/24 GRAND FRAIS", "CB LECLERC"): the bank's own fees are lines of their own.</summary>
+    private static bool CardPurchase(string padded) =>
+        padded.StartsWith(" CARTE ", StringComparison.Ordinal) || padded.StartsWith(" CB ", StringComparison.Ordinal)
+        || padded.StartsWith(" PAIEMENT CB ", StringComparison.Ordinal) || padded.StartsWith(" PAIEMENT PAR CARTE ", StringComparison.Ordinal)
+        || padded.StartsWith(" ACHAT CB ", StringComparison.Ordinal) || padded.StartsWith(" ACHAT CARTE ", StringComparison.Ordinal);
+
     private static string? KeywordCategory(string padded, decimal amount)
     {
+        var card = CardPurchase(padded);
         foreach (var (category, words, sign) in PaddedKeywordRules)
         {
             if (sign > 0 && amount <= 0) continue;
             if (sign < 0 && amount > 0) continue;
+            // A shop's name with a fee word in it ("GRAND FRAIS") is spending at that shop.
+            if (card && category == "fees") continue;
             foreach (var w in words)
                 if (padded.Contains(w, StringComparison.Ordinal)) return category;
         }

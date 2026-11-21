@@ -116,6 +116,15 @@ if (args.Length == 2 && args[0] == "fortuneo")
     Console.WriteLine($"open={s.Opening} close={s.Closing} lines={s.Lines.Count} card={card.Total}");
     return 0;
 }
+if (args.Length == 2 && args[0] == "real")
+{
+    // real <folder>: real BoursoBank and Fortuneo statements published on the internet, drawn from their recordings
+    // (RealStatements)
+    var dir = Directory.CreateDirectory(args[1]).FullName;
+    foreach (var name in RealStatements.Names)
+        Write(Path.Combine(dir, $"Real {name}.pdf"), RealStatements.Pdf(name));
+    return 0;
+}
 if (args.Length == 2 && args[0] == "revolut")
 {
     // revolut <folder>: fictitious statements in Revolut layouts (the PDF of each currency, the export of every

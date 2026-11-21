@@ -146,6 +146,14 @@ public static partial class DateParser
                 consumed = n;
                 return true;
             }
+            // A date printed in pieces ("16/" "12/" "2022", "10/" "12/2024"): one date.
+            if (n > 1 && joined.Contains('/') && (joined.Contains("/ ", StringComparison.Ordinal) || joined.Contains(" /", StringComparison.Ordinal))
+                && TryParse(joined.Replace("/ ", "/", StringComparison.Ordinal).Replace(" /", "/", StringComparison.Ordinal), out date, lenient)
+                && !joined.Replace("/ ", "/", StringComparison.Ordinal).Replace(" /", "/", StringComparison.Ordinal).Contains(' '))
+            {
+                consumed = n;
+                return true;
+            }
         }
         return false;
     }

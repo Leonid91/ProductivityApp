@@ -189,4 +189,23 @@ public class ClassifierTests
 
         Assert.Equal(brand, result.Brand);
     }
+
+    [Fact]
+    public void Classify_CardPaymentAtAShopWithAFeeWordInItsName_IsSpendingAtThatShopNotBankFees()
+    {
+        var result = France.Classify("CARTE 06/12/24 GRAND FRAIS CB*5940", -1.20m);
+
+        Assert.NotEqual("fees", result.CategoryId);
+        Assert.NotEqual("Bank fees", result.Brand);
+    }
+
+    [Theory]
+    [InlineData("CARTE 06/12/24 HETM049 4 CB*5940", -226.19)]
+    [InlineData("AVOIR 02/12/24 HETM016 4 CB*5940", 62.00)]
+    public void Classify_ShopNamedOnlyByItsCode_IsNamedByTheCodesLetters(string label, double amount)
+    {
+        var result = France.Classify(label, (decimal)amount);
+
+        Assert.Equal("Hetm", result.Brand);
+    }
 }

@@ -213,12 +213,6 @@ public static partial class PdfReader
     }
 
     /// <summary>
-    /// Codes printed down the margin for the bank's mail sorting, one character above the other (Scotiabank prints
-    /// one along the left edge): a dozen or more one- or two-character words in the outer fifth of the page, all at
-    /// the same position, stacked a few points apart. They are not text of the statement, and left in they would join
-    /// the lines beside them.
-    /// </summary>
-    /// <summary>
     /// A word of the text layer, its top and bottom counted from the top of the page. Some PDFs (fonts without glyph boxes,
     /// as in Scotiabank's e-statements) give every word a box of no height: its height then comes from the size its
     /// letters are printed at, around their baseline, so the words of a line still share it.
@@ -239,12 +233,26 @@ public static partial class PdfReader
         return new Word(text, left, right, baseline - 0.75 * s, baseline + 0.2 * s);
     }
 
+    /// <summary>
+    /// Text printed up or down the margin, one character above the other: codes for the bank's mail sorting
+    /// (Scotiabank, along the left edge), the day the statement was issued (Fortuneo, "Émis le 03/01/2024..."). A dozen
+    /// or more one- or two-character words in the outer fifth of the page, in one column, stacked a few points apart.
+    /// They are not text of the statement, and left in they would join the lines beside them.
+    /// </summary>
     internal static List<Word> RemoveMarginCodes(List<Word> words, double pageWidth)
     {
         var marks = words.Where(w => w.Text.Length <= 2 && (w.Right < pageWidth * 0.2 || w.Left > pageWidth * 0.8)).ToList();
         if (marks.Count < 12) return words;
         var remove = new HashSet<Word>();
-        foreach (var column in marks.GroupBy(w => Math.Round(w.CenterX / 8)))
+        // Columns of characters: centres a few points apart at most (a wide "M" and a narrow "i" of the same column
+        // have centres 2 points apart, which fixed strips of the page could cut in two).
+        var columns = new List<List<Word>>();
+        foreach (var w in marks.OrderBy(w => w.CenterX))
+        {
+            if (columns.Count > 0 && w.CenterX - columns[^1][^1].CenterX <= 4) columns[^1].Add(w);
+            else columns.Add([w]);
+        }
+        foreach (var column in columns)
         {
             var stack = column.OrderBy(w => w.Top).ToList();
             if (stack.Count < 12) continue;

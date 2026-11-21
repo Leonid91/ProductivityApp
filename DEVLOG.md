@@ -1420,3 +1420,60 @@ real app with `tools/e2e/perf.mjs`.
 - End-to-end: 240/240 in WebKit (twice) and 240/240 in WebView2. Unit 5226/5226, integration 884 (2 skipped: text
   recognition, not on this machine for the macOS and Linux build), page 7/7. 0 compiler warnings, 65 lint warnings as
   before. The released exe started for the first time in a folder of its own: no warning or error.
+
+## November 21st, 2026 - Real BoursoBank and Fortuneo statements read; frame rates of the size fix measured - Commit 55
+
+### Added
+- 17 real statements of BoursoBank (Boursorama Banque before 2024) and Fortuneo published on the internet (2022-2025),
+  recorded letter by letter where the bank printed them and drawn back into PDFs for the tests
+  (`tests/Finance.TestData/Statements/Real`, their sources in `SOURCES.md`): 12 of BoursoBank (current accounts on up to
+  6 pages, a "Compte sur Livret", one month followed by BoursoBank's "Récapitulatif des frais à venir") and 5 of
+  Fortuneo. What each holds is read from the recording itself, not by the app: every operation printed is read with its
+  sign, and the 14 published whole are balanced to the cent. Four published copies are left out, as their text cannot
+  check a reader (rows missing from it, one altered copy). `SampleStatements real <folder>` writes them.
+- BoursoBank's CSV export of several accounts (one file, the account's number on each line), as quoted by a budget
+  app checked against a real export: each account is read on its own.
+- Settings > Information: BoursoBank and Fortuneo are confirmed.
+
+### Fixed
+- PDF statements, for any bank:
+  - Text up the margin (Fortuneo prints the day the statement was issued there) is left out even when its letters
+    are of different widths; it put its letters before the date of operations, which then took the date before.
+  - Balance words set without a space between them ("SOLDEAU :", "NOUVEAUSOLDE", "ANCIEN SOLDECRÉDITEURAU") are
+    balances, not operations.
+  - A value date printed after the label (BoursoBank's "Valeur" column, a heading of one word) is not part of the label.
+  - A date printed in pieces ("10/" "12/2024") is one date.
+  - A line without a date that ends with a colon before its amount ("Montant frais bancaires* : 3,50"), or amounts
+    alone on their line, are totals, not operations; what follows the new balance on its page (the overdraft allowed)
+    neither; a page after the new balance without a heading of its own is another document, not more operations.
+  - An amount set well to the right of a short heading ("Débit") is that column's when clearly nearer it than any other.
+  - When no reading of a statement balances, the columns its heading names are believed rather than a reading that
+    guesses them (which could take debits for credits): a BoursoBank statement whose account was overdrawn (its balance
+    printed under Débit) was read with every amount the wrong way round.
+- CSV exports: of two columns named "Solde", the account's balance is found account by account in a file of several
+  accounts (and is the later one when nothing tells); an account of one line no longer keeps a file from being cut
+  into its accounts.
+- Brands: a shop whose name holds a fee word ("CARTE ... GRAND FRAIS") is no longer bank fees; a shop named by its code
+  only ("HETM049") is named by its letters, not by the whole line; "AVOIR" (a refund) and "Réf" (a transfer's
+  reference) are not a shop's name.
+- The Fortuneo invented statements print what the real ones do: "Arrêté au 31 décembre 2023", the balances' day in
+  words ("AU 30 NOVEMBRE 2023") followed by "€".
+- The test data built with an obsolete call of the PDF library (a compiler warning).
+- `tests/Finance.PerformanceTests/perf.mjs` stopped at the category picker (it clicked before the month's tables were
+  drawn); it also measures the page's width changing every frame.
+
+### Measured
+- Frame rate before and after the size fix of Commit 54 (median of 3 runs each, the app off-screen with ten years of
+  operations, 240 Hz screen), average / lowest: idle 240 / 222 → 240 / 222 fps; scrolling months 239 / 119 → 239 / 118
+  fps; the width changing every frame 239 / 118 → 239 / 119 fps; just after switching to Year 240 / 222 → 240 / 227 fps;
+  scrolling years 240 / 120 → 240 / 120 fps; ten years 240 / 222 → 240 / 213 fps. No change beyond the noise.
+
+### Checked
+- End-to-end: 240/240 in WebView2 and 240/240 in WebKit (the macOS and Linux window's engine); Settings > Information
+  shows BoursoBank and Fortuneo confirmed. Unit 5246/5246, integration 958 (8 skipped: text recognition, not on this
+  machine for the macOS and Linux build; the balance check of the 3 real statements published in part). 0 compiler
+  warnings.
+- In the app, as a person imports them: the real BoursoBank statement of December 2024 (75 operations) and the Fortuneo
+  one of December 2023 (13), their bank named by the statement, both "Balanced to the cent".
+- Known limit of the copies: their letters are drawn in Arial at the bank's spacing, so a few BoursoBank labels come out
+  with two words joined ("VIRVirement"); the amounts, dates and balances are not affected.

@@ -60,4 +60,15 @@ public class DateParserTests
         Assert.True(parsed);
         Assert.Equal((2, 10), (used, date.B));
     }
+
+    [Theory]
+    [InlineData(new[] { "10/", "12/2024", "VIR" }, 2)]
+    [InlineData(new[] { "16/", "12/", "2022", "CARTE" }, 3)]
+    public void TryParseTokens_DatePrintedInPieces_IsOneDate(string[] tokens, int pieces)
+    {
+        var parsed = DateParser.TryParseTokens(tokens, 0, out var date, out var used);
+
+        Assert.True(parsed);
+        Assert.Equal((pieces, 12), (used, date.B));
+    }
 }

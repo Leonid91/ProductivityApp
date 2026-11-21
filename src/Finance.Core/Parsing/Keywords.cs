@@ -98,9 +98,22 @@ internal static class Keywords
         if (ContainsAny(folded, Intermediate)) return SummaryKind.Intermediate;
         if (ContainsAny(folded, Opening)) return SummaryKind.Opening;
         if (ContainsAny(folded, Closing)) return SummaryKind.Closing;
-        if (ContainsAny(folded, BalanceAsOf)) return SummaryKind.BalanceAsOf;
+        // The same words where the PDF set them close together without a space between them ("SOLDEAU : 29/11/2024",
+        // "ANCIEN SOLDECREDITEURAU", "NOUVEAUSOLDE CREDITEUR AU"): their letters are read as one word.
+        var compact = folded.Replace(" ", "", StringComparison.Ordinal);
+        if (ContainsAny(compact, CompactIntermediate)) return SummaryKind.Intermediate;
+        if (ContainsAny(compact, CompactOpening)) return SummaryKind.Opening;
+        if (ContainsAny(compact, CompactClosing)) return SummaryKind.Closing;
+        if (ContainsAny(folded, BalanceAsOf) || ContainsAny(compact, CompactBalanceAsOf)) return SummaryKind.BalanceAsOf;
         if (folded.StartsWith("TOTAL", StringComparison.Ordinal) || folded.StartsWith("SOLDE", StringComparison.Ordinal) || folded.StartsWith("BALANCE", StringComparison.Ordinal))
             return SummaryKind.Total;
         return SummaryKind.None;
     }
+
+    private static string[] Compact(string[] keys) => [.. keys.Select(k => k.Replace(" ", "", StringComparison.Ordinal))];
+
+    private static readonly string[] CompactIntermediate = Compact(Intermediate);
+    private static readonly string[] CompactOpening = Compact(Opening);
+    private static readonly string[] CompactClosing = Compact(Closing);
+    private static readonly string[] CompactBalanceAsOf = Compact(BalanceAsOf);
 }

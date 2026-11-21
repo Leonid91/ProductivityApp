@@ -69,7 +69,9 @@ public static partial class StatementParser
         if (p.RowBalanceChecks > 0) s += 100_000.0 * (p.RowBalanceChecks - p.RowBalanceMismatches) / p.RowBalanceChecks;
         s += 100 * Math.Min(p.Rows.Count, 500);
         if (p.Kind == ctx.DefaultKind) s += 50;
-        if (layout.FromHeader) s += 30;
+        // Columns named by the statement's own heading are known; columns found without one are guesses (debits and
+        // credits either way round): when nothing balances, the heading is believed rather than more rows.
+        if (layout.FromHeader) s += 60_000;
         return s;
     }
 
@@ -140,6 +142,10 @@ public static partial class StatementParser
     {
         var byPage = new Dictionary<int, PageLayout>();
         PageLayout? last = null;
+        // The table ended with its new balance: a later page without a heading of its own is another document (BoursoBank
+        // adds a "Récapitulatif des frais à venir" after the statement), not more operations.
+        var ended = false;
+        static bool Closes(TextLine l) => Keywords.ClassifySummary(TextNorm.Fold(string.Join(' ', l.Words.Select(w => w.Text)))) == SummaryKind.Closing;
         foreach (var page in ctx.Pages)
         {
             var lines = ctx.Lines.Where(l => l.Page == page.Number).OrderBy(l => l.Top).ToList();
@@ -148,13 +154,15 @@ public static partial class StatementParser
             {
                 last = BuildFromHeader(found.Value.Cells, found.Value.Bottom, lines);
                 byPage[page.Number] = last;
+                ended = lines.Any(l => l.Top > found.Value.Bottom && Closes(l));
             }
-            else if (last is not null)
+            else if (last is not null && !ended)
             {
                 byPage[page.Number] = new PageLayout
                 {
                     TableTop = 0, DescLeft = last.DescLeft, ValueDate = last.ValueDate, Category = last.Category, Amounts = last.Amounts,
                 };
+                ended = lines.Any(Closes);
             }
         }
         if (byPage.Count == 0) return null;
@@ -223,6 +231,8 @@ public static partial class StatementParser
         if (HasWord(f, "CATEGORIE", "CATEGORIES", "CATEGORY", "CATEGORY")) return ColumnRole.Category;
         if (HasWord(f, "DATE", "JOUR", "DATES"))
             return HasWord(f, "VALEUR", "VALUE", "POST", "POSTED", "POSTING", "INSCRIPTION", "COMPTABILISATION", "COMPTABLE") ? ColumnRole.ValueDate : ColumnRole.Date;
+        // A value date headed by its one word (BoursoBank: "Date opération | Libellé | Valeur | Débit | Crédit").
+        if (f is "VALEUR" or "VALUE" or "VAL." or "VAL") return ColumnRole.ValueDate;
         // "Money out" / "Money in", "Paid out" / "Paid in": the two words together name the column.
         if (f is "MONEY OUT" or "PAID OUT" or "ARGENT SORTANT" or "SORTIES D'ARGENT") return ColumnRole.Debit;
         if (f is "MONEY IN" or "PAID IN" or "ARGENT ENTRANT" or "ENTREES D'ARGENT") return ColumnRole.Credit;
@@ -403,6 +413,12 @@ public static partial class StatementParser
         for (var i = index; i < words.Count; i++)
         {
             var w = words[i];
+            // A value date in its own column after the label (BoursoBank): not part of the label.
+            if (pl.ValueDate?.Contains(w.CenterX) == true && w.Left > pl.DescLeft && TryDate(words, i, ctx, out _, out var valueWords))
+            {
+                i += valueWords - 1;
+                continue;
+            }
             if (AmountParser.TryParse(w.Text, out var a))
             {
                 var (zone, distance) = Nearest(pl.Amounts, w);
@@ -456,14 +472,17 @@ public static partial class StatementParser
     private static (Zone? Zone, double Distance) Nearest(List<Zone> zones, Word w)
     {
         Zone? best = null;
-        var bestD = double.MaxValue;
+        double bestD = double.MaxValue, nextD = double.MaxValue;
         foreach (var z in zones)
         {
             var d = Math.Min(Math.Abs(w.Right - z.Right), Math.Min(Math.Abs(w.CenterX - z.Center), Math.Abs(w.Left - z.Left)));
-            if (d < bestD) { best = z; bestD = d; }
+            if (d < bestD) { nextD = bestD; best = z; bestD = d; }
+            else if (d < nextD) nextD = d;
         }
         var limit = Math.Max(36, 2.5 * w.Height);
-        return bestD <= limit ? (best, bestD) : (null, bestD);
+        // Amounts right-aligned well to the right of a short heading ("Débit"): still that column's when clearly nearer
+        // it than any other.
+        return bestD <= limit || (bestD <= 60 && bestD < nextD * 0.8) ? (best, bestD) : (null, bestD);
     }
 
     private sealed class RawRow
@@ -547,6 +566,7 @@ public static partial class StatementParser
         TextLine? previous = null;
         PrintedAmount? firstBalanceOnly = null;
         var continuation = 0;
+        int? closedOnPage = null;
         foreach (var c in allCells)
         {
             var desc = c.Description;
@@ -554,6 +574,13 @@ public static partial class StatementParser
             // the operation being read nor starts one: the rest of its label can be at the top of the next page.
             if (c.Date is null && !c.HasMovement && PageFurniture().IsMatch(TextNorm.Fold(desc))) continue;
             var summary = Keywords.ClassifySummary(TextNorm.Fold(desc));
+            // A line without a date whose words end in a colon before its amount gives a total or a balance
+            // ("Montant frais bancaires* : 3,50" under BoursoBank's new balance), not an operation.
+            if (summary == SummaryKind.None && c.Date is null && c.HasMovement && desc.TrimEnd('*', ' ').EndsWith(':')) summary = SummaryKind.Total;
+            // Under the new balance the table is over: what follows on that page (the overdraft allowed, the fees of
+            // the month) is not an operation.
+            if (closedOnPage == c.Line.Page && summary == SummaryKind.None) { current = null; previous = c.Line; continue; }
+            if (summary == SummaryKind.Closing) closedOnPage = c.Line.Page;
             if (c.Date is not null) lastDate = c.Date;
 
             if (summary != SummaryKind.None)
@@ -571,7 +598,9 @@ public static partial class StatementParser
                 else
                 {
                     var date = c.Date ?? lastDate;
-                    if (date is null) { current = null; previous = c.Line; continue; }
+                    // Amounts alone on their line, no date and no words: a total printed beside its name (BoursoBank's
+                    // "Montant frais bancaires* :" a little lower), not an operation.
+                    if (date is null || (c.Date is null && desc.Length == 0)) { current = null; previous = c.Line; continue; }
                     current = new RawRow { Date = date.Value, Label = desc, LabelLeft = c.DescLeft, Page = c.Line.Page, Top = c.Line.Top };
                     current.Take(c);
                     rows.Add(current);

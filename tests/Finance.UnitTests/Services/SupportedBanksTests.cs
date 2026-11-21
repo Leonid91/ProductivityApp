@@ -21,6 +21,6 @@ public class SupportedBanksTests
         var banks = SupportedBanks.All.SelectMany(c => c.Banks).ToList();
 
         Assert.All(banks.Where(b => b.Confirmed), b => Assert.True(b.Considered, b.Name));
-        Assert.Equal([KnownBanks.National, "Scotiabank"], banks.Where(b => b.Confirmed).Select(b => b.Name));
+        Assert.Equal([KnownBanks.National, "Scotiabank", "BoursoBank", "Fortuneo"], banks.Where(b => b.Confirmed).Select(b => b.Name));
     }
 }

@@ -9,10 +9,10 @@ namespace ProductivityApp.Finance.Testing;
 /// <summary>
 /// Fictitious statements in every form Fortuneo (a French online bank) gives them in 2021-2026:
 /// <list type="bullet">
-/// <item>the monthly PDF "Relevé de Compte N° 8 - 2026" of the "COMPTE COURANT", "Arrêté au 31 AOÛT 2026": the table
+/// <item>the monthly PDF "Relevé de Compte N° 8 - 2026" of the "COMPTE COURANT", "Arrêté au 31 août 2026": the table
 /// "Date | Date de Valeur | Opération | Débit | Crédit", the operation's day without its year ("05/08"), its value date
-/// with it ("05/08/2026"), "ANCIEN SOLDE CRÉDITEUR AU dd/mm/yyyy" first ("ANCIEN SOLDE" alone on the first statement,
-/// "DÉBITEUR" when overdrawn), "TOTAL DES OPÉRATIONS DU RELEVÉ" then "NOUVEAU SOLDE CRÉDITEUR AU dd/mm/yyyy" last,
+/// with it ("05/08/2026"), "ANCIEN SOLDE CRÉDITEUR AU 31 JUILLET 2026 1 234,56 €" first ("ANCIEN SOLDE" alone on the first statement,
+/// "DÉBITEUR" when overdrawn), "TOTAL DES OPÉRATIONS DU RELEVÉ" then "NOUVEAU SOLDE CRÉDITEUR AU 31 AOÛT 2026" last (as on real statements of 2023 and 2025),
 /// amounts "2 000,00", card payments "CARTE dd/mm SHOP TOWN", labels on two lines, several pages, the date it was issued
 /// up the left margin; the month of a deferred debit card taken in one line;</item>
 /// <item>the same for a "Relevé Livret +", whose account has no IBAN ("Compte 12345678 01");</item>
@@ -134,7 +134,7 @@ public static class FortuneoGenerator
         page.MarginLeft(46);
         page.MarginRight(32);
         page.DefaultTextStyle(x => x.FontFamily("Lato").FontSize(8));
-        page.Background().PaddingLeft(14).PaddingTop(300).Width(12).RotateLeft().Text($"Émis le {end.AddDays(1):dd/MM/yyyy}").FontSize(6);
+        page.Background().PaddingLeft(14).PaddingTop(300).Width(12).RotateLayoutCounterclockwise().Text($"Émis le {end.AddDays(1):dd/MM/yyyy}").FontSize(6);
         page.Header().Row(r =>
         {
             r.RelativeItem().Column(h =>
@@ -145,7 +145,7 @@ public static class FortuneoGenerator
             r.AutoItem().AlignRight().Column(h =>
             {
                 h.Item().AlignRight().Text(title).FontSize(11).Bold();
-                h.Item().AlignRight().Text($"Arrêté au {end.ToString("d MMMM yyyy", Fr).ToUpper(Fr)}");
+                h.Item().AlignRight().Text($"Arrêté au {end.ToString("d MMMM yyyy", Fr)}");
                 h.Item().AlignRight().Text(t => { t.Span("Page "); t.CurrentPageNumber(); t.Span("/"); t.TotalPages(); });
             });
         });
@@ -173,8 +173,8 @@ public static class FortuneoGenerator
                 t.Cell().Element(Cell).Text("");
                 t.Cell().Element(Cell).Text("");
                 t.Cell().Element(Cell).Text(label).Bold();
-                t.Cell().Element(Cell).AlignRight().Text(v < 0 ? Money(v) : "").Bold();
-                t.Cell().Element(Cell).AlignRight().Text(v >= 0 ? Money(v) : "").Bold();
+                t.Cell().Element(Cell).AlignRight().Text(v < 0 ? Money(v) + " €" : "").Bold();
+                t.Cell().Element(Cell).AlignRight().Text(v >= 0 ? Money(v) + " €" : "").Bold();
             }
             if (opening.Length > 0) Balance(opening, openingValue);
             foreach (var l in lines)
@@ -195,6 +195,9 @@ public static class FortuneoGenerator
     }
 
     private static string Side(decimal v) => v < 0 ? "DÉBITEUR" : "CRÉDITEUR";
+
+    /// <summary>A day as the balances print it: "30 NOVEMBRE 2023".</summary>
+    private static string Long(DateOnly d) => d.ToString("d MMMM yyyy", Fr).ToUpper(Fr);
 
     public static byte[] Pdf(Statement s)
     {
@@ -221,8 +224,8 @@ public static class FortuneoGenerator
                     col.Item().Text("Titulaire(s) du compte : M ALEX SAMPLE");
                     col.Item().Text("NUMÉRO DE COMPTE 14806 00000 12345678901 23 - B IC FTNOFRP1XXX").FontSize(7);
                 }
-                var opening = s.First ? "ANCIEN SOLDE" : $"ANCIEN SOLDE {Side(s.Opening)} AU {s.Start.AddDays(-1):dd/MM/yyyy}";
-                Operations(col, opening, s.Opening, s.Lines, "TOTAL DES OPÉRATIONS DU RELEVÉ", (s.Debits, s.Credits), $"NOUVEAU SOLDE {Side(s.Closing)} AU {s.End:dd/MM/yyyy}", s.Closing);
+                var opening = s.First ? "ANCIEN SOLDE" : $"ANCIEN SOLDE {Side(s.Opening)} AU {Long(s.Start.AddDays(-1))}";
+                Operations(col, opening, s.Opening, s.Lines, "TOTAL DES OPÉRATIONS DU RELEVÉ", (s.Debits, s.Credits), $"NOUVEAU SOLDE {Side(s.Closing)} AU {Long(s.End)}", s.Closing);
                 col.Item().PaddingTop(8).Text("Total facturé ce mois : 2,00 €").FontSize(7);
             });
         })).WithMetadata(new DocumentMetadata { CreationDate = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero), ModifiedDate = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero) })

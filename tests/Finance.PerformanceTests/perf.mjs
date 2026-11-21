@@ -96,6 +96,9 @@ try {
   note('idle', await frames('() => {}', 3))
   note('scrolling months', await frames(`() => document.querySelector('main').scrollBy(0, 60)`, 6))
   note('memory after scrolling months', await memory())
+  // The page's width changing every frame (a scroll bar coming and going, the window resized): every period measured again.
+  note('width changing', await frames(`() => { const m = document.querySelector('main'); m.style.paddingRight = m.style.paddingRight ? '' : '12px' }`, 4))
+  await p.eval(`document.querySelector('main').style.paddingRight = ''`)
   await p.eval(`document.querySelector('main').scrollTo({ top: 0 })`)
   await sleep(1500)
   note('switch to analytics ms', await timed(clickIn('[data-period-view] button', 'Analytics'), `${settled} && !document.querySelector('[data-loading-charts]') && document.querySelectorAll('main section[data-period] svg').length > 5`))
@@ -110,7 +113,8 @@ try {
   note('switch to all time ms', await timed(clickIn('main button', 'All time')))
   note('ten years view', await frames('() => {}', 3))
   note('switch to month ms', await timed(clickIn('main button', 'Month')))
-  await sleep(500)
+  // The month's tables are drawn a piece at a time: a line of one is there to be clicked.
+  await p.waitFor(`document.querySelector('section tbody tr td:nth-child(2) button') !== null`, 20000, 'a line of a table')
   await p.click('section tbody tr td:nth-child(2) button', 0)
   await sleep(400)
   note('category picker scrolling', await frames(`() => document.querySelector('[role=menu]')?.parentElement?.scrollBy(0, 20)`, 3))

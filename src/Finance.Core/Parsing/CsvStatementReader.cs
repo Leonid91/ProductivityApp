@@ -159,15 +159,21 @@ public static partial class CsvStatementReader
     /// How many lines of <paramref name="balance"/> follow the line before by the amount of <paramref name="amount"/>
     /// (the oldest operation first, or the newest first).
     /// </summary>
-    private static int Running(List<List<string>> data, int balance, int amount, Func<int, char> sep)
+    private static int Running(List<List<string>> data, int balance, int amount, Func<int, char> sep, int account = -1)
     {
         decimal? Value(List<string> r, int i) => i < r.Count && TryNumber(r[i], sep(i), out var v) ? v : null;
+        string Account(List<string> r) => account >= 0 && account < r.Count ? r[account].Trim() : "";
         var n = 0;
-        for (var i = 1; i < data.Count; i++)
+        // Each line against the line before it of the same account.
+        var previous = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var row in data)
         {
-            if (Value(data[i], balance) is not { } now || Value(data[i - 1], balance) is not { } before) continue;
-            if (Value(data[i], amount) is { } a && now - before == a) n++;
-            else if (Value(data[i - 1], amount) is { } b && before - now == b) n++;
+            var key = Account(row);
+            var last = previous.GetValueOrDefault(key);
+            previous[key] = row;
+            if (last is null || Value(row, balance) is not { } now || Value(last, balance) is not { } before) continue;
+            if (Value(row, amount) is { } a && now - before == a) n++;
+            else if (Value(last, amount) is { } b && before - now == b) n++;
         }
         return n;
     }
@@ -232,7 +238,10 @@ public static partial class CsvStatementReader
             var cut = Cut(Both);
             bool Balanced(List<List<string>> t) => ParseTable(t, "", defaultCurrency, null, "CSV").Status is VerificationStatus.Verified;
             var before = byCurrency ? Cut(r => Money(r) ? At(r, currency).ToUpperInvariant() : "") : whole;
-            if (cut.Count > 1 && !before.All(p => Balanced(p.Item2)) && cut.All(p => ParseTable(p.Item2, "", defaultCurrency, null, "CSV").Status is VerificationStatus.Verified or VerificationStatus.NoTransactions)
+            // An account of one line has nothing to follow on: it cannot contradict the cut.
+            bool Agrees(List<List<string>> t) => ParseTable(t, "", defaultCurrency, null, "CSV") is var p
+                && (p.Status is VerificationStatus.Verified or VerificationStatus.NoTransactions || p.Rows.Count == 1);
+            if (cut.Count > 1 && !before.All(p => Balanced(p.Item2)) && cut.All(p => Agrees(p.Item2))
                 && cut.Any(p => Balanced(p.Item2)))
                 return [.. cut.Where(p => ParseTable(p.Item2, "", defaultCurrency, null, "CSV").Rows.Count > 0)];
         }
@@ -320,9 +329,11 @@ public static partial class CsvStatementReader
         }
         if (twinBalance is { } twin && !cols.ContainsKey(Col.Amount) && !cols.ContainsKey(Col.Debit) && !cols.ContainsKey(Col.Credit))
         {
-            // The balance is the one whose lines follow each other by the other one's amounts (in either order of lines).
+            // The balance is the one whose lines follow each other by the other one's amounts (in either order of lines;
+            // account by account in a file of several accounts); the later column when that does not tell.
             var first = cols[Col.Balance];
-            (cols[Col.Amount], cols[Col.Balance]) = Running(data, first, twin, SepAt) >= Running(data, twin, first, SepAt) ? (twin, first) : (first, twin);
+            var account = cols.GetValueOrDefault(Col.Account, -1);
+            (cols[Col.Amount], cols[Col.Balance]) = Running(data, first, twin, SepAt, account) > Running(data, twin, first, SepAt, account) ? (twin, first) : (first, twin);
         }
         InferMissingColumns(cols, data, decimalSep, descExtra);
         char Sep(Col c) => cols.TryGetValue(c, out var i) ? SepAt(i) : decimalSep;

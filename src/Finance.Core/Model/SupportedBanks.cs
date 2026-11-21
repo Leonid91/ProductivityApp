@@ -18,7 +18,7 @@ public static class SupportedBanks
     public static readonly IReadOnlyList<SupportedCountry> All =
     [
         new("CA", "Canada", [new(KnownBanks.National, true, true), new("Scotiabank", true, true)]),
-        new("FR", "France", [new("BoursoBank", true, false), new("Caisse d'Epargne", true, false), new("CIC", true, false), new("Fortuneo", true, false)]),
+        new("FR", "France", [new("BoursoBank", true, true), new("Caisse d'Epargne", true, false), new("CIC", true, false), new("Fortuneo", true, true)]),
         new("GB", "United Kingdom", [new("Revolut", true, false)]),
     ];
 }
