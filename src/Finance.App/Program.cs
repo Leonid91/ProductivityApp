@@ -14,6 +14,20 @@ internal static class Program
             Console.Error.WriteLine(ex.Message);
             return 2;
         }
+        // The first launch of this build writes its own short log (first-launch.txt), the whole run long.
+        FirstLaunchLog.Start(options, args, "WebView2");
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => FirstLaunchLog.Current?.Write("error: the app stopped: " + e.ExceptionObject);
+        try
+        {
+            var code = Run(options, args);
+            FirstLaunchLog.Current?.Write("exit code: " + code);
+            return code;
+        }
+        finally { FirstLaunchLog.Current?.Dispose(); }
+    }
+
+    private static int Run(AppOptions options, string[] args)
+    {
 
         // One window per data folder: a second launch brings the first one forward.
         using var mutex = new Mutex(true, InstanceName + (options.IsolatedRun ? "." + Environment.ProcessId : ""), out var first);
@@ -29,6 +43,7 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         using var services = new AppServices(options.DataDir, $"version: {typeof(Program).Assembly.GetName().Version}\nexe: {Environment.ProcessPath}\nprocessId: {Environment.ProcessId}\nargs: {string.Join(' ', args)}\ndataDir: {options.DataDir}\nos: {Environment.OSVersion}\nruntime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+        if (FirstLaunchLog.Current is { } firstLaunch) services.Logs.Mirror = firstLaunch.Mirror;
         _ = Task.Run(services.Warm);
         Application.ThreadException += (_, e) => services.Log(e.Exception, "ui");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (e.ExceptionObject is Exception ex) services.Log(ex, "fatal"); };

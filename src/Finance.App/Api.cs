@@ -29,8 +29,11 @@ internal static class Api
             maximized = window.Maximized,
             dataFolder = s.DbFolder,
             logFile = s.Logs.FilePath,
+            firstLaunch = FirstLaunchLog.Current is not null,
         });
         b.Register("app.ready", _ => null);
+        // First launch of a build: what the interface drew, a few seconds after it started (its first-launch log).
+        b.Register("app.drawn", p => { FirstLaunchLog.Current?.Write("interface drawn: " + p.GetRawText()); return null; });
         b.Register("window.minimize", _ => { window.Minimize(); return null; });
         b.Register("window.toggleMaximize", _ => { window.ToggleMaximize(); return new { maximized = window.Maximized }; });
         b.Register("window.close", _ => { window.CloseWindow(); return null; });

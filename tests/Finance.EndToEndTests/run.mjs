@@ -5,7 +5,8 @@
 //   node tests/Finance.EndToEndTests/run.mjs <ProductivityApp.exe> <samples folder> <output folder>
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { launch, sleep } from '../Finance.AppDriver/cdp.mjs'
+// E2E_BROWSER=webkit: the interface in WebKit (Safari's engine, as in the macOS and Linux windows), see webkit.mjs.
+const { launch, sleep } = await import(process.env.E2E_BROWSER === 'webkit' ? '../Finance.AppDriver/webkit.mjs' : '../Finance.AppDriver/cdp.mjs')
 
 const [exe, samples, out] = process.argv.slice(2)
 if (!exe || !samples || !out) { console.error('usage: run.mjs <exe> <samples> <out>'); process.exit(2) }
@@ -104,6 +105,9 @@ const timelineChecks = async (p, sec, t, label) => {
   return drawn
 }
 
+// The first-launch log of this run, written here instead of the user's own one.
+const firstLaunchLog = join(out, 'first-launch.txt')
+process.env.PRODUCTIVITYAPP_FIRST_LAUNCH_LOG = firstLaunchLog
 const p = await launch(exe, ['--offscreen', '--data-dir', data, '--size', '1440x920'], 9333)
 // Text read the way it shows on the screen: the banks and tables of a period away from the screen are drawn only when
 // they come near (content-visibility: auto), and the browser gives no text (innerText) for what it has not drawn. The
@@ -416,6 +420,8 @@ try {
   await sleep(500)
   check('periods open on their statements, without charts', await p.eval(`document.querySelector('${sec} table') !== null && document.querySelector('${sec} [data-pie]') === null && document.querySelector('${sec} [data-flowchart]') === null`))
   check('each bank starts with its totals, above its tables', await p.eval(`(() => { const b = [...document.querySelectorAll('${sec} [data-part-block]')].find(b => b.querySelector('table')); const t = b.querySelector('[data-totals]'); return !!t && t.getBoundingClientRect().bottom <= b.querySelector('table').getBoundingClientRect().top && !!b.querySelector('[data-stat="Expenses / earnings"]') })()`))
+  // The recurring payments come a step after the bank's totals (a period is drawn a piece at a time).
+  await p.waitFor(`document.querySelector('${sec} [data-stat="Recurring payments, rent excluded"]') !== null`, 10000, 'recurring payments drawn')
   const ratio = await p.eval(`(() => { const s = document.querySelector('${sec}'); const bg = (l) => getComputedStyle(s.querySelector('[data-stat="' + l + '"]')).backgroundColor; const r = s.querySelector('[data-stat="Expenses / earnings"]'); return { text: r.innerText, rec: s.querySelector('[data-stat="Recurring payments, rent excluded"]').innerText, ratio: bg('Expenses / earnings'), exp: bg('Expenses'), earn: bg('Earnings') } })()`)
   const share = parseInt(ratio.text.match(/(\d+)%/)?.[1] ?? '0', 10)
   check('expenses / earnings red above 100%, green below, without the spent-of-earned line', !ratio.text.includes('spent of') && (share > 100 ? ratio.ratio === ratio.exp : ratio.ratio === ratio.earn), `${share}% ${ratio.ratio}`)
@@ -1974,6 +1980,13 @@ try {
   try { await shot(p, '99-error.png') } catch { /* window gone */ }
 } finally {
   await p.close()
+}
+if (!failed) {
+  // The first launch wrote each step, the interface's requests, what it drew, and its end.
+  const first = existsSync(firstLaunchLog) ? readFileSync(firstLaunchLog, 'utf8') : ''
+  check('the first launch wrote its log: build, requests, what was drawn, the end', /  build: .+ bytes/.test(first) && first.includes('request app.init: ok')
+    && /interface drawn: \{"menu":true,"elements":\d{3,}/.test(first) && first.includes('The app ended.') && Buffer.byteLength(first) < 1024 * 1024,
+    `${Buffer.byteLength(first)} bytes`)
 }
 writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, consoleErrors: p.consoleErrors }, null, 1))
 const bad = checks.filter((c) => !c.ok).length

@@ -54,6 +54,8 @@ export interface InitInfo {
   dataFolder: string
   /** The log file (it can be moved). */
   logFile: string
+  /** The first launch of this build: what the interface drew is written to its first-launch log. */
+  firstLaunch: boolean
 }
 
 export interface Slice { key: string; label: string; amount: number; share: number }
@@ -370,6 +372,7 @@ export interface LogEntry { n: number; time: string; level: 'debug' | 'info' | '
 export const api = {
   init: () => invoke<InitInfo>('app.init'),
   ready: () => invoke<null>('app.ready'),
+  drawn: (what: Record<string, unknown>) => invoke<null>('app.drawn', what),
   window: {
     minimize: () => invoke<null>('window.minimize'),
     toggleMaximize: () => invoke<{ maximized: boolean }>('window.toggleMaximize'),

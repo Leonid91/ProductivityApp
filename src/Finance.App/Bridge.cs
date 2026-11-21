@@ -126,6 +126,7 @@ internal sealed class Bridge
             var result = await handler(args).ConfigureAwait(false);
             var reply = JsonSerializer.Serialize(new { id, ok = true, result }, Json);
             Post(reply, "answer to " + method);
+            if (!Unlogged.Contains(method)) FirstLaunchLog.Current?.Write("request " + method + ": ok");
             // In full: the request as received and the answer as sent.
             if (!Reads.Contains(method)) _actions.Write("info", "engine", method, DateTime.Now, Started(started), "\nrequest: ", raw, "\nanswer: ", reply);
         }
@@ -135,6 +136,7 @@ internal sealed class Bridge
             var message = expected ? ex.Message : "Something went wrong. The details were written to the log.";
             var reply = JsonSerializer.Serialize(new { id, ok = false, error = new { message } }, Json);
             Post(reply, "answer to " + (method.Length > 0 ? method : "an unreadable message"));
+            FirstLaunchLog.Current?.Write("request " + (method.Length > 0 ? method : "(unreadable)") + ": failed: " + (expected ? ex.Message : ex.ToString()));
             // The full exception: its type, message, inner exceptions and call stack.
             if (!Unlogged.Contains(method) || !expected)
                 _actions.Write(expected ? "warning" : "error", "engine", method.Length > 0 ? method : "unreadable message", DateTime.Now,

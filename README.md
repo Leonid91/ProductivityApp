@@ -1,5 +1,14 @@
 # ProductivityApp
 
+## Start without installing
+
+1. Download this whole repository (**Code**, then **Download ZIP**), and unzip it.
+2. Start the app from that folder:
+   - Windows: double-click `start.cmd`.
+   - macOS and Linux: open Terminal in that folder and run `sh start.sh`.
+
+Or install it, as below.
+
 ## Windows
 
 1. Download [ProductivityApp-0.1.0-windows-x64.exe](release/ProductivityApp-0.1.0-windows-x64.exe).
@@ -41,3 +50,17 @@ Other distributions:
    tar -xzf ProductivityApp-0.1.0-linux-x64.tar.gz
    ./ProductivityApp/ProductivityApp
    ```
+
+## First-launch log
+
+The first time the app opens, it writes each step to a small text file. If the app does not open well, send this file.
+
+- Windows: `%LOCALAPPDATA%\ProductivityApp\first-launch.txt`
+- macOS: `~/Library/Application Support/ProductivityApp/first-launch.txt`
+- Linux: `~/.local/share/ProductivityApp/first-launch.txt`
+
+To copy it on macOS, run in Terminal:
+
+```bash
+pbcopy < ~/Library/Application\ Support/ProductivityApp/first-launch.txt
+```

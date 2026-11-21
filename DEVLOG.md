@@ -1245,3 +1245,33 @@ real app with `tools/e2e/perf.mjs`.
 - The end-to-end suite on a machine without text recognition (the macOS and Linux window tested on Windows): the
   scanned statement must say what to install, every other file is read; it stopped at the first import before. Both
   windows pass all 236 checks.
+
+## November 20th, 2026 - The macOS window drew nothing; starting from the repository; the first-launch log - Commit 51
+
+### Fixed
+- macOS (and Linux): the window stayed white. The Periods page asked for `requestIdleCallback`, which Safari's engine
+  (WKWebView, the macOS window) and WebKitGTK do not have: "ReferenceError: Can't find variable: requestIdleCallback",
+  and the whole interface was taken away. Work that waits for an idle moment now goes through `ui/src/idle.ts`
+  (`requestIdleCallback` where there is one, after the next frame otherwise). Seen and fixed in WebKit 27.2: the same
+  error and white page before, the interface drawn after.
+- macOS and Linux: the app stopped at start when its data folder had a long path ("is of an invalid length for use with
+  domain sockets"): the socket that keeps one window per data folder was in that folder, and a socket's path holds about
+  100 characters at most. It is now named after the folder, in a short folder of the system (XDG_RUNTIME_DIR, the
+  temporary folder, or /tmp).
+
+### Added
+- `start.cmd` (Windows) and `start.sh` (macOS, Linux: `sh start.sh`): the app started from the downloaded repository,
+  without installing it. start.sh unpacks the release of the system and processor into `.run/` the first time
+  (removing macOS's download mark, checking the signature; on Linux, naming the missing libraries and how to install
+  them).
+- The first-launch log (`src/Finance.App/FirstLaunchLog.cs`): `first-launch.txt` next to the data folder
+  (`%LOCALAPPDATA%\ProductivityApp`, `~/Library/Application Support/ProductivityApp`, `~/.local/share/ProductivityApp`),
+  written only while a build's first launch runs, at most 1 MB: the system, the build, each step of the start, each
+  request of the interface (its name and whether it worked, never its data), every warning and error in full, what the
+  interface drew 3 seconds in, and the end. start.sh writes its own steps first, in the same file. README: where it is.
+- `tests/Finance.AppDriver/webkit.mjs`: the end-to-end suite with the interface in WebKit (Playwright's WebKit, not in
+  the repository), the real app still doing the work (`E2E_BROWSER=webkit`). The suite also checks the first-launch log.
+
+### Known
+- In WebKit, switching Analytics back to Statements can leave the page on another month (the month read was let go of
+  while away and is not drawn again as soon as in WebView2). The WebKit suite passes its first 114 checks and stops there.

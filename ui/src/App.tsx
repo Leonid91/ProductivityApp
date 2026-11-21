@@ -72,6 +72,18 @@ function Shell() {
   }, [])
 
   useEffect(() => { void api.ready() }, [])
+  // First launch of this build: what was drawn a few seconds after the start, for its first-launch log.
+  useEffect(() => {
+    if (!info.firstLaunch) return
+    const t = window.setTimeout(() => void api.drawn({
+      menu: document.querySelector('nav') !== null,
+      elements: document.querySelectorAll('#root *').length,
+      characters: document.body.innerText.length,
+      window: `${window.innerWidth}x${window.innerHeight}`,
+      browser: navigator.userAgent,
+    }), 3000)
+    return () => window.clearTimeout(t)
+  }, [info.firstLaunch])
   useEffect(() => { void refreshAccounts(); void refreshBanks() }, [refreshAccounts, refreshBanks])
 
   return (

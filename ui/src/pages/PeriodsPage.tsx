@@ -14,6 +14,7 @@ import { TransactionDialog, pickerFormats } from '../components/TransactionDialo
 import { EmptyState } from '../components/common'
 import { pace, useRealHeights } from '../pace'
 import { setEverything, useAnythingOpen } from '../folds'
+import { whenIdle } from '../idle'
 
 interface Period { from: string; to: string; key: string; count?: number }
 interface Item { key: string; p: Period; granularity: 'month' | 'year' | 'range' }
@@ -66,15 +67,13 @@ export function PeriodsPage() {
   const { settings, dataVersion, fail, go } = useApp()
   // The charts are not needed to start: their code is read once the browser is idle, so Analytics opens at once.
   useEffect(() => {
-    const id = requestIdleCallback(() => void loadCharts(), { timeout: 4000 })
-    return () => cancelIdleCallback(id)
+    return whenIdle(() => void loadCharts(), 4000)
   }, [])
   const [index, setIndex] = useState<PeriodIndex | null>(null)
   const [mode, setMode] = useState<'month' | 'year' | 'all' | 'custom'>('month')
   const [pickersMade, setPickersMade] = useState(false)
   useEffect(() => {
-    const id = requestIdleCallback(() => setPickersMade(true), { timeout: 5000 })
-    return () => cancelIdleCallback(id)
+    return whenIdle(() => setPickersMade(true), 5000)
   }, [])
   // The periods follow the button in the background: the button answers at once, the periods of the old kind are
   // replaced a little at a time (the screen keeps moving).
