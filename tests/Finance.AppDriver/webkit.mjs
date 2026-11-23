@@ -16,6 +16,8 @@ export async function launch(exe, args, port) {
   if (!process.env.E2E_PLAYWRIGHT) throw new Error('E2E_PLAYWRIGHT is not set (folder of the playwright-core package).')
   const { webkit } = await import(pathToFileURL(join(process.env.E2E_PLAYWRIGHT, 'index.mjs')).href)
   const app = await launchApp(exe, args, port)
+  // The app's page can still be on its first, empty document for a moment: its address and files come after.
+  await app.waitFor(`location.protocol.startsWith('http')`, 20000, 'the app page at its address')
   const origin = await app.eval('location.origin')
   // What the engine sends to its own page is kept there for the WebKit page.
   await app.eval(`window.__relay = []; window.chrome.webview.addEventListener('message', (e) => window.__relay.push(typeof e.data === 'string' ? e.data : JSON.stringify(e.data)))`)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Autocomplete, Box, Button, IconButton, TextField, Tooltip, Typography, useTheme } from '@mui/material'
 import East from '@mui/icons-material/EastRounded'
 import West from '@mui/icons-material/WestRounded'
@@ -12,6 +12,9 @@ import { CategoryIcon } from '../components/CategoryIcon'
 import { Money, useCategoryColor } from '../components/common'
 import { MonthGrid, type DayEntry } from '../components/MonthGrid'
 import { TransactionDialog } from '../components/TransactionDialog'
+
+const noHolidays: Holiday[] = []
+const noRates = new Map<string, RateUse>()
 
 /** The day n days after an ISO day. */
 function addDays(day: string, n: number): string {
@@ -38,7 +41,11 @@ function parsePair(setting: string | undefined, currency: string): { left: strin
   return { left: currency, right: currency === 'EUR' ? 'USD' : 'EUR', forward: true }
 }
 
-const rateText = (r: number) => r.toLocaleString('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+const rateFormat = new Intl.NumberFormat('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+const rateText = (r: number) => rateFormat.format(r)
+const dayTitleFormat = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
+// The rate written in each day of the calendar.
+const dayRate = new Intl.NumberFormat('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
 
 /**
  * The exchange rate of two currencies, chosen in lists that find a currency as it is typed; the arrow between them
@@ -108,9 +115,11 @@ export function CalendarPage() {
     && (id === 'cardpayments' ? hideCard : id === 'investments' ? hideInvest : hideMoves)
   const theme = useTheme()
   const dark = theme.palette.mode === 'dark'
-  const [month, setMonth] = useState(() => { const t = parts(today()); return { y: t.y, m: t.m } })
-  const [summary, setSummary] = useState<PeriodSummary | null>(null)
-  const [holidays, setHolidays] = useState<Holiday[]>([])
+  // The month asked for: unknown until the index says which is the latest with data.
+  const [month, setMonth] = useState<{ y: number; m: number } | null>(null)
+  // What is drawn: a month with its operations, holidays and rates, loaded together and drawn once when all are there
+  // (each answer drawn on its own drew the whole month again, once per answer).
+  const [shown, setShown] = useState<{ y: number; m: number; summary: PeriodSummary | null; holidays: Holiday[]; rates: Map<string, RateUse> } | null>(null)
   const [day, setDay] = useState<string>(today())
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
@@ -118,41 +127,42 @@ export function CalendarPage() {
   // The exchange rate of two currencies, day by day, with the rates of the central bank chosen in Settings.
   const pair = parsePair(settings.calendarRates, currency)
   const [currencies, setCurrencies] = useState<string[]>([])
-  const [rates, setRates] = useState<Map<string, RateUse>>(new Map())
   const [source, setSource] = useState('')
   const [rateFrom, rateTo] = pair.forward ? [pair.left, pair.right] : [pair.right, pair.left]
   useEffect(() => {
     api.rates.currencies().then(setCurrencies, fail)
     api.rates.status().then((s) => setSource(s.source ? `Rates of ${s.source}.` : ''), fail)
   }, [dataVersion, fail])
-  useEffect(() => {
-    const from = iso(month.y, month.m, 1)
-    const to = iso(month.y, month.m, daysInMonth(month.y, month.m))
-    if (rateFrom === rateTo) { setRates(new Map()); return }
-    api.rates.pair(rateFrom, rateTo, addDays(from, -7), addDays(to, 7)).then((list) => setRates(new Map(list.map((r) => [r.day, r]))), () => setRates(new Map()))
-  }, [month, rateFrom, rateTo, dataVersion])
   const setPair = (p: { left: string; right: string; forward: boolean }) => void setSetting('calendarRates', `${p.left}${p.forward ? '>' : '<'}${p.right}`)
 
-  // Start on the latest month that has data, in any bank.
+  // Start on the latest month that has data, in any bank; this month when there is none.
   useEffect(() => {
+    const t = parts(today())
     api.periods.index().then((ix) => {
-      if (ix.last) {
-        const [y, m] = ix.last.split('-').map(Number)
-        const t = parts(today())
-        if (y * 12 + m < t.y * 12 + t.m) { setMonth({ y, m }); setDay(iso(y, m, 1)) }
-      }
-    }, fail)
+      const [y, m] = ix.last ? ix.last.split('-').map(Number) : [t.y, t.m]
+      if (y * 12 + m < t.y * 12 + t.m) { setMonth({ y, m }); setDay(iso(y, m, 1)) } else setMonth({ y: t.y, m: t.m })
+    }, (e) => { setMonth({ y: t.y, m: t.m }); fail(e) })
   }, [fail])
 
   useEffect(() => {
+    if (!month) return
+    let live = true
     const from = iso(month.y, month.m, 1)
     const to = iso(month.y, month.m, daysInMonth(month.y, month.m))
-    api.periods.report(from, to, 'month').then((r) => {
-      setSummary({ ...r.global, transactions: globalTransactions(r) })
-    }, fail)
-    // The weeks shown run into the months before and after.
-    api.holidays.list(addDays(from, -7), addDays(to, 7)).then(setHolidays, fail)
-  }, [month, currency, dataVersion, fail])
+    Promise.all([
+      api.periods.report(from, to, 'month').then((r): PeriodSummary => ({ ...r.global, transactions: globalTransactions(r) }), (e) => { fail(e); return null }),
+      // The weeks shown run into the months before and after.
+      api.holidays.list(addDays(from, -7), addDays(to, 7)).catch((e) => { fail(e); return [] as Holiday[] }),
+      rateFrom === rateTo ? [] : api.rates.pair(rateFrom, rateTo, addDays(from, -7), addDays(to, 7)).catch(() => [] as RateUse[]),
+    ]).then(([summary, holidays, list]) => {
+      // An answer for a month asked before another is left out.
+      if (live) setShown({ ...month, summary, holidays, rates: new Map(list.map((r) => [r.day, r])) })
+    })
+    return () => { live = false }
+  }, [month, currency, rateFrom, rateTo, dataVersion, fail])
+  const summary = shown?.summary ?? null
+  const holidays = shown?.holidays ?? noHolidays
+  const rates = shown?.rates ?? noRates
 
   // The same holiday in several checked calendars (Christmas Day in Canada and in Québec): written once, with its
   // places. The day off given for a holiday on a weekend is written "(observed)".
@@ -169,45 +179,21 @@ export function CalendarPage() {
   }, [holidays])
   // The weekend days chosen in Definitions > Holidays (ISO numbers, Monday 1 to Sunday 7), shaded.
   const weekend = useMemo(() => new Set((settings.weekendDays ?? '6,7').split(',').filter(Boolean).map(Number)), [settings.weekendDays])
-  const isWeekend = (dow: number) => weekend.has(dow === 0 ? 7 : dow)
+  const holidayDays = useMemo(() => new Set(holidays.map((h) => h.day)), [holidays])
   const entries = useMemo((): DayEntry[] => {
-    // Holidays first in their day, then what came in, went out and moved; the exchange rate of the day last.
+    // Holidays first in their day, then what came in, went out and moved; the exchange rate of the day last. Their
+    // look is the style sheet below: each only carries its class names.
     const off = merged.map((h, i): DayEntry => ({
       key: `h${i}`, day: h.day, order: 0, text: h.name,
-      content: (
-        <Box
-          data-holiday={h.day}
-          title={`${h.name} · ${h.locations.join(', ')}`}
-          sx={{ width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 11.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'primary.main', bgcolor: dark ? 'rgba(106,165,236,.14)' : 'rgba(36,104,192,.08)' }}
-        >
-          {h.name}
-        </Box>
-      ),
+      content: <div data-holiday={h.day} title={`${h.name} · ${h.locations.join(', ')}`} className="cal-holiday">{h.name}</div>,
     }))
     const rated = [...rates.values()].map((r): DayEntry => {
-      const text = `${r.rate.toLocaleString('en-CA', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ${rateTo}`
-      return {
-        key: 'r' + r.day, day: r.day, order: 2, text,
-        content: <Box data-day-rate={r.day} className="tnum" sx={{ width: '100%', px: 0.75, fontSize: 11, fontWeight: 520, textAlign: 'right', color: 'text.secondary' }}>{text}</Box>,
-      }
+      const text = `${dayRate.format(r.rate)} ${rateTo}`
+      return { key: 'r' + r.day, day: r.day, order: 2, text, content: <div data-day-rate={r.day} className="tnum cal-rate">{text}</div> }
     })
     // Income in green, spending in red, money moved between own accounts or invested in black.
     const amount = (key: string, day: string, kind: 'in' | 'out' | 'move', text: string): DayEntry => ({
-      key, day, order: 1, text,
-      content: (
-        <Box
-          className="tnum"
-          sx={{
-            width: '100%', px: 0.75, py: 0.2, borderRadius: 1.25, fontSize: 12, fontWeight: 600, textAlign: 'right',
-            color: kind === 'in' ? theme.palette.money.positive : kind === 'out' ? theme.palette.money.negative : theme.palette.money.zero,
-            bgcolor: kind === 'in' ? (dark ? 'rgba(76,194,106,.12)' : 'rgba(0,99,0,.07)')
-              : kind === 'out' ? (dark ? 'rgba(239,107,107,.12)' : 'rgba(208,59,59,.07)')
-              : (dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)'),
-          }}
-        >
-          {text}
-        </Box>
-      ),
+      key, day, order: 1, text, content: <div className={`tnum cal-amount cal-${kind}`}>{text}</div>,
     })
     if (!summary) return [...off, ...rated]
     return [...off, ...rated, ...summary.series.flatMap((b) => {
@@ -218,15 +204,21 @@ export function CalendarPage() {
         ...(moved > 0 ? [amount('m' + b.key, b.key, 'move', '⇄ ' + money(moved, currency))] : []),
       ]
     })]
-  }, [summary, merged, currency, hideCard, hideMoves, hideInvest, rates, rateTo, dark, theme])
-  const holidayDays = useMemo(() => new Set(holidays.map((h) => h.day)), [holidays])
+  }, [summary, merged, currency, hideCard, hideMoves, hideInvest, rates, rateTo])
+  // The grid is drawn again only when what it shows changes (not when the dialog opens or a rate is picked).
+  const dayClass = useCallback((d: string, dow: number) => [d === day ? 'selected-day' : '', holidayDays.has(d) ? 'holiday-day' : '', weekend.has(dow === 0 ? 7 : dow) ? 'weekend-day' : ''].filter(Boolean).join(' '), [day, holidayDays, weekend])
+  const headClass = useCallback((dow: number) => (weekend.has(dow === 0 ? 7 : dow) ? 'weekend-head' : ''), [weekend])
   const dayHolidays = merged.filter((h) => h.day === day)
 
   const dayTx = summary?.transactions.filter((t) => t.date === day && !hidden(t.categoryId)) ?? []
   const brands = useMemo(() => [...new Set(summary?.transactions.map((t) => t.brand) ?? [])], [summary])
 
+  // Nothing is drawn before the first month is loaded: the page appears once, with that month and what it holds.
+  if (!shown) return null
+
   const shift = (delta: number) => {
-    const n = month.y * 12 + (month.m - 1) + delta
+    const from = month ?? shown
+    const n = from.y * 12 + (from.m - 1) + delta
     const y = Math.floor(n / 12)
     const m = (n % 12) + 1
     setMonth({ y, m })
@@ -234,13 +226,13 @@ export function CalendarPage() {
   }
 
   const d = parts(day)
-  const dayTitle = new Date(Date.UTC(d.y, d.m - 1, d.d)).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
+  const dayTitle = dayTitleFormat.format(Date.UTC(d.y, d.m - 1, d.d))
 
   return (
     <Box sx={{ maxWidth: 1480, mx: 'auto', pt: 3, pb: 6, display: 'flex', gap: 3, alignItems: 'flex-start' }}>
       <Box sx={{ flex: 1, minWidth: 0, border: 1, borderColor: 'divider', borderRadius: '24px', bgcolor: 'background.paper', p: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-          <Typography variant="h5" sx={{ flex: 1 }}>{monthName(month.m)} {month.y}</Typography>
+          <Typography variant="h5" sx={{ flex: 1 }}>{monthName(shown.m)} {shown.y}</Typography>
           {/* The month's totals, every bank together in the display currency. */}
           {summary && (
             <Box data-month-totals sx={{ display: 'flex', alignItems: 'center', gap: 1, mr: 1.5 }}>
@@ -256,12 +248,12 @@ export function CalendarPage() {
           <IconButton aria-label="Next month" onClick={() => shift(1)}><ChevronRight /></IconButton>
         </Box>
         <MonthGrid
-          year={month.y}
-          month={month.m}
+          year={shown.y}
+          month={shown.m}
           firstDay={Number(settings.calendarFirstDay ?? 0)}
           entries={entries}
-          dayClass={(d, dow) => [d === day ? 'selected-day' : '', holidayDays.has(d) ? 'holiday-day' : '', isWeekend(dow) ? 'weekend-day' : ''].filter(Boolean).join(' ')}
-          headClass={(dow) => (isWeekend(dow) ? 'weekend-head' : '')}
+          dayClass={dayClass}
+          headClass={headClass}
           onDay={setDay}
         />
       </Box>
@@ -315,10 +307,20 @@ export function CalendarPage() {
       </Box>
 
       <TransactionDialog open={editing !== null || adding} tx={editing} brands={brands} defaultDate={day} onClose={() => { setEditing(null); setAdding(false) }} />
-      <style>{`.selected-day { box-shadow: inset 0 0 0 2px ${theme.palette.primary.main}; }
+      {/* The ring of the day chosen is a border of its own, over the day's tint and under its lines: drawn as an inset
+          shadow, it needed a drawing program of the graphics card that nothing else uses, made while the first frame
+          after the calendar opened waited for it. */}
+      <style>{`.selected-day { position: relative; }
+        .selected-day::before { content: ''; position: absolute; inset: 0; border: 2px solid ${theme.palette.primary.main}; pointer-events: none; }
         .weekend-day { background: ${dark ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.028)'}; }
         .weekend-head { color: ${theme.palette.text.secondary}; }
-        .holiday-day { background: ${dark ? 'rgba(106,165,236,.07)' : 'rgba(36,104,192,.045)'}; }`}</style>
+        .holiday-day { background: ${dark ? 'rgba(106,165,236,.07)' : 'rgba(36,104,192,.045)'}; }
+        .cal-holiday { width: 100%; padding: ${theme.spacing(0.2, 0.75)}; border-radius: ${Number(theme.shape.borderRadius) * 1.25}px; font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: ${theme.palette.primary.main}; background-color: ${dark ? 'rgba(106,165,236,.14)' : 'rgba(36,104,192,.08)'}; }
+        .cal-rate { width: 100%; padding: ${theme.spacing(0, 0.75)}; font-size: 11px; font-weight: 520; text-align: right; color: ${theme.palette.text.secondary}; }
+        .cal-amount { width: 100%; padding: ${theme.spacing(0.2, 0.75)}; border-radius: ${Number(theme.shape.borderRadius) * 1.25}px; font-size: 12px; font-weight: 600; text-align: right; }
+        .cal-in { color: ${theme.palette.money.positive}; background-color: ${dark ? 'rgba(76,194,106,.12)' : 'rgba(0,99,0,.07)'}; }
+        .cal-out { color: ${theme.palette.money.negative}; background-color: ${dark ? 'rgba(239,107,107,.12)' : 'rgba(208,59,59,.07)'}; }
+        .cal-move { color: ${theme.palette.money.zero}; background-color: ${dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.045)'}; }`}</style>
     </Box>
   )
 }

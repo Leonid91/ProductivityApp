@@ -7,9 +7,16 @@ export interface DayEntry { key: string; day: string; order: number; text: strin
 
 const DAY_MS = 86_400_000
 const dayOf = (t: number) => { const d = new Date(t); return iso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()) }
-const longDate = (day: string) => { const d = parts(day); return new Date(Date.UTC(d.y, d.m - 1, d.d)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) }
+// The formats made once: a date written with options makes its format anew at each call, and a month draws 42 of them.
+const longFormat = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+const longDate = (day: string) => { const d = parts(day); return longFormat.format(Date.UTC(d.y, d.m - 1, d.d)) }
 // Week day names from a Sunday (4 January 1970).
-const weekday = (dow: number, form: 'short' | 'narrow') => new Date(Date.UTC(1970, 0, 4 + dow)).toLocaleDateString('en-US', { weekday: form, timeZone: 'UTC' })
+const weekdays = Object.fromEntries((['short', 'narrow'] as const).map((form) => {
+  const f = new Intl.DateTimeFormat('en-US', { weekday: form, timeZone: 'UTC' })
+  return [form, Array.from({ length: 7 }, (_, dow) => f.format(Date.UTC(1970, 0, 4 + dow)))]
+})) as Record<'short' | 'narrow', string[]>
+const weekday = (dow: number, form: 'short' | 'narrow') => weekdays[form][dow]
+const byText = new Intl.Collator()
 
 /**
  * A month as weeks of seven days, from the week day chosen as first: only the weeks the month needs, the days of the
@@ -39,7 +46,7 @@ export const MonthGrid = memo(function MonthGrid({ year, month, firstDay, entrie
     if (list) list.push(e)
     else byDay.set(e.day, [e])
   }
-  for (const list of byDay.values()) list.sort((a, b) => a.order - b.order || a.text.localeCompare(b.text))
+  for (const list of byDay.values()) list.sort((a, b) => a.order - b.order || byText.compare(a.text, b.text))
   const dows = Array.from({ length: 7 }, (_, i) => (firstDay + i) % 7)
 
   // A page taller than the window by less than the scrollbar's room gives back: the rows keep the size they have with

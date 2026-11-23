@@ -1526,3 +1526,44 @@ real app with `tools/e2e/perf.mjs`.
 - The released Windows exe started in a sandbox: interface drawn, `supported-banks.json` written with only National Bank
   of Canada and Scotiabank confirmed, no warning or error in its log.
 - Known: the calendar's lowest frame rate (30 to 40 fps, in both builds) is one slow frame just after it opens.
+
+## November 23rd, 2026 - The calendar opens without a slow frame - Commit 57
+
+### Fixed
+- The frames just after the Calendar opens (its lowest frame rate was 30 to 40 fps): it drew the current month empty,
+  then the latest month with data, then that month again for each answer of the engine (operations, holidays, exchange
+  rates, currencies), seven times in a row; each time it wrote out the 42 dates anew (a date written with options makes
+  its format again at each call), worked out the look of every line of every day anew, and measured the page again. The
+  month is now loaded with its operations, holidays and rates together and drawn once: the page appears with the month
+  and what it holds. The lines of the days carry class names of a style sheet made from the theme (as the periods do);
+  the formats of the dates and rates are made once; the grid is drawn again only when what it shows changes.
+- The ring of the day chosen is a border of its own: drawn as an inset shadow, it needed a drawing program of the
+  graphics card that nothing else uses, made the first time while the frame waited for it.
+- Two months asked one after the other (two quick clicks on an arrow): the answer for the first could come last and show
+  its operations under the second month's name. An answer for a month asked before another is now left out.
+- `tests/Finance.AppDriver/webkit.mjs`: it could read the app page's address while that page was still empty, and stop
+  before the first check; it waits for the address.
+
+### Changed
+- Before its month is loaded, the Calendar page is empty; it no longer shows the current month first.
+
+### Measured
+- Frame rate before and after (5 runs of each build taken in turns, the app off-screen with ten years of operations,
+  240 Hz screen), average / lowest, median: calendar 237 / 40 → 240 / 227 fps (lowest of each run: 40 in all five
+  before, 213 to 227 after); idle 240 / 227 → 240 / 227 fps; scrolling months 239 / 118 → 239 / 119 fps; width
+  changing every frame 239 / 119 → 238 / 119 fps; just after switching to Year 241 / 227 → 240 / 227 fps; scrolling
+  years 240 / 123 → 240 / 217 fps; ten years 240 / 227 → 240 / 233 fps; category picker scrolling 239 / 80 → 239 / 81
+  fps; brands list scrolling 239 / 60 → 240 / 227 fps. Apart from the calendar, the lowest frame rates move within what
+  the same build gives from one run to the next (scrolling years: 82 to 222 fps for the build before; brands list: 60 to
+  233 fps for the new one).
+
+### Checked
+- Screenshots of the calendar in the build before and this one, same data: opened, a busy day chosen, a weekend day,
+  Christmas Day (holidays of Canada and Québec), the month before, dark theme, a weekend day in dark: the same to the
+  pixel, but for one pixel of the page's background at the top of the menu, one shade lighter in the light theme.
+- End-to-end: 255/255 in WebView2 and 255/255 in WebKit (the macOS and Linux window's engine). Unit 5264/5264,
+  integration 958 (8 skipped, as before), page 7/7. 0 compiler warnings.
+- The released Windows exe started off-screen: interface loaded, no warning or error in its log.
+- Known: on a new browser profile (the first start after installing), when the Calendar is the first page to draw the
+  drop-down triangle of its currency lists, one frame waits for the graphics card's program of that shape (80 fps, once;
+  the program is then kept in the profile). In the frame rate script's run, opened after Analytics, it does not happen.
