@@ -1477,3 +1477,52 @@ real app with `tools/e2e/perf.mjs`.
   one of December 2023 (13), their bank named by the statement, both "Balanced to the cent".
 - Known limit of the copies: their letters are drawn in Arial at the bank's spacing, so a few BoursoBank labels come out
   with two words joined ("VIRVirement"); the amounts, dates and balances are not affected.
+
+## November 22nd, 2026 - Statements and Analytics in the menu; currency button; Information in a JSON file - Commit 56
+
+### Changed
+- The menu: Periods is gone; Statements and Analytics are its first two pages. Both keep Month, Year, All time and
+  Custom, and show the same periods: the kind chosen, the custom days and the period read are kept from one to the
+  other. General and Transfers stay under Analytics; Fold everything stays in Statements.
+- The global display currency is a button of the menu, just above the light / dark button and of its size, showing the
+  currency in the menu's font; clicked, the currencies drop down from it. It is no longer a row of Settings > General.
+- Settings > General > Display: the group Periods is now two groups, Statements (transfers, card payments and
+  investments) and Analytics (the three chart settings).
+- Settings > Information: the list is a JSON file of the data folder (`supported-banks.json`), written at start from the
+  list that comes with the app when there is none; each bank has a pencil to change its name, Considered and Confirmed.
+  BoursoBank and Fortuneo are not confirmed: Confirmed means read from the person's own statements.
+- The flags of Settings > Information are all one size (3 by 2; a wider flag is cut evenly at its sides).
+- README: two ways only, install (Windows, macOS, Linux) then run from the repository, then the logs; shorter sentences.
+
+### Fixed
+- Another display currency picked while reading the periods: each period is loaded again in place. Before, every
+  period was made anew: the page jumped (to the last period, or to another one) and every period and bank opened was
+  folded again.
+- A period read near its top, shorter than half the screen, was pulled to its top whenever something else on the page
+  changed size; it is now pulled only when it got shorter (another view drawn).
+- `tests/Finance.PerformanceTests/perf.mjs` stopped before the category picker (the months start folded: it unfolds
+  them first); it clicks Statements and Analytics in the menu (or in the page, for builds before this one).
+- `tests/Finance.EndToEndTests/run.mjs`: the filters' "all again" checks wait for the table's lines, which come in a few
+  at a time.
+
+### Measured
+- Frame rate before and after (6 runs of each build taken in turns, the app off-screen with ten years of operations,
+  240 Hz screen; the PC was in use, so the lowest frame rates are lower than in the afternoon for both builds), average
+  / lowest, median: idle 240 / 227 → 240 / 227 fps; scrolling months 234 / 79 → 229 / 79 fps; width changing every
+  frame 230 / 80 → 223 / 79 fps; just after switching to Year 241 / 227 → 241 / 222 fps; scrolling years 240 / 122 →
+  240 / 119 fps; ten years 240 / 222 → 240 / 227 fps; category picker scrolling 228 / 79 → 228 / 79 fps; brands list
+  scrolling 240 / 227 → 240 / 222 fps; calendar 234 / 34 → 234 / 30 fps. The averages differ less than the same build
+  from one run to the next (scrolling months: 195 to 236 fps for the build before).
+- Scrolling months alone, 5 runs of each build in turns with the PC quiet: frames that missed the screen's refresh,
+  median 12 → 9 of about 1,440; the page's own work while scrolling for 6 s, about 1,300 → 800 ms of script and 550 →
+  350 ms of layout.
+
+### Checked
+- End-to-end: 255/255 in WebView2 and 255/255 in WebKit (the macOS and Linux window's engine), with new checks: the
+  menu's order, the currency button (place, size, font, its list, every amount in the currency picked, the period read
+  and what is open kept), the kind of period kept between Statements and Analytics, the Settings groups, Information's
+  pencil and JSON file, the flags of one size. Unit 5264/5264, integration 958 (8 skipped, as before), page 7/7.
+  0 compiler warnings.
+- The released Windows exe started in a sandbox: interface drawn, `supported-banks.json` written with only National Bank
+  of Canada and Scotiabank confirmed, no warning or error in its log.
+- Known: the calendar's lowest frame rate (30 to 40 fps, in both builds) is one slow frame just after it opens.

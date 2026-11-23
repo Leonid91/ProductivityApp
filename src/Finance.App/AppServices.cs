@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Storage;
 
@@ -19,6 +20,8 @@ internal sealed class AppServices : IDisposable
     /// <summary>The log of every action (Logs page; Settings > Data > Log location).</summary>
     public ActionLog Logs { get; }
     public string LogPath => Logs.FilePath;
+    /// <summary>The banks read by themselves (Settings > Information), a JSON file of the data folder the person can change.</summary>
+    public SupportedBanks Supported { get; }
 
     private const string DbFile = "finances.db";
 
@@ -72,6 +75,8 @@ internal sealed class AppServices : IDisposable
         DataDir = dataDir;
         Directory.CreateDirectory(dataDir);
         Logs = new ActionLog(dataDir);
+        Supported = new SupportedBanks(Path.Combine(dataDir, "supported-banks.json"));
+        Supported.Create();
         // Exceptions the engine catches and handles: written in full too.
         Diagnostics.Caught += (where, e) => Logs.Write("warning", "app", "Caught exception", DateTime.Now, "where: " + where + "\nexception: " + e);
         // What the engine chose on its own (a text file read as Windows-1252): written too, as debug entries.

@@ -1,0 +1,27 @@
+[
+  {
+    "code": "CA",
+    "name": "Canada",
+    "banks": [
+      { "name": "National Bank of Canada", "considered": true, "confirmed": true },
+      { "name": "Scotiabank", "considered": true, "confirmed": true }
+    ]
+  },
+  {
+    "code": "FR",
+    "name": "France",
+    "banks": [
+      { "name": "BoursoBank", "considered": true, "confirmed": false },
+      { "name": "Caisse d'Epargne", "considered": true, "confirmed": false },
+      { "name": "CIC", "considered": true, "confirmed": false },
+      { "name": "Fortuneo", "considered": true, "confirmed": false }
+    ]
+  },
+  {
+    "code": "GB",
+    "name": "United Kingdom",
+    "banks": [
+      { "name": "Revolut", "considered": true, "confirmed": false }
+    ]
+  }
+]

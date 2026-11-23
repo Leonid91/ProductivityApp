@@ -536,8 +536,10 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   const [onScreen, setOnScreen] = useState(false)
   const [inReach, setInReach] = useState(false)
   const id = periodId(granularity, from, to, currency)
-  // Folded to its summary until opened (see folds); in Statements only, Analytics shows every period whole.
-  const [monthFolds, setMonthOpen] = useFold(`p:${id}`, false)
+  // Folded to its summary until opened (see folds); in Statements only, Analytics shows every period whole. What is
+  // open is the period's, whatever the display currency (another one picked keeps the period and its banks open).
+  const foldId = `${granularity}:${from}:${to}`
+  const [monthFolds, setMonthOpen] = useFold(`p:${foldId}`, false)
   const [height, setHeight] = useState(() => { const f = view === 'statements' ? 'f' : 'a'; return heightOf(`${granularity}:${view}:${f}:${id}`) ?? usualHeight(`${granularity}:${view}:${f}`, count) })
   // Loaded in the background (away from the screen) once, to know its height, then let go of again.
   const [measuring, setMeasuring] = useState(false)
@@ -567,7 +569,7 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
   const parts = !report ? 0 : folding ? 1 + (monthOpen ? report.banks.length : 0) : shown === 'transfers' ? 1 : report.banks.length + (showsGlobal(report) ? 1 : 0)
   const partsShown = useStepper(parts, `${report ? 'r' : ''}:${shown}:${monthOpen}`, ref)
   // What is unfolded in it: its height is kept for each way it was drawn.
-  const folded = !folding ? 'a' : !monthOpen ? 'f' : 'o' + (report ? [...report.banks.map((b) => b.key), 'all'].map((k) => (isOpen(`p:${id}:${k}`, false) ? 1 : 0)).join('') : '')
+  const folded = !folding ? 'a' : !monthOpen ? 'f' : 'o' + (report ? [...report.banks.map((b) => b.key), 'all'].map((k) => (isOpen(`p:${foldId}:${k}`, false) ? 1 : 0)).join('') : '')
   const hasData = useRef(false)
   hasData.current = report !== null
   // While a period lets go of its data: how many of its banks are still drawn.
@@ -771,12 +773,12 @@ export const PeriodCard = memo(function PeriodCard({ from, to, granularity, curr
                 // Every bank together first, in the display currency: its summary, then (unfolded) how the amounts were
                 // converted.
                 <Part kind="global" partKey="all" name="All banks" currency={report.currency} summary={report.global}
-                  foldKey={monthOpen && showsGlobal(report) ? `p:${id}:all` : undefined}>
+                  foldKey={monthOpen && showsGlobal(report) ? `p:${foldId}:all` : undefined}>
                   {monthOpen && showsGlobal(report) && <ConversionPanel conversion={report.conversion} />}
                 </Part>
               )}
               {monthOpen && report.banks.slice(0, banksDrawn).map((b) => (
-                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native} summary={b.summary} foldKey={`p:${id}:${b.key}`}>
+                <Part key={b.key} kind="bank" partKey={b.key} name={b.name} currency={b.currency} native={b.native} summary={b.summary} foldKey={`p:${foldId}:${b.key}`}>
                   <Body summary={b.summary} view="statements" keep={`${from}_${to}_${b.key}`} currency={b.currency} granularity={granularity} onEdit={onEdit} tables salary={null} />
                 </Part>
               ))}

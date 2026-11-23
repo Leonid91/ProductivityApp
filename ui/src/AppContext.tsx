@@ -4,7 +4,7 @@ import { api, type Account, type Bank, type Category, type InitInfo, type Settin
 import { categoryTree, savedOrder, type TreeEntry } from './components/order'
 import { pageOpened, record } from './actionLog'
 
-export type Page = 'periods' | 'logs' | 'calendar' | 'import' | 'settings'
+export type Page = 'statements' | 'analytics' | 'logs' | 'calendar' | 'import' | 'settings'
 
 interface Toast {
   key: number
@@ -73,7 +73,7 @@ export function AppProvider({ info, children, onTheme }: { info: InitInfo; child
   const [dataFolder, setDataFolder] = useState(info.dataFolder)
   const [logFile, setLogFile] = useState(info.logFile)
   const [dataVersion, setDataVersion] = useState(0)
-  const [page, setPage] = useState<Page>('periods')
+  const [page, setPage] = useState<Page>('statements')
   const [view, setView] = useState<string | null>(null)
   const go = useCallback((p: Page, v?: string) => {
     pageOpened(p, v ?? null)

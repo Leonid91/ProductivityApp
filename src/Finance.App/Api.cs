@@ -179,8 +179,9 @@ internal static class Api
 
         // ------------------------------------------------------------ banks
         b.Register("banks.list", _ => s.Db.Banks());
-        // The banks read by themselves, by country (Settings > Information).
-        b.Register("banks.supported", _ => SupportedBanks.All);
+        // The banks read by themselves, by country (Settings > Information): a JSON file the person changes with the pencils.
+        b.Register("banks.supported", _ => s.Supported.All());
+        b.Register("banks.supportedSave", p => s.Supported.Update(p.Get<string>("country"), p.Get<string>("name"), p.Get<SupportedBank>("bank")));
         b.Register("banks.save", p =>
         {
             var bank = p.Get<Bank>("bank");

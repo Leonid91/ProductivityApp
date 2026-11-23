@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Button, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -63,7 +63,12 @@ const CustomDates = memo(function CustomDates({ from, to, setFrom, setTo, format
   )
 })
 
-export function PeriodsPage() {
+/**
+ * Statements and Analytics (each a page of the menu): the same periods, of the kind chosen (Month, Year, All time,
+ * Custom), shown as statements (tables) or analytics (charts). In Statements every period folds down to its summary
+ * (see folds), bank by bank; Analytics shows everything, unfolded, without summaries.
+ */
+export function PeriodsPage({ view }: { view: 'statements' | 'analytics' }) {
   const { settings, dataVersion, fail, go } = useApp()
   // The charts are not needed to start: their code is read once the browser is idle, so Analytics opens at once.
   useEffect(() => {
@@ -78,21 +83,14 @@ export function PeriodsPage() {
   // The periods follow the button in the background: the button answers at once, the periods of the old kind are
   // replaced a little at a time (the screen keeps moving).
   const listMode = useDeferredValue(mode)
-  // Second layer, the same for every kind of period: its statements (tables) or analytics (charts). In Statements every
-  // period folds down to its summary (see folds), bank by bank; Analytics shows everything, unfolded, without summaries.
-  const [view, setView] = useState<'statements' | 'analytics'>('statements')
   const anythingOpen = useAnythingOpen()
   // Analytics in two parts: the charts of the spending and income (General), the money moved between accounts (Transfers).
   const [analytics, setAnalytics] = useState<'general' | 'transfers'>('general')
-  // The parts of the analytics sit under the Analytics button, on a line of their own.
-  const analyticsButton = useRef<HTMLButtonElement>(null)
-  const [analyticsLeft, setAnalyticsLeft] = useState(0)
-  useLayoutEffect(() => { if (view === 'analytics' && analyticsButton.current) setAnalyticsLeft(analyticsButton.current.offsetLeft) }, [view])
   const shown: PeriodView = view === 'analytics' && analytics === 'transfers' ? 'transfers' : view
   // Custom period: any two days, picked on the calendar or typed.
   const [customFrom, setCustomFrom] = useState<Dayjs | null>(null)
   const [customTo, setCustomTo] = useState<Dayjs | null>(null)
-  // Every bank together is shown in the global display currency (Settings).
+  // Every bank together is shown in the global display currency (the button of the menu).
   const currency = settings.currency
   const [editing, setEditing] = useState<TransactionView | null>(null)
   const [adding, setAdding] = useState(false)
@@ -130,8 +128,9 @@ export function PeriodsPage() {
     return [{ from: index.first, to: today < index.first ? index.first : today, key: `${index.first}_${today}` }]
   }, [index, listMode, customFrom, customTo])
 
-  // The periods shown (see PeriodList).
-  const items: Item[] = useMemo(() => periods.map((p) => ({ key: `${listMode}:${p.key}:${currency}`, p, granularity: listMode === 'month' || listMode === 'year' ? listMode : 'range' })), [periods, listMode, currency])
+  // The periods shown (see PeriodList). Another display currency picked: the same periods, each loaded again in place
+  // (the period read stays where it is on the screen, what is open stays open).
+  const items: Item[] = useMemo(() => periods.map((p) => ({ key: `${listMode}:${p.key}`, p, granularity: listMode === 'month' || listMode === 'year' ? listMode : 'range' })), [periods, listMode])
 
   // An operation shown converted is edited as its bank wrote it.
   const onEdit = useCallback((tx: TransactionView) => {
@@ -164,7 +163,8 @@ export function PeriodsPage() {
     const line = () => scroller.getBoundingClientRect().top + (bar.current?.offsetHeight ?? 0)
     // The element kept in place, and the period it is in (kept in its place when the element goes: another view drawn).
     // (top: where the page was then: a scroll not yet told when something changes height is the person's, not undone.)
-    let anchor: { el: Element; offset: number; period: Element; periodOffset: number; top: number } | null = null
+    // (height: the period's when it was read.)
+    let anchor: { el: Element; offset: number; period: Element; periodOffset: number; top: number; height: number } | null = null
     let lastHeight = scroller.scrollHeight
     // Where this code itself put the page: the scroll that follows is not the person's.
     let own = -1
@@ -195,7 +195,7 @@ export function PeriodsPage() {
         s = next
       }
       const period = s?.closest('section[data-period]') ?? s
-      anchor = s && period && scroller.scrollTop > 0 ? { el: s, offset: s.getBoundingClientRect().top - y, period, periodOffset: period.getBoundingClientRect().top - y, top: scroller.scrollTop } : null
+      anchor = s && period && scroller.scrollTop > 0 ? { el: s, offset: s.getBoundingClientRect().top - y, period, periodOffset: period.getBoundingClientRect().top - y, top: scroller.scrollTop, height: period.getBoundingClientRect().height } : null
     }
     // The place is put back at the start of a frame, before the page is laid out and shown: measured (and the page
     // scrolled) while the browser tells sizes, WebKit would lay out again the parts of periods the scroll brings near
@@ -214,11 +214,12 @@ export function PeriodsPage() {
         anchor = { ...anchor, el: anchor.period, offset: anchor.periodOffset }
       }
       // Kept by its period (what was read is gone: another view drawn): a period now too short for the place read in it
-      // stays on the screen, its top at the top (kept that far in, the screen would show the periods after it).
+      // stays on the screen, its top at the top (kept that far in, the screen would show the periods after it). A period
+      // as tall as when it was read (another display currency: the same period loaded again) stays as it was.
       if (anchor.el === anchor.period && anchor.offset < 0) {
         const h = anchor.period.getBoundingClientRect().height
         const deepest = -(h - Math.min(h, scroller.clientHeight / 2))
-        if (anchor.offset < deepest) anchor.offset = Math.min(0, deepest)
+        if (h < anchor.height - 0.5 && anchor.offset < deepest) anchor.offset = Math.min(0, deepest)
       }
       // A page that got shorter at the bottom is pulled up by the browser: not the person's scroll.
       const pulled = scroller.scrollHeight < lastHeight && scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 1
@@ -263,19 +264,14 @@ export function PeriodsPage() {
         )}
         <Box sx={{ flex: 1 }} />
         <Button variant="contained" startIcon={<Add />} onClick={() => setAdding(true)}>Add operation</Button>
+        {/* On a line of its own: the parts of the analytics, or the button that folds the statements. */}
         <Box sx={{ flexBasis: '100%', display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
           <Box sx={{ flex: 1 }}>
-          <ToggleButtonGroup data-period-view exclusive size="small" value={view} onChange={(_, v) => v && setView(v)}>
-            <ToggleButton value="statements">Statements</ToggleButton>
-            <ToggleButton ref={analyticsButton} value="analytics">Analytics</ToggleButton>
-          </ToggleButtonGroup>
           {view === 'analytics' && (
-            <Box sx={{ mt: 1, pl: `${analyticsLeft}px` }}>
-              <ToggleButtonGroup data-analytics-view exclusive size="small" value={analytics} onChange={(_, v) => v && setAnalytics(v)}>
-                <ToggleButton value="general">General</ToggleButton>
-                <ToggleButton value="transfers">Transfers</ToggleButton>
-              </ToggleButtonGroup>
-            </Box>
+            <ToggleButtonGroup data-analytics-view exclusive size="small" value={analytics} onChange={(_, v) => v && setAnalytics(v)}>
+              <ToggleButton value="general">General</ToggleButton>
+              <ToggleButton value="transfers">Transfers</ToggleButton>
+            </ToggleButtonGroup>
           )}
           </Box>
           {/* In the bar that stays at the top of the screen: every period and bank folded to its summary, or all unfolded

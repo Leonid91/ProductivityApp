@@ -61,7 +61,7 @@ function RatesError({ message }: { message: string }) {
   return <SourceError message={message} data-rates-error />
 }
 
-/** A group of settings inside a card, under its own small heading (Periods and Calendar inside Display). */
+/** A group of settings inside a card, under its own small heading (Statements, Analytics and Calendar inside Display). */
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Box data-group={title} sx={{ mt: 2, border: 1, borderColor: 'divider', borderRadius: '14px', bgcolor: 'surface.sunken', px: 2, pt: 1.5, pb: 0.5 }}>
@@ -359,19 +359,13 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
   return (
     <>
       <SectionCard title="Display">
-        {/* Every bank together is converted to this currency and shown in it. */}
-        <Row label="Global display currency">
-          <Box data-global-currency sx={{ display: 'contents' }}>
-            <CurrencySelect width={220} value={settings.currency} onChange={(c) => void setSetting('currency', c)} />
-          </Box>
-        </Row>
         <RatesSourceRow onEdit={onEditRates} />
         <Row label="Date format">
           <TextField select size="small" value={settings.dateFormat} onChange={(e) => void setSetting('dateFormat', e.target.value)} sx={{ width: 220 }}>
             {info.dateFormats.map((f) => <MenuItem key={f} value={f}>{formatExample(f)}</MenuItem>)}
           </TextField>
         </Row>
-        <Group title="Periods">
+        <Group title="Statements">
           <Row label="Transfers, card payments and investments">
             <TextField select size="small" value={settings.periodTransfers} onChange={(e) => void setSetting('periodTransfers', e.target.value)} sx={{ width: 260 }}>
               <MenuItem value="separate">In a separate folded table</MenuItem>
@@ -380,6 +374,8 @@ function General({ confirm, onEditRates }: { confirm: (c: Confirm) => void; onEd
               <MenuItem value="inline">With the other operations</MenuItem>
             </TextField>
           </Row>
+        </Group>
+        <Group title="Analytics">
           <Toggle label="Show all data in Expenses per category pie chart" setting="pieShowAllCategories" />
           <Toggle label="Show all data in Expenses per brand pie chart" setting="pieShowAllBrands" />
           <Toggle label="Expenses per category charts: main categories only" setting="chartsTopLevel" />

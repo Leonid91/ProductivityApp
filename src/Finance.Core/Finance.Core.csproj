@@ -34,6 +34,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\Fonts\*.ttf" LogicalName="Fonts.%(Filename)%(Extension)" />
+    <!-- The list of Settings > Information the first time, before the person changes it (supported-banks.json of the data folder). -->
+    <EmbeddedResource Include="Assets\supported-banks.json" LogicalName="supported-banks.json" />
   </ItemGroup>
 
   <ItemGroup>

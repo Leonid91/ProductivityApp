@@ -33,6 +33,7 @@ const timed = (action, until = settled) => p.eval(`new Promise((done) => {
   const tick = () => { if (${until}) { if (++seen === 2) return done(+(performance.now() - t0).toFixed(0)) } else seen = 0; if (performance.now() - t0 > 30000) return done(-1); requestAnimationFrame(tick) }
   requestAnimationFrame(tick)
 })`)
+// The first element of the selector with this text (the Statements and Analytics of the menu, or of the page before).
 const clickIn = (selector, text) => `() => [...document.querySelectorAll(${JSON.stringify(selector)})].find((b) => b.innerText.trim() === ${JSON.stringify(text)}).click()`
 
 // Round trip of one engine call from the interface: the request, the work, the answer read back (average of `times`).
@@ -101,9 +102,9 @@ try {
   await p.eval(`document.querySelector('main').style.paddingRight = ''`)
   await p.eval(`document.querySelector('main').scrollTo({ top: 0 })`)
   await sleep(1500)
-  note('switch to analytics ms', await timed(clickIn('[data-period-view] button', 'Analytics'), `${settled} && !document.querySelector('[data-loading-charts]') && document.querySelectorAll('main section[data-period] svg').length > 5`))
+  note('switch to analytics ms', await timed(clickIn('nav button, [data-period-view] button', 'Analytics'), `${settled} && !document.querySelector('[data-loading-charts]') && document.querySelectorAll('main section[data-period] svg').length > 5`))
   await sleep(1000)
-  note('switch to statements ms', await timed(clickIn('[data-period-view] button', 'Statements')))
+  note('switch to statements ms', await timed(clickIn('nav button, [data-period-view] button', 'Statements')))
   await sleep(1000)
   note('switch to year ms', await timed(clickIn('main button', 'Year')))
   note('just after switching to year', await frames('() => {}', 3))
@@ -113,7 +114,9 @@ try {
   note('switch to all time ms', await timed(clickIn('main button', 'All time')))
   note('ten years view', await frames('() => {}', 3))
   note('switch to month ms', await timed(clickIn('main button', 'Month')))
-  // The month's tables are drawn a piece at a time: a line of one is there to be clicked.
+  // The months start folded to their summary: unfolded, their tables are drawn a piece at a time, a line of one is
+  // there to be clicked.
+  await p.eval(`(() => { const b = document.querySelector('[data-fold-everything]'); if (b && b.innerText.trim() === 'Unfold everything') b.click() })()`)
   await p.waitFor(`document.querySelector('section tbody tr td:nth-child(2) button') !== null`, 20000, 'a line of a table')
   await p.click('section tbody tr td:nth-child(2) button', 0)
   await sleep(400)
@@ -122,7 +125,8 @@ try {
   await sleep(400)
   note('open calendar ms', await timed(clickIn('nav button', 'Calendar'), `document.querySelectorAll('main [role=gridcell], main td').length > 20`))
   note('calendar', await frames('() => {}', 3))
-  note('open periods ms', await timed(clickIn('nav button', 'Periods')))
+  // Statements in the menu (before, Periods: the script measures the builds before and after).
+  note('open statements ms', await timed(`() => [...document.querySelectorAll('nav button')].find((b) => ['Statements', 'Periods'].includes(b.innerText.trim())).click()`))
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('Definitions', { selector: 'button' })
   await p.clickText('Brands', { selector: 'main [role=group] button' })

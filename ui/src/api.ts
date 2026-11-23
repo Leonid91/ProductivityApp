@@ -469,6 +469,8 @@ export const api = {
     list: () => invoke<Bank[]>('banks.list'),
     /** The banks read by themselves, by country. */
     supported: () => invoke<SupportedCountry[]>('banks.supported'),
+    /** Changes a bank of Settings > Information (found by its country and name); the new list comes back. */
+    supportedSave: (country: string, name: string, bank: SupportedBank) => invoke<SupportedCountry[]>('banks.supportedSave', { country, name, bank }),
     save: (bank: Bank) => invoke<Bank[]>('banks.save', { bank }),
     remove: (id: number) => invoke<Bank[]>('banks.delete', { id }),
   },

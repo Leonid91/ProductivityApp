@@ -320,7 +320,7 @@ try {
 
   // ---- rows reordered by dragging their handle (statements table), order kept
   const order = async () => p.eval(`[...document.querySelector('tbody').querySelectorAll('tr')].map(r => r.children[1].innerText)`)
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await p.clickText('Import', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('tbody tr') !== null`, 15000, 'statements list')
   await sleep(300)
@@ -338,7 +338,7 @@ try {
   check('row order saved', JSON.parse((await p.engine('app.init')).settings['order.statements'] ?? '[]').length > 0)
 
   // ---- periods (the sketch)
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'period title')
   await sleep(1200)
   await shot(p, '07-periods-top.png')
@@ -352,7 +352,7 @@ try {
   await p.eval(`(() => { const s = document.querySelector('section'); const t = [...s.querySelectorAll('p, span')].find(e => e.innerText === 'Expenses'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
   await sleep(800)
   await shot(p, '08-periods-totals.png')
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await sleep(1200)
   await p.eval(`(() => { const s = document.querySelector('section'); const t = s.querySelector('[data-pie]'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
   await sleep(800)
@@ -360,7 +360,7 @@ try {
   await p.eval(`document.querySelector('main').scrollBy({ top: 420 })`)
   await sleep(600)
   await shot(p, '09-periods-daily-chart.png')
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(800)
 
   // Periods start folded to their summary in Statements: Earnings, Expenses, Balance and Expenses / earnings, no table.
@@ -434,12 +434,12 @@ try {
   const share = parseInt(ratio.text.match(/(\d+)%/)?.[1] ?? '0', 10)
   check('expenses / earnings red above 100%, green below, without the spent-of-earned line', !ratio.text.includes('spent of') && (share > 100 ? ratio.ratio === ratio.exp : ratio.ratio === ratio.earn), `${share}% ${ratio.ratio}`)
   check('recurring payments card without the line under the amount', ratio.rec.trim().split('\n').filter(Boolean).length === 2, ratio.rec.replace(/\n/g, ' | '))
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('${sec} [data-category-lines]') !== null`, 20000, 'charts view')
   await sleep(800)
   check('analytics, General: pies, bars and category lines, no tables, no summaries, no money moved', await p.eval(`(() => { const s = document.querySelector('${sec}'); return s.querySelectorAll('[data-pie]').length >= 2 && !!s.querySelector('[data-bars]') && !!s.querySelector('[data-category-lines]') && !s.querySelector('table:not([data-conversions])') && !s.querySelector('[data-totals]') && !s.querySelector('[data-flowchart]') && !s.querySelector('[data-transfer-timeline]') })()`))
   check('Analytics in two parts, General first', await p.eval(`[...document.querySelectorAll('[data-analytics-view] button')].map(b => b.innerText + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join()`) === 'General*,Transfers')
-  check('the two parts under the Analytics button, on a line of their own', await p.eval(`(() => { const a = [...document.querySelectorAll('[data-period-view] button')].find(b => b.innerText === 'Analytics').getBoundingClientRect(); const g = document.querySelector('[data-analytics-view]').getBoundingClientRect(); return g.top >= a.bottom && Math.abs(g.left - a.left) <= 1 })()`))
+  check('the two parts under the kinds of period, on a line of their own', await p.eval(`(() => { const a = document.querySelector('main button[value="month"]').closest('[role=group]').getBoundingClientRect(); const g = document.querySelector('[data-analytics-view]').getBoundingClientRect(); return g.top >= a.bottom && Math.abs(g.left - a.left) <= 0.5 })()`))
   // Transfers: the money moved over time, then in total; none of the charts of General.
   await analyticsPart(p, 'Transfers')
   await p.waitFor(`document.querySelector('${sec} [data-flowchart]') !== null && document.querySelector('${sec} [data-transfer-timeline] svg') !== null`, 20000, 'transfers view')
@@ -544,7 +544,7 @@ try {
   // Pies: shares with two decimals, so a small share never reads 0%.
   const shares = await p.eval(`[...document.querySelectorAll('${sec} [data-pie] li')].map(l => l.innerText.split('\\n').pop())`)
   check('pie shares with two decimals', shares.length > 0 && shares.every((x) => /^\d+\.\d\d%$/.test(x)) && !shares.includes('0.00%'), shares.slice(-3).join(' '))
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(600)
   check('the parts of Analytics only shown in Analytics', await p.eval(`document.querySelector('[data-analytics-view]') === null`))
 
@@ -576,6 +576,8 @@ try {
     await sleep(250)
   }
   const pick = async (choice) => { await p.eval(`[...document.querySelectorAll('[role=menu] li[data-choice]')].find(l => l.dataset.choice === ${JSON.stringify(choice)}).click()`); await sleep(250) }
+  // The lines of a table come in a few at a time: the rows, once there are as many as expected (or after 8 s).
+  const rowsWhen = async (n) => { let rows = await rowsOf(); for (let i = 0; i < 40 && rows.length !== n; i++) { await sleep(200); rows = await rowsOf() } return rows }
   const closeMenu = async () => { await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await sleep(400) }
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${sec} [data-section="main"] table') !== null`, 20000, 'August table')
@@ -602,7 +604,7 @@ try {
   await openFilter('Category')
   await pick('all')
   await closeMenu()
-  check('all categories again', (await rowsOf()).length === allRows.length)
+  check('all categories again', (await rowsWhen(allRows.length)).length === allRows.length)
   await openFilter('Brand Name')
   await shot(p, '11c-brand-filter.png')
   await pick('none')
@@ -627,7 +629,7 @@ try {
   await openFilter('Date')
   await pick('all')
   await closeMenu()
-  check('every operation shown again', (await rowsOf()).length === allRows.length)
+  check('every operation shown again', (await rowsWhen(allRows.length)).length === allRows.length)
 
   // correcting a category teaches the dictionary
   const before = await p.eval(`document.querySelector('section [data-section="main"] tbody tr td:nth-child(3)').innerText`)
@@ -655,9 +657,27 @@ try {
   await p.waitFor(`document.querySelectorAll('[data-supported-bank]').length > 0`, 10000, 'supported banks')
   const supported = await p.eval(`({ tabs: [...document.querySelectorAll('main button[value]')].map(b => b.innerText).join(), tables: [...document.querySelectorAll('[data-country]')].map(t => ({ code: t.dataset.country, flag: !!t.closest('[data-supported-banks] > *').querySelector('svg'), head: [...t.querySelectorAll('thead th')].map(h => h.innerText).join('|'), banks: [...t.querySelectorAll('[data-supported-bank]')].map(r => r.dataset.supportedBank + (r.querySelector('[data-confirmed="true"]') ? '*' : '')) })) })`)
   check('Settings > Information after Definitions: the banks read by themselves, a table with its flag per country', supported.tabs === 'General,Bank Configuration,Definitions,Information'
-    && supported.tables.map((t) => t.code).join() === 'CA,FR,GB' && supported.tables.every((t) => t.flag && t.head === 'Name|Considered|Confirmed')
-    && supported.tables[0].banks.join() === 'National Bank of Canada*,Scotiabank*' && supported.tables[1].banks.join() === 'BoursoBank*,Caisse d\'Epargne,CIC,Fortuneo*', JSON.stringify(supported))
+    && supported.tables.map((t) => t.code).join() === 'CA,FR,GB' && supported.tables.every((t) => t.flag && t.head === 'Name|Considered|Confirmed|')
+    && supported.tables[0].banks.join() === 'National Bank of Canada*,Scotiabank*' && supported.tables[1].banks.join() === 'BoursoBank,Caisse d\'Epargne,CIC,Fortuneo' && supported.tables[2].banks.join() === 'Revolut', JSON.stringify(supported))
+  const flagSizes = await p.eval(`[...document.querySelectorAll('[data-supported-banks] > * svg')].filter(s => !s.closest('table')).map(s => { const r = s.getBoundingClientRect(); return r.width + 'x' + r.height })`)
+  check('the flags of the countries all of one size', flagSizes.length === 3 && new Set(flagSizes).size === 1, flagSizes.join())
   await shot(p, '10z-information.png')
+  const supportedFile = join(data, 'supported-banks.json')
+  check('the list of Information is a JSON file of the data folder', existsSync(supportedFile) && JSON.parse(readFileSync(supportedFile, 'utf8')).map((c) => c.code).join() === 'CA,FR,GB')
+  check('a pencil on every bank of Information', await p.eval(`[...document.querySelectorAll('[data-supported-bank]')].every(r => !!r.querySelector('[data-row-edit]'))`))
+  await p.eval(`document.querySelector('[data-supported-bank="CIC"] [data-row-edit]').click()`)
+  await p.waitFor(`!!document.querySelector('[data-supported-bank-dialog] [data-field="confirmed"]')`, 5000, 'Information pencil dialog')
+  await sleep(300)
+  await shot(p, '10z-information-edit.png')
+  const dialogShown = await p.eval(`(() => { const d = document.querySelector('[data-supported-bank-dialog]'); return { title: d.querySelector('h2').innerText, name: d.querySelector('[data-field="name"]').value, considered: d.querySelector('[data-field="considered"]').checked, confirmed: d.querySelector('[data-field="confirmed"]').checked } })()`)
+  check('the pencil of a bank: its name, Considered and Confirmed', dialogShown.title === 'Edit CIC' && dialogShown.name === 'CIC' && dialogShown.considered && !dialogShown.confirmed, JSON.stringify(dialogShown))
+  await p.eval(`document.querySelector('[data-supported-bank-dialog] [data-field="confirmed"]').click()`)
+  await p.clickText('Save', { selector: '[data-supported-bank-dialog] button' })
+  await p.waitFor(`!document.querySelector('[data-supported-bank-dialog]')`, 5000, 'Information dialog closed')
+  const cicFile = () => JSON.parse(readFileSync(supportedFile, 'utf8')).find((c) => c.code === 'FR').banks.find((b) => b.name === 'CIC')
+  check('a bank confirmed with its pencil: shown and written to the file', await p.eval(`!!document.querySelector('[data-supported-bank="CIC"] [data-confirmed="true"]')`) && cicFile()?.confirmed === true, JSON.stringify(cicFile()))
+  await p.engine('banks.supportedSave', { country: 'FR', name: 'CIC', bank: { name: 'CIC', considered: true, confirmed: false } })
+  check('and back as it was', cicFile()?.confirmed === false)
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('Definitions', { selector: 'button' })
   await p.clickText('Categories', { selector: 'main button' })
@@ -697,7 +717,7 @@ try {
   await p.waitFor(`document.querySelector('[data-category="Paint & tools"]') !== null`, 5000, 'renamed category')
   check('category renamed', true)
   // the picker shows it nested and coloured
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section [data-section="main"] tbody tr td:nth-child(2) button') !== null`, 20000, 'operations')
   await p.click('section [data-section="main"] tbody tr td:nth-child(2) button', 0)
   await sleep(300)
@@ -758,9 +778,9 @@ try {
     && cents(augNested.byTopCategory.reduce((s, x) => s + x.amount, 0)) === cents(augNested.expenses) && cents(augNested.expenses) === cents(augBefore.expenses)
     && cents(augNested.byCategory.reduce((s, x) => s + x.amount, 0)) === cents(augNested.expenses), `Food ${food.toFixed(2)}, expenses ${augNested.expenses}`)
   const analyticsOfAugust = async (ready = () => true) => {
-    await p.clickText('Periods', { selector: 'nav button' })
+    await p.clickText('Statements', { selector: 'nav button' })
     await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods')
-    await p.clickText('Analytics', { selector: '[data-period-view] button' })
+    await p.clickText('Analytics', { selector: 'nav button' })
     await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
     await p.waitFor(`document.querySelector('${sec} [data-pie="Expenses per category"]') !== null && document.querySelector('${sec} [data-category-lines]') !== null`, 20000, 'August analytics')
     await sleep(800)
@@ -791,12 +811,12 @@ try {
   const leafNames = ['Groceries', 'Restaurants & cafés', 'Nested 1', 'Nested 2', 'Nested 3', 'Nested 4']
   check('first level only (default): Food in the charts, not the categories in it', firstLevel.pie.includes('Food (test)') && !firstLevel.pie.some((n) => leafNames.includes(n))
     && firstLevel.lines.includes(catId('Food (test)')) && !firstLevel.lines.includes('groceries') && !firstLevel.lines.includes(catId('Nested 4')), firstLevel.pie.join(', '))
-  // The setting, in Settings > Display > Periods: on by default; off, the charts go down to every nested category.
+  // The setting, in Settings > Display > Analytics: on by default; off, the charts go down to every nested category.
   const firstLevelSwitch = `document.querySelector('[aria-label="Expenses per category charts: main categories only"]')`
   await p.clickText('Settings', { selector: 'nav button' })
   await p.clickText('General', { selector: 'button' })
   await p.waitFor(`${firstLevelSwitch} !== null`, 5000, 'first level setting')
-  check('first level setting in Periods, on by default', await p.eval(`(() => { const i = ${firstLevelSwitch}; return i.checked && !!i.closest('[data-group="Periods"]') })()`))
+  check('first level setting in Analytics, on by default', await p.eval(`(() => { const i = ${firstLevelSwitch}; return i.checked && !!i.closest('[data-group="Analytics"]') })()`))
   await p.eval(`${firstLevelSwitch}.click()`)
   await p.waitFor(`${firstLevelSwitch}.checked === false`, 5000, 'setting off')
   const everyLevel = await analyticsOfAugust((x) => !x.pie.includes('Food (test)') && !x.lines.includes(catId('Food (test)')))
@@ -805,7 +825,7 @@ try {
   check('setting off: every nested category in the charts, Food gone, same expenses', ['Groceries', 'Restaurants & cafés'].every((n) => everyLevel.pie.includes(n)) && !everyLevel.pie.includes('Food (test)')
     && [1, 2, 3, 4].every((i) => everyLevel.lines.includes(catId(`Nested ${i}`)))
     && everyLevel.lines.includes(catId('Nested 4')) && everyLevel.lines.includes('groceries') && !everyLevel.lines.includes(catId('Food (test)')) && everyLevel.expenses === firstLevel.expenses, JSON.stringify({ lines: everyLevel.lines, nested: [1, 2, 3, 4].map((i) => catId(`Nested ${i}`)), expenses: [firstLevel.expenses, everyLevel.expenses] }))
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await openPeriod(p, '2025-08-01')
   // Every bank's table of the month: the categories its operations have.
   const tableCats = []
@@ -842,7 +862,7 @@ try {
   const augAfter = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
   check('test categories deleted, everything as before', !cleaned.categories.some((c) => c.name.startsWith('Nested') || c.name === 'Food (test)') && cleaned.settings.chartsTopLevel === 'true'
     && !cleaned.categories.find((c) => c.id === 'groceries')?.parentId && JSON.stringify(augAfter.byCategory) === JSON.stringify(augBefore.byCategory))
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods again')
 
   // ---- tags (test data, deleted after): none come with the app; made in Definitions > Tags; put on a category
@@ -886,7 +906,7 @@ try {
   const catTags = (await p.engine('app.init')).tags.categoryTags.restaurants ?? []
   check('two tags put on a category', catTags.length === 2 && catTags.includes(tagIds['Trip (test)']) && catTags.includes(tagIds['Work (test)']))
   // In the tables: the restaurant operations carry both; one other operation gets its own tag from its Tags cell.
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods')
   await p.eval(`document.querySelector('${sec}').scrollIntoView({ block: 'start' })`)
   await p.waitFor(`document.querySelector('${sec} table [data-tag-cell]') !== null`, 20000, 'tags column')
@@ -940,7 +960,7 @@ try {
   check('Tags pie adds up to the tagged expenses, counted once', cents(augTagged.tagPie.reduce((s, x) => s + x.amount, 0)) === cents(tagged)
     && augTagged.tagPie.some((x) => x.label === 'Trip (test) + Work (test)') && augTagged.tagPie.some((x) => x.label === 'Family (test) + Trip (test) + Work (test)' || x.label === 'Family (test) + Work (test)'),
     augTagged.tagPie.map((x) => `${x.label} ${x.amount}`).join(' | '))
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('${sec} [data-pie="Tags"]') !== null`, 20000, 'tags pie')
   await p.eval(`(() => { const t = document.querySelector('${sec} [data-pie="Tags"]'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 200 }) })()`)
   await sleep(600)
@@ -964,10 +984,59 @@ try {
   // ---- Folded periods (Statements; they replace the Summary view): every kind of period folds to the summary of every
   // bank together, Earnings, Expenses, Balance and Expenses / earnings, in the global display currency; Fold
   // everything and Unfold everything in the bar.
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(600)
-  const viewOrder = await p.eval(`[...document.querySelectorAll('[data-period-view] button')].map(b => b.innerText.trim()).join()`)
-  check('Statements then Analytics, no Summary view', viewOrder === 'Statements,Analytics', viewOrder)
+  const viewOrder = await p.eval(`[...document.querySelector('nav').querySelectorAll('button')].map(b => b.innerText.trim()).filter(Boolean).join()`)
+  check('the menu: Statements then Analytics first, no Periods and no Summary', viewOrder === 'Statements,Analytics,Calendar,Import,CAD,Settings', viewOrder)
+  check('no Statements and Analytics buttons in the page any more', await p.eval(`!document.querySelector('[data-period-view]')`))
+  // The display currency: one button of the menu, just above the light / dark button and of its size; clicked, the
+  // currencies drop down from it.
+  const currencyButton = await p.eval(`(() => { const c = document.querySelector('nav [data-global-currency]'); const t = document.querySelector('nav button[aria-label="Dark mode"], nav button[aria-label="Light mode"]'); const r = c.getBoundingClientRect(); const q = t.getBoundingClientRect(); return { text: c.innerText.trim(), next: c.nextElementSibling === t, size: [r.width, r.height], theme: [q.width, q.height], above: r.bottom <= q.top + 0.5, centre: Math.abs((r.left + r.right) - (q.left + q.right)) / 2, font: getComputedStyle(c).fontFamily === getComputedStyle(document.querySelector('nav p')).fontFamily } })()`)
+  check('the display currency: a button of the menu, just above the light / dark button, of its size, in the font of the menu', currencyButton.text === 'CAD' && currencyButton.font && currencyButton.next && currencyButton.above && currencyButton.centre <= 0.5
+    && currencyButton.size.join() === currencyButton.theme.join(), JSON.stringify(currencyButton))
+  // The period at the top of the screen (under the bar), and how far down the screen its top is.
+  const topPeriod = () => p.eval(`(() => { const m = document.querySelector('main').getBoundingClientRect(); const y = m.top + document.querySelector('main [role=group]').parentElement.getBoundingClientRect().height; const s = [...document.querySelectorAll('section[data-period]')].find(x => x.getBoundingClientRect().bottom > y); return s.dataset.period + ' ' + Math.round(s.getBoundingClientRect().top - y) })()`)
+  await p.eval(`(() => { const s = document.querySelector('section[data-period="2025-08-01"]'); document.querySelector('main').scrollBy({ top: s.getBoundingClientRect().top - 300 }) })()`)
+  await sleep(1200)
+  const readBefore = await topPeriod()
+  const openPeriods = () => p.eval(`[...document.querySelectorAll('section[data-period][data-open]')].map(s => s.dataset.period).join()`)
+  const openBefore = await openPeriods()
+  await p.click('nav [data-global-currency]')
+  await p.waitFor(`document.querySelectorAll('[role=menuitem]').length > 0`, 5000, 'currency menu')
+  await sleep(400)
+  await shot(p, '24-currency-menu.png')
+  const currencyItems = await p.eval(`[...document.querySelectorAll('[role=menuitem]')].map(m => m.innerText.trim() + (m.classList.contains('Mui-selected') ? '*' : '')).join()`)
+  check('clicked, the currencies drop down from it, the one in use marked', currencyItems === 'CAD*,USD,EUR,GBP,CHF,AUD,JPY,MXN', currencyItems)
+  await p.clickText('EUR', { selector: '[role=menuitem]' })
+  await p.waitFor(`document.querySelector('nav [data-global-currency]').innerText.trim() === 'EUR'`, 5000, 'currency EUR')
+  await p.waitFor(`!document.querySelector('[role=menu]') && document.querySelector('section[data-period] [data-part-block="all"]')?.innerText.includes('€')`, 20000, 'amounts in euros')
+  check('a currency picked: the menu closed, every amount in it', (await p.engine('app.init')).settings.currency === 'EUR' && await p.eval(`!document.querySelector('section[data-period] [data-part-block="all"]').innerText.includes('$')`))
+  // Once the period read is drawn in euros, and the page no longer moves.
+  await p.waitFor(`!!document.querySelector('section[data-period="${readBefore.split(' ')[0]}"] [data-part-block="all"]')?.innerText.includes('€')`, 20000, 'the period read in euros')
+  await sleep(1500)
+  const readAfter = await topPeriod()
+  check('another currency picked: the period read stays where it was on the screen', readAfter.split(' ')[0] === readBefore.split(' ')[0] && Math.abs(+readAfter.split(' ')[1] - +readBefore.split(' ')[1]) <= 2, `${readBefore} -> ${readAfter}`)
+  const openAfter = await openPeriods()
+  check('another currency picked: the periods open stay open', openBefore.length > 0 && openAfter === openBefore, `${openBefore} -> ${openAfter}`)
+  await shot(p, '24-currency-euros.png')
+  await p.click('nav [data-global-currency]')
+  await p.waitFor(`document.querySelectorAll('[role=menuitem]').length > 0`, 5000, 'currency menu')
+  await p.clickText('CAD', { selector: '[role=menuitem]' })
+  await p.waitFor(`document.querySelector('nav [data-global-currency]').innerText.trim() === 'CAD'`, 5000, 'currency CAD')
+  check('and back to CAD', (await p.engine('app.init')).settings.currency === 'CAD')
+  await sleep(800)
+  // Statements and Analytics show the same periods: the kind chosen in one is kept in the other.
+  await p.click('main button[value="year"]')
+  await p.waitFor(`/^\\d{4}$/.test(document.querySelector('section[data-period] h2')?.innerText.trim() ?? '')`, 20000, 'years')
+  await p.clickText('Analytics', { selector: 'nav button' })
+  await sleep(1200)
+  const keptKind = await p.eval(`({ year: document.querySelector('main button[value="year"]').getAttribute('aria-pressed'), parts: !!document.querySelector('[data-analytics-view]'), fold: !!document.querySelector('[data-fold-everything]') })`)
+  check('Year chosen in Statements is kept in Analytics (General and Transfers, no folding there)', keptKind.year === 'true' && keptKind.parts && !keptKind.fold, JSON.stringify(keptKind))
+  await p.clickText('Statements', { selector: 'nav button' })
+  await sleep(800)
+  check('and back in Statements, still Year, the folding button back', await p.eval(`document.querySelector('main button[value="year"]').getAttribute('aria-pressed') === 'true' && !!document.querySelector('[data-fold-everything]') && !document.querySelector('[data-analytics-view]')`))
+  await p.click('main button[value="month"]')
+  await sleep(1500)
   const foldAll = async (open) => {
     const label = await p.eval(`document.querySelector('[data-fold-everything]').innerText.trim()`)
     if (label === (open ? 'Unfold everything' : 'Fold everything')) await p.click('[data-fold-everything]')
@@ -1048,7 +1117,7 @@ try {
   const between = oct.global.movements.filter((m) => !m.fromOutside && !m.toOutside && m.fromBank !== m.toBank)
   check('a transfer between two banks in two currencies: one movement, out of spending and income', between.some((m) => m.fromBank === "Caisse d'Epargne" && m.toBank === 'Northwind Bank')
     && !oct.banks.some((b) => b.summary.transactions.some((t) => Math.abs(t.amount) === 800 && t.categoryId !== 'transfers')), JSON.stringify(between))
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await analyticsPart(p, 'Transfers')
   await p.waitFor(`document.querySelector('${octSec} [data-flow-card] [data-flowchart]') !== null`, 20000, 'October money moved')
   await p.eval(`(() => { const f = document.querySelector('${octSec} [data-transfer-timeline]'); document.querySelector('main').scrollBy({ top: f.getBoundingClientRect().top - 140 }) })()`)
@@ -1078,7 +1147,7 @@ try {
   await sleep(1500)
   const widened = await p.eval(`({ loops: window.__sizeLoops, top: Math.round(document.querySelector('${octSec}').getBoundingClientRect().top) })`)
   check('the width changing while the charts are drawn: the month stays in place, no loop of size changes', widened.loops === 0 && Math.abs(widened.top - octBefore) <= 2, `${JSON.stringify(widened)}, before ${octBefore}`)
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(600)
   // Folded, October shows the global balance: every bank together, in the display currency.
   await p.click(`${octSec} .p-period-head [data-fold]`)
@@ -1097,11 +1166,12 @@ try {
   await sleep(600)
   const display = await p.eval(`(() => {
     const card = [...document.querySelectorAll('main h6')].find(h => h.innerText === 'Display').closest('div').parentElement
-    const rows = [...card.children].filter(r => r.querySelector('.MuiInputBase-root')).slice(0, 3)
+    const rows = [...card.children].filter(r => r.querySelector('.MuiInputBase-root')).slice(0, 2)
     return rows.map(r => { const v = r.querySelector('.MuiInputBase-root').getBoundingClientRect(); return { label: r.firstElementChild.innerText, value: r.querySelector('.MuiInputBase-root').innerText.replace(/[​s]+/g, ' ').trim(), right: Math.round(v.right), width: Math.round(v.width) } })
   })()`)
-  check('Display: global currency and exchange rates as rows, values aligned with the date format', display.map((r) => r.label).join() === 'Global display currency,Exchange rates,Date format'
-    && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[1].value === 'Bank of Canada'
+  check('Display: exchange rates and date format as rows, values aligned; the global currency is in the menu, not here', display.map((r) => r.label).join() === 'Exchange rates,Date format'
+    && new Set(display.map((r) => r.right)).size === 1 && new Set(display.map((r) => r.width)).size === 1 && display[0].value === 'Bank of Canada'
+    && !(await p.eval(`document.querySelector('main').innerText.includes('Global display currency') || !!document.querySelector('main [data-global-currency]')`))
     && (await p.eval(`document.querySelector('[data-rates-link]')?.innerText`)) === 'Select source', JSON.stringify(display))
   await shot(p, '24c-display-settings.png')
   check('the Bank of Canada by default, rates against CAD', oct.conversion.source === 'Bank of Canada' && oct.conversion.base === 'CAD')
@@ -1451,8 +1521,8 @@ try {
   const decReport = await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })
   const sal = decReport.salary
   const salaryOk = sal && sal.workingDays > 0 && sal.hoursPerDay === 8 && Math.abs(sal.perDay - sal.net / sal.workingDays) < 0.006 && Math.abs(sal.perHour - sal.net / (sal.workingDays * 8)) < 0.006 && Math.abs(sal.perYear - sal.net / sal.workingDays * sal.yearWorkingDays) < 0.006
-  await p.clickText('Periods', { selector: 'nav button' })
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section[data-period="2025-12-01"] [data-salary]') !== null`, 20000, 'the salary in December')
   await p.eval(`document.querySelector('section[data-period="2025-12-01"]').scrollIntoView({ block: 'start' })`)
   await sleep(600)
@@ -1464,8 +1534,8 @@ try {
   const salEur = (await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })).salary
   check('the salary in the display currency (euros)', salEur && salEur.net < sal.net * 0.75 && salEur.net > sal.net * 0.55 && salEur.businessDays === sal.businessDays, `${salEur?.net} EUR, ${sal.net} CAD`)
   await p.engine('settings.set', { key: 'currency', value: 'CAD' })
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(600)
 
   // Clean up the test tags: off the category, then deleted (they leave every operation).
@@ -1485,7 +1555,7 @@ try {
   const augClean = await p.engine('periods.summary', { from: '2025-08-01', to: '2025-08-31', granularity: 'month', currency: 'CAD' })
   check('test tags deleted: off every operation and category', afterTags.tags.tags.length === 0 && Object.keys(afterTags.tags.categoryTags).length === 0
     && augClean.transactions.every((t) => t.tags.length === 0) && augClean.tagPie.length === 0)
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'periods again')
 
   // custom period
@@ -1523,10 +1593,10 @@ try {
 
   // export the first month to PDF: one Export at the top of each period, in every view; the parts to export ticked
   check('one Export at the top of each period, none at the bottom', await p.eval(`(() => { const s = [...document.querySelectorAll('main section[data-period]')].filter(x => x.querySelector('h2')); return s.length > 0 && s.every(x => { const b = x.querySelector('[data-export]'); return !!b && b.getBoundingClientRect().top < x.querySelector('h2').getBoundingClientRect().bottom }) && ![...document.querySelectorAll('main button')].some(b => b.innerText === 'Export to PDF') })()`))
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await sleep(600)
   check('Export in Analytics too', await p.eval(`!!document.querySelector('main section[data-period] [data-export]')`))
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(600)
   await p.clickText('Export', { selector: 'section button[data-export]', index: 0 })
   await p.waitFor(`document.querySelector('[role=dialog]')?.innerText.includes('File name')`, 10000, 'export dialog')
@@ -1576,7 +1646,7 @@ try {
   await p.clickText('Settings', { selector: 'nav button' })
   await sleep(800)
   await shot(p, '19-settings-general.png')
-  check('Periods and Calendar inside Display', await p.eval(`(() => { const g = document.querySelector('[data-group="Periods"]'); const c = document.querySelector('[data-group="Calendar"]'); return !!g && !!c && g.parentElement === c.parentElement && g.parentElement.querySelector('h6')?.innerText === 'Display' && getComputedStyle(g.previousElementSibling).borderBottomWidth === '0px' })()`))
+  check('Statements, Analytics and Calendar inside Display, no Periods', await p.eval(`(() => { const g = document.querySelector('[data-group="Statements"]'); const a = document.querySelector('[data-group="Analytics"]'); const c = document.querySelector('[data-group="Calendar"]'); return !!g && !!a && !!c && !document.querySelector('[data-group="Periods"]') && g.parentElement === c.parentElement && a.parentElement === c.parentElement && g.nextElementSibling === a && a.nextElementSibling === c && g.parentElement.querySelector('h6')?.innerText === 'Display' && getComputedStyle(g.previousElementSibling).borderBottomWidth === '0px' && !!g.querySelector('input') && a.querySelectorAll('input[type=checkbox]').length === 3 })()`))
   await p.clickText('Bank Configuration', { selector: 'button' })
   await sleep(600)
   await shot(p, '19b-settings-bank-configuration.png')
@@ -1689,13 +1759,13 @@ try {
   await p.click('nav [aria-label="Dark mode"]')
   await sleep(600)
   check('theme toggled from the side bar', (await p.engine('app.init')).settings.theme === 'dark')
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(1500)
   await shot(p, '20-dark-periods.png')
   await p.eval(`(() => { const s = document.querySelector('section'); const t = [...s.querySelectorAll('p, span')].find(e => e.innerText === 'Expenses'); document.querySelector('main').scrollBy({ top: t.getBoundingClientRect().top - 160 }) })()`)
   await sleep(800)
   await shot(p, '21-dark-totals.png')
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await sleep(1200)
   await shot(p, '21b-dark-charts.png')
   await analyticsPart(p, 'Transfers')
@@ -1724,7 +1794,7 @@ try {
   const visit = async (name, go) => { await go(); await sleep(900); const rows = await pencils(); tables[name] = { rows: rows.length, ok: rows.length > 0 && rows.every((r) => r.shown && r.order && r.last) } }
   const definition = (tab) => async () => { await p.clickText('Settings', { selector: 'nav button' }); await p.clickText('Definitions', { selector: 'button' }); await sleep(300); await p.clickText(tab, { selector: 'main [role=group] button' }) }
   await visit('operations', async () => {
-    await p.clickText('Periods', { selector: 'nav button' }); await sleep(800); await p.clickText('Statements', { selector: '[data-period-view] button' })
+    await p.clickText('Statements', { selector: 'nav button' }); await sleep(800); await p.clickText('Statements', { selector: 'nav button' })
     await openPeriod(p, await p.eval(`document.querySelector('section[data-period]').dataset.period`))
   })
   await visit('accounts', async () => { await p.clickText('Settings', { selector: 'nav button' }); await p.clickText('Bank Configuration', { selector: 'button' }) })
@@ -1827,9 +1897,9 @@ try {
   check('four banks: the diagram has each bank holding its accounts, investments outside', fourOct.global.diagram.banks.length === 4
     && fourOct.global.diagram.nodes.filter((n) => !n.outside).length === 11 && fourOct.global.diagram.nodes.some((n) => n.outside), fourOct.global.diagram.banks.map((b) => b.name).join(', '))
   // Seen in the app, the month and the year.
-  await p.clickText('Periods', { selector: 'nav button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await p.clickText('Month', { selector: 'button' })
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   await analyticsPart(p, 'Transfers')
   const fourSec = 'section[data-period="2026-10-01"]'
   await p.waitFor(`document.querySelector('${fourSec}') !== null`, 20000, 'October 2026')
@@ -1851,7 +1921,7 @@ try {
   const legend = await p.eval(`document.querySelector('${fourSec} [data-flow-card] [data-lost]')?.innerText ?? ''`)
   check('the money-moved card says what was lost to exchange and fees on transfers between currencies', /Lost to exchange and fees/.test(legend) && /\$/.test(legend), legend)
   // The movements table: an international transfer written in both currencies.
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
   await sleep(900)
   await openPeriod(p, '2026-10-01')
   // The transfers of every bank, unfolded.
@@ -1861,7 +1931,7 @@ try {
   const intl = await p.eval(`[...document.querySelectorAll('${fourSec} [data-international]')].map(e => e.innerText)`)
   check('the movements table writes an international transfer in both currencies', intl.some((t) => t.includes('€820.00 sent') && t.includes('$1,296.26 received')), intl.join(' | '))
   await p.clickText('Year', { selector: 'button' })
-  await p.clickText('Analytics', { selector: '[data-period-view] button' })
+  await p.clickText('Analytics', { selector: 'nav button' })
   const yearSec = 'section[data-period="2026-01-01"]'
   await p.waitFor(`document.querySelector('${yearSec}') !== null`, 20000, 'year 2026')
   await p.eval(`document.querySelector('${yearSec}').scrollIntoView({ block: 'start' })`)
@@ -1876,7 +1946,7 @@ try {
   await sleep(900)
   await shot(p, '25c-four-banks-year.png')
   await p.clickText('Month', { selector: 'button' })
-  await p.clickText('Statements', { selector: '[data-period-view] button' })
+  await p.clickText('Statements', { selector: 'nav button' })
 
   // ---- Logs: three columns, the date to the second, the type (debug, info, warning, error) and the details: who wrote
   // it and what ("Engine: tx.update"), everything about it (a request as received and its whole answer; an exception in

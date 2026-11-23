@@ -10,7 +10,7 @@ interface Entry { at: number; level: Level; source: Source; action: string; deta
 
 const queue: Entry[] = []
 let timer = 0
-let page = 'periods'
+let page = 'statements'
 
 /** detail: text as it is, anything else as JSON. */
 export function record(action: string, detail: unknown = '', source: Source = 'you', level: Level = 'info') {
