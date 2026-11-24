@@ -29,52 +29,83 @@ public sealed class TestStore : IDisposable
     }
 
     /// <summary>A bank of the person's list; its date format the one of its country and banking system unless <paramref name="dateFormat"/> is given.</summary>
-    public long AddBank(string name, BankingSystem system = BankingSystem.NorthAmerica, string currency = "CAD", string? country = null, DateFormat? dateFormat = null) =>
-        Db.AddBank(new Bank { Name = name, Country = country ?? "", System = system, Currency = currency, DateFormat = dateFormat });
+    public long AddBank(string name, BankingSystem system = BankingSystem.NorthAmerica, string currency = "CAD", string country = "", DateFormat? dateFormat = null) =>
+        Db.AddBank(new Bank { Name = name, Country = country, System = system, Currency = currency, DateFormat = dateFormat });
 
-    public long AddAccount(string name = "Chequing", string currency = "CAD", AccountKind kind = AccountKind.Bank, long? bank = null) =>
-        Db.AddAccount(new Account { Name = name, Currency = currency, Kind = kind, BankId = bank ?? DefaultBank });
+    /// <summary>An account at the bank every database starts with.</summary>
+    public long AddAccount(string name = "Chequing", string currency = "CAD", AccountKind kind = AccountKind.Bank) => AddAccountAt(DefaultBank, name, currency, kind);
+
+    /// <summary>An account at <paramref name="bank"/>.</summary>
+    public long AddAccountAt(long bank, string name = "Chequing", string currency = "CAD", AccountKind kind = AccountKind.Bank) =>
+        Db.AddAccount(new Account { Name = name, Currency = currency, Kind = kind, BankId = bank });
 
     /// <summary>An operation entered by hand, as the Statements view does.</summary>
     public TransactionView Enter(long account, string day, decimal amount, string brand, string category, string? note = null) =>
         Transactions.Create(new TransactionInput(day, amount, brand, category, account, note));
 
-    /// <summary>
-    /// Reads a file as the import does once the person chose its bank (<paramref name="bank"/>, else the bank every
-    /// database starts with): with that bank's banking system and date format. Stopped when the test is.
-    /// </summary>
-    public async Task<ImportDraft> ParseAsync(string fileName, byte[] bytes, long? bank = null)
+    /// <summary>Reads a file as the import does once the person chose the bank every database starts with. Stopped when the test is.</summary>
+    public Task<ImportDraft> ParseAsync(string fileName, byte[] bytes) => ParseAsync(fileName, bytes, DefaultBank);
+
+    /// <summary>Reads a file as the import does once the person chose <paramref name="bank"/>: with its banking system and date format.</summary>
+    public async Task<ImportDraft> ParseAsync(string fileName, byte[] bytes, long bank)
     {
         var draft = await Imports.ParseAsync(fileName, bytes, TestContext.Current.CancellationToken);
-        return Imports.Choose(draft.Id, null, null, bank ?? DefaultBank);
+        return Imports.Choose(draft.Id, null, null, bank);
     }
 
-    /// <summary>Reads a file and saves it into an account, as the person does: into <paramref name="account"/>, or a new one at <paramref name="bank"/>.</summary>
-    public async Task<CommitResult> ImportAsync(string fileName, byte[] bytes, string currency = "CAD", AccountKind kind = AccountKind.Bank,
-        long? account = null, long? bank = null, string? accountName = null)
+    /// <summary>Reads a file and saves it into a new account at the bank every database starts with.</summary>
+    public Task<CommitResult> ImportAsync(string fileName, byte[] bytes, string currency = "CAD", AccountKind kind = AccountKind.Bank, string? accountName = null) =>
+        ImportAtAsync(DefaultBank, fileName, bytes, currency, kind, accountName);
+
+    /// <summary>Reads a file and saves it into a new account at <paramref name="bank"/>, as the person does.</summary>
+    public async Task<CommitResult> ImportAtAsync(long bank, string fileName, byte[] bytes, string currency = "CAD", AccountKind kind = AccountKind.Bank, string? accountName = null)
     {
         var draft = await Imports.ParseAsync(fileName, bytes, TestContext.Current.CancellationToken);
-        Imports.Choose(draft.Id, account, account is null ? kind : null, account is null ? bank ?? DefaultBank : null);
-        return Imports.Commit(new CommitRequest(draft.Id, account, accountName, currency, account is null ? kind : null, [], BankId: account is null ? bank ?? DefaultBank : null));
+        Imports.Choose(draft.Id, null, kind, bank);
+        return Imports.Commit(new CommitRequest(draft.Id, null, accountName, currency, kind, [], BankId: bank));
     }
 
-    /// <summary>Every statement a file gives (the first draft, then the other accounts it holds), each read once its bank is chosen.</summary>
-    public async Task<List<ImportDraft>> ParseAllAsync(string fileName, byte[] bytes, long? bank = null)
+    /// <summary>Reads a file and saves it into the account <paramref name="account"/>, as the person does.</summary>
+    public async Task<CommitResult> ImportIntoAsync(long account, string fileName, byte[] bytes, string currency = "CAD")
+    {
+        var draft = await Imports.ParseAsync(fileName, bytes, TestContext.Current.CancellationToken);
+        Imports.Choose(draft.Id, account, null, null);
+        return Imports.Commit(new CommitRequest(draft.Id, account, null, currency, null, [], BankId: null));
+    }
+
+    /// <summary>Every statement a file gives (the first draft, then the other accounts it holds), each read at the bank every database starts with.</summary>
+    public Task<List<ImportDraft>> ParseAllAsync(string fileName, byte[] bytes) => ParseAllAsync(fileName, bytes, DefaultBank);
+
+    /// <summary>Every statement a file gives (the first draft, then the other accounts it holds), each read once <paramref name="bank"/> is chosen.</summary>
+    public async Task<List<ImportDraft>> ParseAllAsync(string fileName, byte[] bytes, long bank)
     {
         var first = await Imports.ParseAsync(fileName, bytes, TestContext.Current.CancellationToken);
-        return [.. new[] { first }.Concat(first.Others).Select(d => Imports.Choose(d.Id, null, null, bank ?? DefaultBank))];
+        return [.. new[] { first }.Concat(first.Others).Select(d => Imports.Choose(d.Id, null, null, bank))];
     }
 
-    /// <summary>
-    /// Saves every draft of a file into a new account each, at <paramref name="bank"/>, with the kind each statement says
-    /// and in <paramref name="currency"/> (the currency each statement says when none is given).
-    /// </summary>
-    public List<CommitResult> CommitAll(IEnumerable<ImportDraft> drafts, string? currency = null, long? bank = null) =>
+    /// <summary>Saves every draft of a file into a new account each, at the bank every database starts with, in the currency each statement says.</summary>
+    public List<CommitResult> CommitAll(IEnumerable<ImportDraft> drafts) => CommitAll(drafts, DefaultBank);
+
+    /// <summary>Saves every draft of a file into a new account each, at <paramref name="bank"/>, in the currency each statement says.</summary>
+    public List<CommitResult> CommitAll(IEnumerable<ImportDraft> drafts, long bank) => CommitEach(drafts, d => d.Parse.Currency, bank);
+
+    /// <summary>Saves every draft of a file into a new account each, at <paramref name="bank"/>, in <paramref name="currency"/>.</summary>
+    public List<CommitResult> CommitAll(IEnumerable<ImportDraft> drafts, string currency, long bank) => CommitEach(drafts, _ => currency, bank);
+
+    /// <summary>Each draft into a new account of the kind its statement says, at <paramref name="bank"/>.</summary>
+    private List<CommitResult> CommitEach(IEnumerable<ImportDraft> drafts, Func<ImportDraft, string> currency, long bank) =>
         [.. drafts.Select(d =>
         {
-            Imports.Choose(d.Id, null, d.Parse.Kind, bank ?? DefaultBank);
-            return Imports.Commit(new CommitRequest(d.Id, null, null, currency ?? d.Parse.Currency, d.Parse.Kind, [], BankId: bank ?? DefaultBank));
+            Imports.Choose(d.Id, null, d.Parse.Kind, bank);
+            return Imports.Commit(new CommitRequest(d.Id, null, null, currency(d), d.Parse.Kind, [], BankId: bank));
         })];
+
+    /// <summary>
+    /// Operations in other currencies converted with <paramref name="rates"/>, as the app wires it (AppServices): no
+    /// amount where the rates know no rate for the day. The one null-propagation of the tests, kept until the engine
+    /// offers this conversion itself.
+    /// </summary>
+    public void ConvertWith(ExchangeRates rates) => Transactions.Convert = (amount, from, to, day) => rates.Convert(amount, from, to, day)?.Amount;
 
     public PeriodSummary Summarize(DateOnly from, DateOnly to, Granularity granularity = Granularity.Month, string currency = "CAD") =>
         Summaries.Summarize(from, to, granularity, currency);

@@ -1,6 +1,6 @@
 using ProductivityApp.Finance.Services;
 
-namespace ProductivityApp.Finance.IntegrationTests.Logging;
+namespace ProductivityApp.Finance.IntegrationTests.Services;
 
 /// <summary>
 /// The log of every action, written to a real file: one line of three columns per entry (date to the second, type,
@@ -20,14 +20,9 @@ public sealed class ActionLogTests : IDisposable
 
     private string LogFile => Path.Combine(_folder, ActionLog.FileName);
 
-    /// <summary>The details of an entry without its first line (who and what) and its call stack.</summary>
-    private static string Body(ActionLog.Entry e)
-    {
-        var text = e.Detail.Replace("\r", "");
-        var start = text.IndexOf('\n') + 1;
-        var stack = text.LastIndexOf("\nCall stack:\n", StringComparison.Ordinal);
-        return start <= 0 || stack < start ? "" : text[start..stack];
-    }
+    /// <summary>The details of an entry without its first line (who and what) and its call stack (empty: an entry of no details).</summary>
+    private static string Body(ActionLog.Entry e) =>
+        System.Text.RegularExpressions.Regex.Match(e.Detail.Replace("\r", ""), @"^[^\n]*\n(?<body>[\s\S]*)\nCall stack:\n").Groups["body"].Value;
 
     private static string Heading(ActionLog.Entry e) => e.Detail.Split('\n')[0];
 
@@ -38,10 +33,14 @@ public sealed class ActionLogTests : IDisposable
         return new StreamReader(file).ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
     }
 
+    /// <summary><paramref name="times"/> scrolls written by the person ("to 0", "to 1"…).</summary>
+    private static void Scrolled(ActionLog log, int times) =>
+        Enumerable.Range(0, times).ToList().ForEach(i => log.Info("you", "Scrolled", $"to {i}"));
+
     private ActionLog LogWith(int clicks)
     {
         var log = new ActionLog(_folder);
-        for (var i = 1; i <= clicks; i++) log.Info("you", "Clicked", $"button {i}");
+        Enumerable.Range(1, clicks).ToList().ForEach(i => log.Info("you", "Clicked", $"button {i}"));
         log.Flush();
         return log;
     }
@@ -313,8 +312,7 @@ public sealed class ActionLogTests : IDisposable
     [Fact]
     public void Constructor_AfterARestart_ReadsTheEntriesWrittenBefore()
     {
-        using (var log = new ActionLog(_folder))
-            for (var i = 0; i < 5; i++) log.Info("you", "Scrolled", $"to {i}");
+        using (var log = new ActionLog(_folder)) Scrolled(log, 5);
 
         using var again = new ActionLog(_folder);
         again.Info("app", "App started");

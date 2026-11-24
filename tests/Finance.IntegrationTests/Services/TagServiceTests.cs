@@ -144,7 +144,7 @@ public sealed class TagServiceTests : IDisposable
     }
 
     [Fact]
-    public void Summarize_TagsOfTheCategoryAndOfTheOperation_GivesTheOperationEachTagOnce()
+    public void SetOperationTags_OperationOfATaggedCategory_GivesTheOperationEachTagOnce()
     {
         var travel = _tags.Create("Travel", null);
         var work = _tags.Create("Work", null);
@@ -160,27 +160,7 @@ public sealed class TagServiceTests : IDisposable
     }
 
     [Fact]
-    public void Summarize_SeveralTagsPerOperation_PutsEachTaggedExpenseInExactlyOneSlice()
-    {
-        var travel = _tags.Create("Travel", null);
-        var work = _tags.Create("Work", null);
-        var family = _tags.Create("Family", null);
-        _tags.SetCategoryTags("restaurants", [travel.Id, work.Id]);
-        var meal = Spend(3, 40m, "restaurants");
-        Spend(4, 25m, "restaurants");
-        var gift = Spend(5, 60m, "shopping");
-        Spend(6, 99m, "shopping");
-        _tags.SetOperationTags(meal.Id, [family.Id]);
-        _tags.SetOperationTags(gift.Id, [family.Id]);
-
-        var pie = October().TagPie;
-
-        Assert.Equal([("Family", 60m), ("Family + Travel + Work", 40m), ("Travel + Work", 25m)], pie.Select(x => (x.Label, x.Amount)).Order());
-        Assert.Equal(1, pie.Sum(x => x.Share), 6);
-    }
-
-    [Fact]
-    public void Summarize_TagsAddedOrRemoved_NeverChangeTheTotalsOfThePeriod()
+    public void SetCategoryTags_TagAddedToACategory_NeverChangesTheTotalsOfThePeriod()
     {
         var work = _tags.Create("Work", null);
         Spend(3, 40m, "restaurants");

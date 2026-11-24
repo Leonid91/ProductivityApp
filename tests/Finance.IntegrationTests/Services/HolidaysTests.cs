@@ -19,13 +19,13 @@ public sealed class HolidaysTests : IDisposable
 
     private readonly TestStore _store = new();
     private string _weekend = "6,7";
-    private string? _hoursPerWeek;
+
 
     public void Dispose() => _store.Dispose();
 
     private static byte[] Utf8(string text) => Encoding.UTF8.GetBytes(text);
 
-    private Holidays New() => new(_store.Db, () => _weekend, () => _hoursPerWeek);
+    private Holidays New() => new(_store.Db, () => _weekend, () => null);
 
     /// <summary>Canada's federal holidays and Québec's of 2026, the United States' and France's, downloaded.</summary>
     private Holidays EveryCalendarDownloaded()
@@ -258,6 +258,10 @@ public sealed class HolidaysTests : IDisposable
             holidays.List(December.From, December.To).Select(x => (x.Day, x.Name, x.Location, x.Observed)));
     }
 
+    /// <summary>Only <paramref name="ids"/> checked, every other calendar unchecked.</summary>
+    private static void CheckOnly(Holidays holidays, string[] ids) =>
+        holidays.Calendars().ToList().ForEach(c => holidays.SetActive(c.Id, ids.Contains(c.Id)));
+
     [Theory]
     [InlineData(new[] { "ca" }, 4)]             // 1 January, 11 November, 25 and 26 December
     [InlineData(new[] { "ca", "qc" }, 5)]       // Saint-Jean-Baptiste is new
@@ -266,124 +270,13 @@ public sealed class HolidaysTests : IDisposable
     public void TotalHolidays_CheckedCalendars_CountsEachDayOnce(string[] checkedCalendars, int total)
     {
         var holidays = EveryCalendarDownloaded();
-        foreach (var c in holidays.Calendars()) holidays.SetActive(c.Id, checkedCalendars.Contains(c.Id));
+        CheckOnly(holidays, checkedCalendars);
 
         Assert.Equal(total, holidays.TotalHolidays(2026));
     }
 
     [Fact]
     public void TotalHolidays_YearNotDownloaded_IsZero() => Assert.Equal(0, EveryCalendarDownloaded().TotalHolidays(2030));
-
-    [Fact]
-    public void Report_MonthWithAHoliday_SaysItsBusinessDays()
-    {
-        var holidays = New();
-        holidays.Save("qc", Utf8(HolidayFiles.QuebecJson(2026)), Downloaded);
-
-        var june = _store.Summaries.Report(new(2026, 6, 1), new(2026, 6, 30), Granularity.Month, "CAD", new ExchangeRates(_store.Db), holidays);
-
-        // 22 days Monday to Friday, less Saint-Jean-Baptiste (Wednesday 24).
-        Assert.Equal(21, june.BusinessDays);
-    }
-
-    [Fact]
-    public void Report_Year_SaysTheWeekdaysLessItsHolidays()
-    {
-        var holidays = New();
-        holidays.Save("qc", Utf8(HolidayFiles.QuebecJson(2026)), Downloaded);
-
-        var year = _store.Summaries.Report(new(2026, 1, 1), new(2026, 12, 31), Granularity.Year, "CAD", new ExchangeRates(_store.Db), holidays);
-
-        Assert.Equal(Holidays.Weekdays(new(2026, 1, 1), new(2026, 12, 31)) - 3, year.BusinessDays);
-    }
-
-    [Fact]
-    public void Report_WithoutCalendars_SaysNoBusinessDays() =>
-        Assert.Null(_store.Summaries.Report(new(2026, 6, 1), new(2026, 6, 30), Granularity.Month, "CAD", new ExchangeRates(_store.Db)).BusinessDays);
-
-    // ------------------------------------------------------------------------------------------------ salary per day and hour
-
-    /// <summary>December 2026: two salaries of 2,000, a refund and a purchase, with a euro rate of 1.5.</summary>
-    private (Holidays Holidays, ExchangeRates Rates) DecemberWithSalaries()
-    {
-        var holidays = New();
-        holidays.Save("ca", Utf8(HolidayFiles.FederalJson(2026)), Downloaded);
-        holidays.Save("qc", Utf8(HolidayFiles.QuebecJson(2026)), Downloaded);
-        var account = _store.AddAccount();
-        _store.Enter(account, "2026-12-04", 2000m, "Employer", "salary");
-        _store.Enter(account, "2026-12-18", 2000m, "Employer", "salary");
-        _store.Enter(account, "2026-12-10", 150m, "Refund", "otherincome");
-        _store.Enter(account, "2026-12-11", -80m, "Market", "groceries");
-        var rates = new ExchangeRates(_store.Db, () => "ecb");
-        // Downloaded after the salaries (rates are known up to the day of their download).
-        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2026-12-01,1.5000,"), new DateOnly(2026, 12, 31));
-        return (holidays, rates);
-    }
-
-    private SalaryRate? Salary(Holidays holidays, ExchangeRates rates, string currency = "CAD", int month = 12) =>
-        _store.Summaries.Report(new(2026, month, 1), Formatting.MonthEnd(2026, month), Granularity.Month, currency, rates, holidays).Salary;
-
-    [Fact]
-    public void Report_SalariesOfAMonth_GivesTheNetPayPerWorkingDayAndHourWithPaidHolidaysCounted()
-    {
-        var (holidays, rates) = DecemberWithSalaries();
-
-        var salary = Salary(holidays, rates)!;
-
-        // 4,000 of salary (not the refund) over December's 23 days Monday to Friday, 8 hours a day.
-        Assert.Equal((4000m, 23, 8m, 173.91m, 21.74m), (salary.Net, salary.WorkingDays, salary.HoursPerDay, salary.PerDay, salary.PerHour));
-    }
-
-    [Fact]
-    public void Report_SalariesOfAMonth_GivesThePayOfAYearOfWorkingDays()
-    {
-        var (holidays, rates) = DecemberWithSalaries();
-
-        var salary = Salary(holidays, rates)!;
-
-        // 2026: 261 days Monday to Friday. 4,000 / 23 x 261.
-        Assert.Equal((261m, 45391.30m), (salary.YearWorkingDays, salary.PerYear));
-    }
-
-    [Fact]
-    public void Report_SalariesInAnotherDisplayCurrency_ConvertsEachSalaryAtItsDaysRate()
-    {
-        var (holidays, rates) = DecemberWithSalaries();
-
-        var salary = Salary(holidays, rates, "EUR")!;
-
-        Assert.Equal((2666.66m, 115.94m, 14.49m), (salary.Net, salary.PerDay, salary.PerHour));
-    }
-
-    [Fact]
-    public void Report_HoursPerWeekEntered_GivesTheHourlyPayOfThoseHours()
-    {
-        var (holidays, rates) = DecemberWithSalaries();
-
-        _hoursPerWeek = "37.5";
-
-        var salary = Salary(holidays, rates)!;
-        Assert.Equal((7.5m, 173.91m, 23.19m, 37.5m), (salary.HoursPerDay, salary.PerDay, salary.PerHour, salary.HoursPerWeek));
-    }
-
-    [Fact]
-    public void Report_FourDayWeek_SpreadsFortyHoursOverFourDays()
-    {
-        var (holidays, rates) = DecemberWithSalaries();
-
-        _weekend = "5,6,7";
-
-        var salary = Salary(holidays, rates)!;
-        Assert.Equal((19, 10m, 210.53m, 21.05m), (salary.WorkingDays, salary.HoursPerDay, salary.PerDay, salary.PerHour));
-    }
-
-    [Fact]
-    public void Report_MonthWithoutSalary_SaysNoSalary()
-    {
-        var (holidays, rates) = DecemberWithSalaries();
-
-        Assert.Null(Salary(holidays, rates, month: 11));
-    }
 
     // ------------------------------------------------------------------------------------------------ copies kept
 
@@ -489,14 +382,23 @@ public sealed class HolidaysTests : IDisposable
         Assert.True(holidays.Due(holidays.Find("fr")!));
     }
 
-    /// <summary>Every service answers its own file; canada-holidays.ca one per year, refusing years before two years ago (400).</summary>
-    private static FakeWeb EveryService(int year) => new(u =>
+    /// <summary>
+    /// Every service answers its own file: canada-holidays.ca one per year for Canada and Québec, refusing the years
+    /// before two years ago (400), from the ten years before <paramref name="year"/> to the next; the United States'
+    /// and France's one file each. Any other address is not in the table: the test fails.
+    /// </summary>
+    private FakeWeb EveryService(int year)
     {
-        if (u.Host != "canada-holidays.ca") return (HttpStatusCode.OK, u.Host == "www.opm.gov" ? HolidayFiles.OpmIcs : HolidayFiles.FranceJson);
-        var y = int.Parse(u.Query.Split("year=")[1], CultureInfo.InvariantCulture);
-        if (y < year - 2) return (HttpStatusCode.BadRequest, """{"error":{"status":400}}""");
-        return (HttpStatusCode.OK, u.AbsolutePath.Contains("/provinces/QC", StringComparison.Ordinal) ? HolidayFiles.QuebecJson(y) : HolidayFiles.FederalJson(y));
-    });
+        var url = New().Calendars().ToDictionary(c => c.Id, c => c.Url);
+        string Of(string id, int y) => new Uri(url[id].Replace("{year}", y.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)).AbsoluteUri;
+        const string refused = """{"error":{"status":400}}""";
+        var answers = Enumerable.Range(year - 2, 4).SelectMany(y => new[] { (Of("ca", y), HttpStatusCode.OK, HolidayFiles.FederalJson(y)), (Of("qc", y), HttpStatusCode.OK, HolidayFiles.QuebecJson(y)) })
+            .Concat(Enumerable.Range(year - 10, 8).SelectMany(y => new[] { (Of("ca", y), HttpStatusCode.BadRequest, refused), (Of("qc", y), HttpStatusCode.BadRequest, refused) }))
+            .Append((Of("us", year), HttpStatusCode.OK, HolidayFiles.OpmIcs))
+            .Append((Of("fr", year), HttpStatusCode.OK, HolidayFiles.FranceJson))
+            .ToDictionary(a => a.Item1, a => (a.Item2, a.Item3));
+        return new FakeWeb(u => answers[u.AbsoluteUri]);
+    }
 
     [Fact]
     public async Task UpdateAllAsync_NothingDownloaded_DownloadsEveryYearOfTheYearlyCalendarsAndEachFileOnce()
@@ -530,7 +432,7 @@ public sealed class HolidaysTests : IDisposable
     }
 
     [Fact]
-    public async Task UpdateAllAsync_KeepsEachCalendarsFilesNamedByTheirYear()
+    public async Task UpdateAllAsync_EveryCalendarDownloaded_KeepsItsFilesNamedByTheirYear()
     {
         var year = DateTime.Today.Year;
         var holidays = New();
@@ -595,7 +497,7 @@ public sealed class HolidaysTests : IDisposable
     {
         var holidays = New();
         holidays.Save("fr", Utf8(HolidayFiles.FranceJson), Downloaded);
-        using var web = new FakeWeb(HttpStatusCode.OK, "", fault);
+        using var web = new BrokenWeb(fault);
         using var client = web.Client();
 
         var result = await holidays.UpdateAsync("fr", client, TestContext.Current.CancellationToken);

@@ -1,6 +1,6 @@
 using ProductivityApp.Finance.Pdf;
 
-namespace ProductivityApp.Finance.UnitTests.Parsing;
+namespace ProductivityApp.Finance.UnitTests.Pdf;
 
 public class LineBuilderTests
 {
@@ -22,13 +22,5 @@ public class LineBuilderTests
         var lines = LineBuilder.Build(page);
 
         Assert.Equal(["Jul 31 Purchase 64.18 1,140.19", "Sobeys Brampton", "Aug 9 Interest .42 1,140.61"], lines.Select(l => string.Join(' ', l.Words.Select(w => w.Text))));
-    }
-
-    [Fact]
-    public void WithHeight_WordOfNoSize_TakesTheUsualSizeOfText()
-    {
-        var word = PdfReader.WithHeight("Balance", 10, 50, 100, 0);
-
-        Assert.True(word.Height > 5 && word.Top < 100 && word.Bottom > 100);
     }
 }

@@ -48,19 +48,6 @@ public sealed class TransactionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ParseAsync_LaterStatementOfACorrectedShop_GivesItTheLearnedBrandAndCategory()
-    {
-        await ImportCornerShopAsync();
-        var shop = CornerShop()[0];
-        _store.Transactions.SetCategory(shop.Id, "groceries");
-        _store.Transactions.SetBrand(shop.Id, "Joe's Corner");
-
-        var april = await _store.ParseAsync("april.csv", Csv(("2025-04-02", "JOES CORNER SHOP 0012 LAVAL QC", -5.00m)));
-
-        Assert.Equal(("Joe's Corner", "groceries"), (april.Rows[0].Brand, april.Rows[0].CategoryId));
-    }
-
-    [Fact]
     public void SetCategory_OnlyThisOperation_ChangesNoOther()
     {
         var account = _store.AddAccount();
@@ -71,18 +58,6 @@ public sealed class TransactionServiceTests : IDisposable
 
         Assert.Equal(0, others);
         Assert.Single(_store.Db.AllTransactions(), t => t.CategoryId == "gifts");
-    }
-
-    [Fact]
-    public async Task ImportAsync_LaterOperationOfABrandWhoseCategoryWasChanged_FollowsTheBrand()
-    {
-        var first = await _store.ImportAsync("a.csv", Csv(("2026-01-03", "BOUTIQUE ZETA", -20.99m), ("2026-02-03", "BOUTIQUE ZETA", -21.99m)));
-        var op = _store.Db.AllTransactions()[0];
-        _store.Transactions.SetCategory(op.Id, "entertainment", allOfBrand: true);
-
-        await _store.ImportAsync("b.csv", Csv(("2026-07-03", "BOUTIQUE ZETA", -5m)), account: first.AccountId);
-
-        Assert.All(_store.Db.AllTransactions(), t => Assert.Equal("entertainment", t.CategoryId));
     }
 
     [Fact]
@@ -127,13 +102,17 @@ public sealed class TransactionServiceTests : IDisposable
     public void Create_WithoutAccount_Throws() =>
         Assert.Throws<ArgumentException>(() => _store.Transactions.Create(new TransactionInput("2025-06-15", -1m, "Candy shop", "groceries", null, null)));
 
+    /// <summary>The same operation entered <paramref name="times"/> times, as the Statements view does.</summary>
+    private void EnterTimes(int times, long account, string day, decimal amount, string brand, string category) =>
+        Enumerable.Range(0, times).ToList().ForEach(_ => _store.Enter(account, day, amount, brand, category));
+
     [Fact]
     public void Create_TenOperationsOfTenCents_AddUpToExactlyOneUnit()
     {
         var account = _store.AddAccount();
-
-        for (var i = 0; i < 10; i++) _store.Enter(account, "2025-06-15", -0.10m, "Candy shop", "groceries");
         _store.Enter(account, "2025-06-16", 0.30m, "Found money", "otherincome", "pocket");
+
+        EnterTimes(10, account, "2025-06-15", -0.10m, "Candy shop", "groceries");
 
         var june = _store.Summarize(new(2025, 6, 1), new(2025, 6, 30));
         Assert.Equal((1.00m, 0.30m, -0.70m), (june.Expenses, june.Earnings, june.Balance));
@@ -192,5 +171,18 @@ public sealed class TransactionServiceTests : IDisposable
         _store.Enter(account, "2026-10-14", -4.75m, "Cafe Exemple", "restaurants");
 
         Assert.Equal(0, _store.Transactions.SameOnDay(day, (decimal)amount, "Cafe Exemple", account, null));
+    }
+
+    [Fact]
+    public async Task ReapplyRules_RatesOfTheTransfersDayArrivedLater_PairsTheHalves()
+    {
+        var banks = new TransferBanks(_store);
+        var rates = banks.Rates();
+        await banks.TwoCurrenciesAsync(sentDay: 2);
+        rates.Save(RateSource.Ecb, Encoding.UTF8.GetBytes("Date,CAD,\n2026-10-12,1.6100,\n2026-10-09,1.6000,\n2026-10-08,1.6000,\n2026-10-07,1.5900,\n2026-10-02,1.6000,\n2026-10-01,1.6000,\n"));
+
+        _store.Transactions.ReapplyRules();
+
+        Assert.Equal(2, _store.Db.AllTransactions().Count(t => t.LinkedId is not null));
     }
 }

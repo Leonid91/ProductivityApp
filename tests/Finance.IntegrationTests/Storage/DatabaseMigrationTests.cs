@@ -37,7 +37,7 @@ public sealed class DatabaseMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Open_VersionWithoutTheFederalReserve_AddsItAfterTheBanksAlreadyThere()
+    public void Constructor_VersionWithoutTheFederalReserve_AddsItAfterTheBanksAlreadyThere()
     {
         AsEarlierVersion("DELETE FROM rate_sources WHERE id = 'fed'; UPDATE rate_sources SET position = 5 WHERE id = 'ecb'; PRAGMA user_version = 14;");
 
@@ -47,7 +47,7 @@ public sealed class DatabaseMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Open_VersionWithoutTheFederalReserveOpenedTwice_HasItOnce()
+    public void Constructor_VersionWithoutTheFederalReserveOpenedTwice_HasItOnce()
     {
         AsEarlierVersion("DELETE FROM rate_sources WHERE id = 'fed'; PRAGMA user_version = 14;");
         Opened(db => db.Banks());
@@ -58,7 +58,7 @@ public sealed class DatabaseMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Open_VersionMadeBeforeHolidays_GetsTheFourCalendarsToStartWith()
+    public void Constructor_VersionMadeBeforeHolidays_GetsTheFourCalendarsToStartWith()
     {
         AsEarlierVersion("DROP TABLE holiday_calendars; DROP TABLE IF EXISTS holiday_sets; PRAGMA user_version = 15;");
 
@@ -80,7 +80,7 @@ public sealed class DatabaseMigrationTests : IDisposable
         """);
 
     [Fact]
-    public void Open_Version16_AddsCanadaWithQuebecUnderItAndKeepsThePersonsNames()
+    public void Constructor_Version16_AddsCanadaWithQuebecUnderItAndKeepsThePersonsNames()
     {
         AsVersion16();
 
@@ -92,7 +92,7 @@ public sealed class DatabaseMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Open_Version16_DropsTheCopyFromTheOldAddressSoItIsDownloadedAgain()
+    public void Constructor_Version16_DropsTheCopyFromTheOldAddressSoItIsDownloadedAgain()
     {
         AsVersion16();
 
@@ -106,7 +106,7 @@ public sealed class DatabaseMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Open_Version16OpenedTwice_HasTheFourCalendarsOnce()
+    public void Constructor_Version16OpenedTwice_HasTheFourCalendarsOnce()
     {
         AsVersion16();
         Opened(db => db.Banks());

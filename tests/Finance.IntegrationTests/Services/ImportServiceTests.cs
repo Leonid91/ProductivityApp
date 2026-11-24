@@ -7,7 +7,7 @@ using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Testing;
 using static ProductivityApp.Finance.Testing.StatementGenerator;
 
-namespace ProductivityApp.Finance.IntegrationTests.Import;
+namespace ProductivityApp.Finance.IntegrationTests.Services;
 
 /// <summary>
 /// Files read and saved through the import, as the person does it: every format it takes, the account and bank they go
@@ -26,21 +26,16 @@ public sealed class ImportServiceTests : IDisposable
         Assert.All(ops.Zip(p.Rows), x => Assert.Contains(x.First.Label.Split(' ')[0], x.Second.Label, StringComparison.OrdinalIgnoreCase));
     }
 
-    public static TheoryData<string, byte[]> TableFiles => new()
-    {
-        { "activity.xlsx", ExportFormatsGenerator.Xlsx() },
-        { "activity.ods", ExportFormatsGenerator.OpenDocument(text: false) },
-        { "statement.odt", ExportFormatsGenerator.OpenDocument(text: true) },
-        { "statement.docx", ExportFormatsGenerator.Docx() },
-        { "activity.xls", ExportFormatsGenerator.HtmlXls() },
-        { "activity.html", ExportFormatsGenerator.HtmlXls() },
-    };
-
     [Theory]
-    [MemberData(nameof(TableFiles))]
-    public async Task ParseAsync_TableOfOperationsInAnyOfficeOrWebFormat_ReadsTheSameOperationsBalanced(string fileName, byte[] bytes)
+    [InlineData("activity.xlsx")]
+    [InlineData("activity.ods")]
+    [InlineData("statement.odt")]
+    [InlineData("statement.docx")]
+    [InlineData("activity.xls")]
+    [InlineData("activity.html")]
+    public async Task ParseAsync_TableOfOperationsInAnyOfficeOrWebFormat_ReadsTheSameOperationsBalanced(string fileName)
     {
-        var draft = await _store.ParseAsync(fileName, bytes);
+        var draft = await _store.ParseAsync(fileName, ExportFormatsGenerator.OfficeFiles[fileName]());
 
         AssertSameOperations(draft.Parse);
         Assert.Equal(VerificationStatus.Verified, draft.Parse.Status);
@@ -83,7 +78,7 @@ public sealed class ImportServiceTests : IDisposable
         const string text = "Date;Libellé;Montant;Devise\n12/10/2025;CAFÉ DU COIN SAINT-ÉTIENNE;-4,50;EUR\n13/10/2025;VIR SEPA REÇU;100,00;EUR\n";
         var name = $"releve-{Guid.NewGuid():N}.csv";
         var notes = new List<string>();
-        void Noted(string where, string what) { if (what.StartsWith(name, StringComparison.Ordinal)) lock (notes) notes.Add(what); }
+        void Noted(string where, string what) { lock (notes) notes.Add(what); }
         Diagnostics.Noted += Noted;
         ImportDraft draft;
         try
@@ -94,13 +89,13 @@ public sealed class ImportServiceTests : IDisposable
         finally { Diagnostics.Noted -= Noted; }
 
         Assert.Equal(["CAFÉ DU COIN SAINT-ÉTIENNE", "VIR SEPA REÇU"], draft.Parse.Rows.Select(r => r.Label));
-        Assert.Equal([name + ": not UTF-8, read as Windows-1252."], notes);
+        // (Notes of the tests running beside this one are left out: they never name this file.)
+        Assert.Equal([name + ": not UTF-8, read as Windows-1252."], notes.Where(n => n.StartsWith(name, StringComparison.Ordinal)));
     }
 
-    [Fact]
+    [Fact(SkipUnless = nameof(PdfReader.OcrAvailable), SkipType = typeof(PdfReader), Skip = "No text recognition on this machine (Windows: no recognition language installed; Linux: no Tesseract).")]
     public async Task ParseAsync_PictureOfAStatement_IsReadByTextRecognitionAndBalances()
     {
-        Assert.SkipUnless(PdfReader.OcrAvailable, "No text recognition on this machine (Windows: no recognition language installed; Linux: no Tesseract).");
         var spec = Sample(Style.EnglishWithdrawalsDeposits, 2025, 10, 12, 21);
         var png = await PdfReader.RenderPagePngAsync(Render(spec), 0, 1700);
 
@@ -207,7 +202,7 @@ public sealed class ImportServiceTests : IDisposable
     public async Task Choose_AccountAtAFrenchBank_ReadsAmbiguousDatesDayFirst()
     {
         var bank = _store.AddBank("Exemple", BankingSystem.France, "EUR");
-        var account = _store.AddAccount("Compte courant", "EUR", bank: bank);
+        var account = _store.AddAccountAt(bank, "Compte courant", "EUR");
         var draft = await _store.ParseAsync("export.csv", Encoding.UTF8.GetBytes("Date,Description,Amount\n03/04/2026,Bakery,-4.50\n05/04/2026,Salary,2000.00\n"));
 
         _store.Imports.Choose(draft.Id, account, null);
@@ -216,14 +211,6 @@ public sealed class ImportServiceTests : IDisposable
     }
 
     private long FrenchBank() => _store.AddBank("Banque Exemple", BankingSystem.France, "EUR", "France");
-
-    [Fact]
-    public void Banks_NewDatabase_IsTheNationalBankOfCanadaInCanadianDollars()
-    {
-        var bank = Assert.Single(_store.Db.Banks());
-
-        Assert.Equal(("National Bank of Canada", "CAD"), (bank.Name, bank.Currency));
-    }
 
     [Fact]
     public async Task Commit_NewAccountAtANewBank_AddsTheBankAndPutsTheAccountAndItsOperationsInItsCurrency()
@@ -238,36 +225,11 @@ public sealed class ImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task UpdateAccount_OtherCurrency_ReachesEveryOperationOfTheAccount()
-    {
-        var result = await _store.ImportAsync("a.pdf", Render(Sample(Style.FrenchDebitCredit, 2025, 10, 20, 9)), "EUR", bank: FrenchBank());
-        var account = _store.Db.Accounts().Single(a => a.Id == result.AccountId);
-
-        account.Currency = "CHF";
-        _store.Db.UpdateAccount(account);
-
-        Assert.All(_store.Db.AllTransactions(), t => Assert.Equal("CHF", t.Currency));
-    }
-
-    [Fact]
-    public async Task UpdateBank_FrenchBankingSystem_ReachesItsAccounts()
-    {
-        var bank = _store.AddBank("Fabrikam Bank", currency: "EUR");
-        var result = await _store.ImportAsync("a.pdf", Render(Sample(Style.FrenchDebitCredit, 2025, 10, 20, 9)), "EUR", bank: bank);
-        var saved = _store.Db.Banks().Single(b => b.Id == bank);
-
-        saved.System = BankingSystem.France;
-        _store.Db.UpdateBank(saved);
-
-        Assert.Equal(BankingSystem.France, _store.Db.Accounts().Single(a => a.Id == result.AccountId).System);
-    }
-
-    [Fact]
     public async Task ParseAsync_FileAlreadyImported_SaysSoAndCommitThrows()
     {
         var spec = Sample(Style.FrenchDebitCredit, 2025, 10, 20, 9);
         var bank = FrenchBank();
-        var first = await _store.ImportAsync("a.pdf", Render(spec), "EUR", bank: bank);
+        var first = await _store.ImportAtAsync(bank, "a.pdf", Render(spec), "EUR");
 
         var again = await _store.ParseAsync("a.pdf", Render(spec), bank);
 

@@ -65,22 +65,33 @@ public class MoneyFilesTests
         Assert.Equal((Ops.Length + 1, AccountKind.CreditCard, Ops[2].Date), (result.Rows.Count, result.Kind, result.Rows[2].Date));
     }
 
-    [Fact]
-    public void ParseOfx_CaisseEpargneMoneyExportWithDecimalCommas_ReadsOperationsCurrencyAndBalance()
+    private static readonly CaisseEpargneGenerator.Statement CaisseOctober = CaisseEpargneGenerator.Sample(2025, 10, 30);
+    private static readonly CicGenerator.Statement CicOctober = CicGenerator.Sample(2025, 10, 21);
+
+    /// <summary>A French bank's OFX export (Caisse d'Epargne's with decimal commas), the operations and closing balance it holds.</summary>
+    private static readonly Dictionary<string, (byte[] Ofx, List<(DateOnly, decimal)> Operations, decimal Closing)> FrenchOfx = new()
     {
-        var statement = CaisseEpargneGenerator.Sample(2025, 10, 30);
-        var account = statement.Accounts[0];
+        ["Caisse d'Epargne"] = (CaisseEpargneGenerator.Ofx(CaisseOctober, CaisseOctober.Accounts[0]), [.. CaisseOctober.Accounts[0].Lines.Select(l => (l.Date, l.Amount)).Order()], CaisseOctober.Accounts[0].Closing),
+        ["CIC"] = (CicGenerator.Ofx(CicOctober, CicOctober.Accounts[0]), [.. CicOctober.Accounts[0].Lines.Select(l => (l.Date, l.Amount)).Order()], CicOctober.Accounts[0].Closing),
+    };
 
-        var result = MoneyFiles.ParseOfx(CaisseEpargneGenerator.Ofx(statement, account), "CAD", null);
+    [Theory]
+    [InlineData("Caisse d'Epargne")]
+    [InlineData("CIC")]
+    public void ParseOfx_FrenchBankMoneyExport_ReadsOperationsInEurosAndTheClosingBalance(string bank)
+    {
+        var (ofx, operations, closing) = FrenchOfx[bank];
 
-        Assert.Equal([.. account.Lines.Select(l => (l.Date, l.Amount)).OrderBy(x => x)], Operations(result));
-        Assert.Equal(("EUR", account.Closing), (result.Currency, result.ClosingBalance));
+        var result = MoneyFiles.ParseOfx(ofx, "CAD", null);
+
+        Assert.Equal(operations, Operations(result));
+        Assert.Equal(("EUR", closing), (result.Currency, result.ClosingBalance!.Value));
     }
 
     [Fact]
     public void ParseQif_CaisseEpargneQuickenExportWithDecimalCommas_ReadsMinusSignedAmounts()
     {
-        var account = CaisseEpargneGenerator.Sample(2025, 10, 30).Accounts[0];
+        var account = CaisseOctober.Accounts[0];
 
         var result = MoneyFiles.ParseQif(CaisseEpargneGenerator.Qif(account), "EUR", null);
 
@@ -88,26 +99,37 @@ public class MoneyFilesTests
     }
 
     [Fact]
-    public void ParseOfx_CicMoneyExport_ReadsOperationsInEurosAndTheClosingBalance()
-    {
-        var statement = CicGenerator.Sample(2025, 10, 21);
-        var account = statement.Accounts[0];
-
-        var result = MoneyFiles.ParseOfx(CicGenerator.Ofx(statement, account), "CAD", null);
-
-        Assert.Equal([.. account.Lines.Select(l => (l.Date, l.Amount)).OrderBy(x => x)], Operations(result));
-        Assert.Equal(("EUR", account.Closing), (result.Currency, result.ClosingBalance));
-    }
-
-    [Fact]
     public void ParseQif_CicQuickenExport_ReadsOperationsInEurosByItsSepaOperations()
     {
-        var account = CicGenerator.Sample(2025, 10, 21).Accounts[0];
+        var account = CicOctober.Accounts[0];
 
         var result = MoneyFiles.ParseQif(CicGenerator.Qif(account), "CAD", null);
 
         Assert.Equal([.. account.Lines.Select(l => (l.Date, l.Amount)).OrderBy(x => x)], Operations(result));
         Assert.Equal("EUR", result.Currency);
+    }
+
+    /// <summary>3 April and 5 April, or 4 March and 4 May: every number is 12 or less.</summary>
+    private static readonly byte[] QifOfNumbersOf12OrLess = System.Text.Encoding.ASCII.GetBytes("!Type:Bank\nD03/04/2026\nT-4.50\nPBakery\n^\nD05/04/2026\nT2000.00\nPSalary\n^\n");
+
+    [Theory]
+    [InlineData(DateFormat.DayMonthYear, 4, 3)]
+    [InlineData(DateFormat.MonthDayYear, 3, 4)]
+    public void ParseQif_AtABankOfAFormat_ReadsTheDatesInThatFormat(DateFormat format, int month, int day)
+    {
+        var result = MoneyFiles.ParseQif(QifOfNumbersOf12OrLess, "CAD", null, format);
+
+        Assert.Equal(new DateOnly(2026, month, day), result.Rows[0].Date);
+    }
+
+    [Fact]
+    public void ParseQif_DatesThatDoNotFitTheBanksFormat_SaysSo()
+    {
+        var qif = System.Text.Encoding.ASCII.GetBytes("!Type:Bank\nD03/14/2026\nT-4.50\nPBakery\n^\n");
+
+        var result = MoneyFiles.ParseQif(qif, "CAD", null, DateFormat.DayMonthYear);
+
+        Assert.Contains("written MM/DD/YYYY, not DD/MM/YYYY", result.DateFormatMismatch);
     }
 
     [Fact]

@@ -19,19 +19,14 @@ public class DownloadStoreTests
         Assert.Equal(slug, result);
     }
 
-    public static TheoryData<string, int?, byte[], string> DownloadedFiles => new()
-    {
-        { "rates", null, [0x50, 0x4B, 3, 4], "rates.zip" },
-        { "holidays", 2026, Encoding.UTF8.GetBytes("{}"), "holidays-2026.json" },
-        { "holidays", null, Encoding.UTF8.GetBytes("BEGIN:VCALENDAR"), "holidays.ics" },
-        { "rates", null, Encoding.UTF8.GetBytes("Date,USD"), "rates.csv" },
-    };
-
     [Theory]
-    [MemberData(nameof(DownloadedFiles))]
-    public void FileName_DownloadedContent_IsNamedByWhatItHoldsAndItsYear(string what, int? year, byte[] content, string fileName)
+    [InlineData("rates", null, "PK\u0003\u0004", "rates.zip")]   // the first bytes of a zip file
+    [InlineData("holidays", 2026, "{}", "holidays-2026.json")]
+    [InlineData("holidays", null, "BEGIN:VCALENDAR", "holidays.ics")]
+    [InlineData("rates", null, "Date,USD", "rates.csv")]
+    public void FileName_DownloadedContent_IsNamedByWhatItHoldsAndItsYear(string what, int? year, string content, string fileName)
     {
-        var result = DownloadStore.FileName(what, year, content);
+        var result = DownloadStore.FileName(what, year, Encoding.Latin1.GetBytes(content));
 
         Assert.Equal(fileName, result);
     }

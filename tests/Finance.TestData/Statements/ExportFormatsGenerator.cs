@@ -24,13 +24,20 @@ public static class ExportFormatsGenerator
 
     private static string X(string s) => System.Security.SecurityElement.Escape(s);
 
+    /// <summary>An entry of a fixed date: the same file, to the byte, every time it is made (the app knows a file by its bytes).</summary>
+    private static ZipArchiveEntry Dated(ZipArchiveEntry entry)
+    {
+        entry.LastWriteTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        return entry;
+    }
+
     private static byte[] Zip(params (string Name, string Text)[] entries)
     {
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
             foreach (var (name, text) in entries)
             {
-                using var w = new StreamWriter(zip.CreateEntry(name).Open(), new UTF8Encoding(false));
+                using var w = new StreamWriter(Dated(zip.CreateEntry(name)).Open(), new UTF8Encoding(false));
                 w.Write(text);
             }
         return ms.ToArray();
@@ -150,4 +157,15 @@ public static class ExportFormatsGenerator
     /// <summary>A card's QIF with day/month/year dates, the label in the memo, and one more line (a fee on 13 March).</summary>
     public static byte[] QifDayFirstCard() =>
         Encoding.ASCII.GetBytes("!Type:CCard\n" + string.Concat(Ops.Select(o => $"D{o.Date:dd/MM/yyyy}\nT{o.Amount.ToString(CultureInfo.InvariantCulture)}\nM{o.Label}\n^\n")) + "D13/03/2026\nT-1.00\nPFEE\n^\n");
+
+    /// <summary>The operations in every office and web table format, by the name of the file (theories take the name).</summary>
+    public static readonly IReadOnlyDictionary<string, Func<byte[]>> OfficeFiles = new Dictionary<string, Func<byte[]>>
+    {
+        ["activity.xlsx"] = () => Xlsx(),
+        ["activity.ods"] = () => OpenDocument(text: false),
+        ["statement.odt"] = () => OpenDocument(text: true),
+        ["statement.docx"] = Docx,
+        ["activity.xls"] = HtmlXls,
+        ["activity.html"] = HtmlXls,
+    };
 }

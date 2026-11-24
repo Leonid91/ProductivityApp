@@ -50,23 +50,15 @@ public sealed class CategoryServiceTests : IDisposable
     public void Create_TwelveLevelsDeep_IsKeptInTheDatabaseFile()
     {
         var top = _categories.Create("Home projects", null, CategoryKind.Expense, "#2e7d32");
-        var deepest = top;
-        for (var i = 1; i <= 12; i++) deepest = _categories.Create($"Level {i}", deepest.Id, CategoryKind.Expense, null);
+        // Level 1 under the top, each next level under the one before.
+        var levels = Enumerable.Range(1, 12).Aggregate(new List<Category> { top }, (made, i) => [.. made, _categories.Create($"Level {i}", made[^1].Id, CategoryKind.Expense, null)]);
         _store.Db.Dispose();
         Categories.Use(Categories.BuiltIn);
 
         using var reopened = new Database(_store.DatabasePath);
 
-        var chain = Ancestors(deepest.Id);
-        Assert.Equal(12, chain.Count);
-        Assert.Equal((top.Id, "#2e7d32", "Level 12"), (chain[^1], Categories.Get(top.Id).Color, Categories.Get(deepest.Id).Name));
-    }
-
-    private static List<string> Ancestors(string id)
-    {
-        var chain = new List<string>();
-        for (var c = Categories.Get(id); c.Parent is not null; c = Categories.Get(c.Parent)) chain.Add(c.Parent);
-        return chain;
+        Assert.Equal(levels.SkipLast(1).Select(c => (string?)c.Id).Prepend(null), levels.Select(c => Categories.Get(c.Id).Parent));
+        Assert.Equal(("#2e7d32", "Level 12"), (Categories.Get(top.Id).Color, Categories.Get(levels[^1].Id).Name));
     }
 
     [Fact]

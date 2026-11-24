@@ -1,7 +1,8 @@
 using ProductivityApp.Finance.Model;
 
-namespace ProductivityApp.Finance.UnitTests.Services;
+namespace ProductivityApp.Finance.IntegrationTests.Model;
 
+/// <summary>The list of supported banks kept in a real JSON file of a folder of its own, deleted when the test ends.</summary>
 public sealed class SupportedBanksTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "pa-supported-" + Guid.NewGuid().ToString("N"));
@@ -9,27 +10,8 @@ public sealed class SupportedBanksTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_dir)) Directory.Delete(_dir, true);
-    }
-
-    [Fact]
-    public void Defaults_EveryBankReadByItself_IsListedOnceUnderItsCountry()
-    {
-        var byCountry = SupportedBanks.Defaults().ToDictionary(c => c.Code, c => c.Banks.Select(b => b.Name).ToList());
-
-        Assert.Equal(["CA", "FR", "GB"], byCountry.Keys);
-        Assert.Equal([KnownBanks.National, "Scotiabank"], byCountry["CA"]);
-        Assert.Equal(["BoursoBank", "Caisse d'Epargne", "CIC", "Fortuneo"], byCountry["FR"]);
-        Assert.Equal(["Revolut"], byCountry["GB"]);
-    }
-
-    [Fact]
-    public void Defaults_OnlyTheBanksOfThePersonsOwnStatements_AreConfirmed()
-    {
-        var banks = SupportedBanks.Defaults().SelectMany(c => c.Banks).ToList();
-
-        Assert.All(banks, b => Assert.True(b.Considered, b.Name));
-        Assert.Equal([KnownBanks.National, "Scotiabank"], banks.Where(b => b.Confirmed).Select(b => b.Name));
+        try { Directory.Delete(_dir, true); }
+        catch (DirectoryNotFoundException) { }
     }
 
     [Fact]
@@ -43,12 +25,19 @@ public sealed class SupportedBanksTests : IDisposable
     }
 
     [Fact]
-    public void Create_NoFile_WritesTheDefaults_AFileThereIsKept()
+    public void Create_NoFile_WritesTheDefaults()
     {
         new SupportedBanks(File).Create();
-        Assert.Equal(SupportedBanks.Defaults().Select(c => c.Code), new SupportedBanks(File).All().Select(c => c.Code));
 
+        Assert.Equal(SupportedBanks.Defaults().Select(c => c.Code), new SupportedBanks(File).All().Select(c => c.Code));
+    }
+
+    [Fact]
+    public void Create_AFileThere_KeepsIt()
+    {
+        Directory.CreateDirectory(_dir);
         System.IO.File.WriteAllText(File, "{ changed by hand");
+
         new SupportedBanks(File).Create();
 
         Assert.Equal("{ changed by hand", System.IO.File.ReadAllText(File));
@@ -92,7 +81,7 @@ public sealed class SupportedBanksTests : IDisposable
     [InlineData("DE", "CIC", "CIC", "No country DE")]
     [InlineData("FR", "CIC", "fortuneo", "already in France")]
     [InlineData("FR", "CIC", " ", "1 to 80 characters")]
-    public void Update_AnUnknownBankOrAName_TakenOrEmpty_IsRefused(string country, string name, string newName, string message)
+    public void Update_UnknownBankOrCountryOrNameTakenOrEmpty_IsRefused(string country, string name, string newName, string message)
     {
         var e = Assert.Throws<ArgumentException>(() => new SupportedBanks(File).Update(country, name, new SupportedBank(newName, true, false)));
 

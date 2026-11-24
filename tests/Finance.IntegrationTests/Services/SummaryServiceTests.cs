@@ -76,12 +76,16 @@ public sealed class SummaryServiceTests : IDisposable
         Assert.Equal(132.60m, bank.ByCategory.Single(x => x.Key == "groceries").Amount);
     }
 
+    /// <summary>One purchase in each category, of 10, 11, 12… on 5 October 2025.</summary>
+    private void SpendOnEach(long account, List<Category> categories) =>
+        categories.Select((c, i) => (c, i)).ToList().ForEach(x => _store.Enter(account, "2025-10-05", -(10m + x.i), $"Shop {x.i}", x.c.Id));
+
     [Fact]
     public void Summarize_ManyCategories_KeepsThePieToItsSlicesPlusOneHoldingTheRest()
     {
         var account = _store.AddAccount();
         var categories = Categories.All.Where(c => c.Kind == CategoryKind.Expense && c.Parent is null).Take(SummaryService.PieSlices + 4).ToList();
-        for (var i = 0; i < categories.Count; i++) _store.Enter(account, "2025-10-05", -(10m + i), $"Shop {i}", categories[i].Id);
+        SpendOnEach(account, categories);
 
         var october = _store.Summarize(D(2025, 10, 1), D(2025, 10, 31));
 
@@ -116,11 +120,12 @@ public sealed class SummaryServiceTests : IDisposable
         Assert.Equal((100m, 20m), (october.Series.Sum(b => b.Expenses), october.Series[2].Expenses));
     }
 
+    /// <summary>On the 10th of every month of the years given, a purchase of as many dollars as the month's number.</summary>
     private void SpendEveryMonth(int fromYear, int toYear)
     {
         var account = _store.AddAccount();
-        for (var y = fromYear; y <= toYear; y++)
-            for (var m = 1; m <= 12; m++) _store.Enter(account, $"{y}-{m:00}-10", -m, "Market", "groceries");
+        Enumerable.Range(fromYear, toYear - fromYear + 1).SelectMany(y => Enumerable.Range(1, 12).Select(m => (y, m))).ToList()
+            .ForEach(x => _store.Enter(account, $"{x.y}-{x.m:00}-10", -x.m, "Market", "groceries"));
     }
 
     [Fact]
@@ -177,16 +182,12 @@ public sealed class SummaryServiceTests : IDisposable
     /// <summary>A National Bank style chequing export (newest first, running balance), from a list of lines.</summary>
     private static byte[] ChequingCsv(IEnumerable<Line> lines, decimal opening)
     {
-        var rows = new List<string>();
-        var balance = opening;
-        foreach (var l in lines.OrderBy(l => l.Date))
-        {
-            balance += l.Amount;
-            rows.Add(string.Join(';', Q(l.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)), Q(l.Label), Q(l.Category),
-                Q(l.Amount < 0 ? (-l.Amount).ToString(CultureInfo.InvariantCulture) : "0"),
-                Q(l.Amount > 0 ? l.Amount.ToString(CultureInfo.InvariantCulture) : "0"), Q(balance.ToString("0.00", CultureInfo.InvariantCulture))));
-        }
-        rows.Reverse();
+        var dated = lines.OrderBy(l => l.Date).ToList();
+        // Oldest first: each line with the balance after it (the opening plus every amount up to it), a debit or a credit
+        // (the other column 0); then written newest first.
+        var rows = dated.Select((l, i) => string.Join(';', Q(l.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)), Q(l.Label), Q(l.Category),
+            Q(Math.Max(0m, -l.Amount).ToString(CultureInfo.InvariantCulture)), Q(Math.Max(0m, l.Amount).ToString(CultureInfo.InvariantCulture)),
+            Q((opening + dated.Take(i + 1).Sum(x => x.Amount)).ToString("0.00", CultureInfo.InvariantCulture)))).Reverse();
         return Encoding.UTF8.GetBytes("Date;Description;Categorie;Debit;Credit;Solde\n" + string.Join('\n', rows) + "\n");
         static string Q(string s) => "\"" + s + "\"";
     }
@@ -198,20 +199,22 @@ public sealed class SummaryServiceTests : IDisposable
     private static List<Line> FourMonths(int seed)
     {
         var rng = new Random(seed);
-        var lines = new List<Line>();
-        for (var m = 1; m <= 4; m++)
+        var rentDay = 1 + seed % 5;
+        // Month after month, the random prices drawn in the same order: the four groceries, then the transfer.
+        return [.. Enumerable.Range(1, 4).SelectMany(m =>
         {
-            var rentDay = 1 + seed % 5;
-            lines.Add(new(D(2026, m, rentDay), "Rent Prop Mgmt", "Hypotheque et loyer", -(1200 + seed * 10)));
-            lines.Add(new(D(2026, m, rentDay), "Assurance Habitation Desjardins", "Assurances", -42.17m));
-            lines.Add(new(D(2026, m, 12), "Videotron", "Internet", -(61.50m + (m % 3) * 0.25m)));
-            lines.Add(new(D(2026, m, 14), "Employeur Inc", "Revenus", 2100.55m));
-            lines.Add(new(D(2026, m, 28), "Employeur Inc", "Revenus", 2100.55m));
-            lines.Add(new(D(2026, m, 9), "Cafe Olimpico", "Cafes", -4.75m));
-            for (var g = 0; g < 4; g++) lines.Add(new(D(2026, m, 6 + g * 5), "Super C", "Epicerie", -Math.Round((decimal)(20 + rng.NextDouble() * 80), 2)));
-            lines.Add(new(D(2026, m, 20), "Virement INTERAC", "Transfert", -Math.Round((decimal)(10 + rng.NextDouble() * 50), 2)));
-        }
-        return lines;
+            var groceries = Enumerable.Range(0, 4).Select(g => new Line(D(2026, m, 6 + g * 5), "Super C", "Epicerie", -Math.Round((decimal)(20 + rng.NextDouble() * 80), 2))).ToList();
+            var transfer = new Line(D(2026, m, 20), "Virement INTERAC", "Transfert", -Math.Round((decimal)(10 + rng.NextDouble() * 50), 2));
+            return new List<Line>
+            {
+                new(D(2026, m, rentDay), "Rent Prop Mgmt", "Hypotheque et loyer", -(1200 + seed * 10)),
+                new(D(2026, m, rentDay), "Assurance Habitation Desjardins", "Assurances", -42.17m),
+                new(D(2026, m, 12), "Videotron", "Internet", -(61.50m + (m % 3) * 0.25m)),
+                new(D(2026, m, 14), "Employeur Inc", "Revenus", 2100.55m),
+                new(D(2026, m, 28), "Employeur Inc", "Revenus", 2100.55m),
+                new(D(2026, m, 9), "Cafe Olimpico", "Cafes", -4.75m),
+            }.Concat(groceries).Append(transfer).ToList();
+        })];
     }
 
     private async Task<PeriodSummary> RecurringMonthAsync(int month)
@@ -398,7 +401,8 @@ public sealed class SummaryServiceTests : IDisposable
         var diagram = summary.Diagram;
         string Box(string name) => diagram.Nodes.Single(n => n.Name == name).Id;
 
-        Assert.Equal(summary.Flows.Select(f => (f.FromOutside ? "out" : f.From, f.ToOutside ? "out" : f.To)).Distinct().Count(), diagram.Arrows.Count);
+        // Chequing to savings, to the card, and to the outside (its two outside movements, 35 and 500, in one arrow).
+        Assert.Equal(3, diagram.Arrows.Count);
         Assert.Contains(diagram.Arrows, a => (a.From, a.To, a.Amount, a.Outside) == (Box("Chequing"), Box("Savings"), 250m, false));
         Assert.Contains(diagram.Arrows, a => (a.From, a.To, a.Amount, a.Outside) == (Box("Chequing"), FlowDiagram.OutsideId, 535m, true));
         Assert.All(diagram.Arrows, a => Assert.StartsWith("M", a.Path));
@@ -406,7 +410,7 @@ public sealed class SummaryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ImportAsync_ClosedTermInvestmentFiledAsAWithdrawal_IsOwnMoneyBackNotIncome()
+    public async Task Summarize_ClosedTermInvestmentFiledAsAWithdrawal_IsOwnMoneyBackNotIncome()
     {
         await _store.ImportAsync("april.csv", ChequingCsv(
         [
@@ -496,7 +500,7 @@ public sealed class SummaryServiceTests : IDisposable
     private (PeriodReport Full, List<TransactionView> All) FebruaryOfTwentyEightOperations()
     {
         var account = _store.AddAccount();
-        for (var d = 1; d <= 28; d++) _store.Enter(account, $"2026-02-{d:00}", -d, "Market", "groceries");
+        Enumerable.Range(1, 28).ToList().ForEach(d => _store.Enter(account, $"2026-02-{d:00}", -d, "Market", "groceries"));
         var full = _store.Summaries.Report(D(2026, 2, 1), D(2026, 2, 28), Granularity.Month, "CAD", new ExchangeRates(_store.Db));
         return (full, full.Banks.Single().Summary.Transactions);
     }

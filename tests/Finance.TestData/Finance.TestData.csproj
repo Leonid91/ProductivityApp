@@ -15,6 +15,13 @@
   <!-- Copies of real statements published on the internet, with the personal details replaced (RealStatements.cs). -->
   <ItemGroup>
     <EmbeddedResource Include="Statements\Real\*.txt" LogicalName="Real.%(Filename).txt" />
+    <!-- What each of them prints: its operations and balances (RealStatementExpectations.cs). -->
+    <EmbeddedResource Include="Statements\Real\expected.json" LogicalName="Expected.real-statements.json" />
+  </ItemGroup>
+
+  <!-- The invented inputs of the property tests, kept as data under the seed that made them (MovementLayouts, TimelinePeriods). -->
+  <ItemGroup>
+    <EmbeddedResource Include="Diagrams\*.json" LogicalName="Diagrams.%(Filename).json" />
   </ItemGroup>
 
 </Project>

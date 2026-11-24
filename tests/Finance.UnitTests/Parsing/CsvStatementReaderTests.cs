@@ -69,19 +69,12 @@ public class CsvStatementReaderTests
     [InlineData("Date;Text;Amount (CHF);Balance (CHF)\n03.02.2026;Migros;-45.10;954.90\n05.02.2026;Lohn;5200.00;6154.90\n", "CHF")]
     [InlineData("Date;Text;Amount;Balance\n03.02.2026;Migros;-45.10 CHF;954.90 CHF\n05.02.2026;Lohn;5200.00 CHF;6154.90 CHF\n", "CHF")]
     [InlineData("Date,Description,Amount\n2026-02-03,Bakery,-4.50 €\n2026-02-05,Salary,2000.00 €\n", "EUR")]
-    public void Parse_MoneyColumnsNamingTheirCurrencyForAPersonInCanadianDollars_IsInThatCurrency(string csv, string currency)
+    [InlineData("Date,Description,Amount\n2026-02-03,Bakery,-$4.50\n2026-02-05,Salary,$2000.00\n", "CAD")]   // dollars of no country: the person's
+    public void Parse_MoneyColumnsForAPersonInCanadianDollars_IsInTheCurrencyTheyNameElseThePersons(string csv, string currency)
     {
         var result = Parse(csv, "export.csv", "CAD");
 
         Assert.Equal(currency, result.Currency);
-    }
-
-    [Fact]
-    public void Parse_AmountsInDollarsWithoutTheirCountry_IsInThePersonsCurrency()
-    {
-        var result = Parse("Date,Description,Amount\n2026-02-03,Bakery,-$4.50\n2026-02-05,Salary,$2000.00\n", "export.csv", "CAD");
-
-        Assert.Equal("CAD", result.Currency);
     }
 
     [Fact]
@@ -175,6 +168,52 @@ public class CsvStatementReaderTests
         Assert.Equal(VerificationStatus.Mismatch, result.Status);
     }
 
+    // ------------------------------------------------------------------------------------------- dates in the bank's format
+
+    /// <summary>3 April and 5 April, or 4 March and 4 May: every number is 12 or less.</summary>
+    private static readonly byte[] TwoNumbersOf12OrLess = Encoding.UTF8.GetBytes("Date,Description,Amount\n03/04/2026,Bakery,-4.50\n05/04/2026,Salary,2000.00\n");
+
+    [Theory]
+    [InlineData(DateFormat.DayMonthYear, 4, 3)]
+    [InlineData(DateFormat.MonthDayYear, 3, 4)]
+    public void Parse_CsvAtABankOfAFormat_ReadsTheDatesInThatFormat(DateFormat format, int month, int day)
+    {
+        var result = CsvStatementReader.Parse(TwoNumbersOf12OrLess, "export.csv", "CAD", null, format);
+
+        Assert.Equal((new DateOnly(2026, month, day), (string?)null), (result.Rows[0].Date, result.DateFormatMismatch));
+    }
+
+    [Theory]
+    [InlineData("Date,Description,Amount\n03/14/2026,Bakery,-4.50\n", DateFormat.DayMonthYear, "written MM/DD/YYYY, not DD/MM/YYYY")]
+    [InlineData("Date,Description,Amount\n14/03/2026,Bakery,-4.50\n", DateFormat.MonthDayYear, "written DD/MM/YYYY, not MM/DD/YYYY")]
+    [InlineData("Date,Description,Amount\n14/03/2026,Bakery,-4.50\n", DateFormat.YearMonthDay, "written DD/MM/YYYY, not YYYY-MM-DD")]
+    [InlineData("Date,Description,Amount\n03/04/2026,Bakery,-4.50\n", DateFormat.YearMonthDay, "written with the year last, not YYYY-MM-DD")]
+    public void Parse_CsvWhoseDatesDoNotFitTheBanksFormat_SaysHowTheyAreWritten(string csv, DateFormat format, string said)
+    {
+        var result = CsvStatementReader.Parse(Encoding.UTF8.GetBytes(csv), "export.csv", "CAD", null, format);
+
+        Assert.Contains(said, result.DateFormatMismatch);
+    }
+
+    [Theory]
+    [InlineData(DateFormat.DayMonthYear)]
+    [InlineData(DateFormat.MonthDayYear)]
+    [InlineData(DateFormat.YearMonthDay)]
+    public void Parse_CsvWithDatesYearFirst_FitsEveryFormat(DateFormat format)
+    {
+        var result = CsvStatementReader.Parse(Encoding.UTF8.GetBytes("Date,Description,Amount\n2026-03-14,Bakery,-4.50\n"), "export.csv", "CAD", null, format);
+
+        Assert.Equal((new DateOnly(2026, 3, 14), (string?)null), (result.Rows[0].Date, result.DateFormatMismatch));
+    }
+
+    [Fact]
+    public void Parse_CsvBeforeABankIsChosen_ReportsNoMismatch()
+    {
+        var result = Parse("Date,Description,Amount\n03/14/2026,Bakery,-4.50\n", "export.csv", "CAD");
+
+        Assert.Null(result.DateFormatMismatch);
+    }
+
     // ------------------------------------------------------------------------------------------- several accounts
 
     [Fact]
@@ -188,21 +227,13 @@ public class CsvStatementReaderTests
         Assert.All(parts, p => Assert.Equal(VerificationStatus.Verified, CsvStatementReader.Parse(CsvStatementReader.Write(p.Table), "x.csv", NoCurrency).Status));
     }
 
-    [Fact]
-    public void Accounts_LinesNamingWhoWasPaidInAFileThatBalances_KeepsTheFileWhole()
+    [Theory]
+    // Lines naming who was paid, in a file that balances as one account.
+    [InlineData("Date,Account,Description,Amount,Balance\n2026-06-01,ACME Ltd,Bakery,-5.00,95.00\n2026-06-02,City Transit,Bus,-3.00,92.00\n2026-06-03,Employer Inc,Pay,50.00,142.00\n")]
+    // No balance to prove two accounts.
+    [InlineData("Date,Account,Description,Amount\n2026-06-01,A,Bakery,-5.00\n2026-06-02,B,Bus,-3.00\n")]
+    public void Accounts_NothingProvingTwoAccounts_KeepsTheFileWhole(string csv)
     {
-        const string csv = "Date,Account,Description,Amount,Balance\n2026-06-01,ACME Ltd,Bakery,-5.00,95.00\n2026-06-02,City Transit,Bus,-3.00,92.00\n2026-06-03,Employer Inc,Pay,50.00,142.00\n";
-
-        var parts = CsvStatementReader.Accounts(CsvStatementReader.Table(Encoding.UTF8.GetBytes(csv)), NoCurrency);
-
-        Assert.Single(parts);
-    }
-
-    [Fact]
-    public void Accounts_NoBalanceToProveTwoAccounts_KeepsTheFileWhole()
-    {
-        const string csv = "Date,Account,Description,Amount\n2026-06-01,A,Bakery,-5.00\n2026-06-02,B,Bus,-3.00\n";
-
         var parts = CsvStatementReader.Accounts(CsvStatementReader.Table(Encoding.UTF8.GetBytes(csv)), NoCurrency);
 
         Assert.Single(parts);
@@ -226,11 +257,18 @@ public class CsvStatementReaderTests
     [InlineData("Date;Amount\n")]
     public void IsWindows1252_TextValidInUtf8_ReturnsFalse(string text) => Assert.False(CsvStatementReader.IsWindows1252(Encoding.UTF8.GetBytes(text)));
 
-    [Fact]
-    public void Decode_Windows1252Text_ReturnsEveryCharacterAsWritten() => Assert.Equal(FrenchText, CsvStatementReader.Decode(Windows1252(FrenchText)));
+    [Theory]
+    [InlineData(1252)]
+    [InlineData(65001)]
+    public void Decode_TextInWindows1252OrUtf8_ReturnsEveryCharacterAsWritten(int codePage)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var bytes = Encoding.GetEncoding(codePage).GetBytes(FrenchText);
 
-    [Fact]
-    public void Decode_Utf8Text_ReturnsEveryCharacterAsWritten() => Assert.Equal(FrenchText, CsvStatementReader.Decode(Encoding.UTF8.GetBytes(FrenchText)));
+        var result = CsvStatementReader.Decode(bytes);
+
+        Assert.Equal(FrenchText, result);
+    }
 
     // ------------------------------------------------------------------------------------------- National Bank of Canada
 

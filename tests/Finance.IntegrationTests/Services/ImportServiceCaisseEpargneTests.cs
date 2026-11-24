@@ -4,22 +4,21 @@ using ProductivityApp.Finance.Parsing;
 using ProductivityApp.Finance.Services;
 using ProductivityApp.Finance.Testing;
 
-namespace ProductivityApp.Finance.IntegrationTests.Import;
+namespace ProductivityApp.Finance.IntegrationTests.Services;
 
-/// <summary>The monthly PDF of the Caisse d'Epargne (a French bank), holding the current account and the Livret A, read through the import.</summary>
-public sealed class CaisseEpargneImportTests : IDisposable
+/// <summary>
+/// The monthly PDF of the Caisse d'Epargne (a French bank), holding the current account and the Livret A, read through
+/// the import. Read once for the tests that only read it.
+/// </summary>
+public sealed class ImportServiceCaisseEpargneTests(ReadOnce read) : IClassFixture<ReadOnce>
 {
     private static readonly CaisseEpargneGenerator.Statement September = CaisseEpargneGenerator.Sample(2025, 9, 12);
+    private static readonly Lazy<byte[]> Pdf = new(() => CaisseEpargneGenerator.Pdf(September));
 
-    private readonly TestStore _store = new();
+    private static long AddCaisse(TestStore store) => store.AddBank("Caisse d'Epargne", BankingSystem.France, "EUR", "France");
 
-    public void Dispose() => _store.Dispose();
-
-    private readonly long _caisse;
-
-    public CaisseEpargneImportTests() => _caisse = _store.AddBank("Caisse d'Epargne", BankingSystem.France, "EUR", "France");
-
-    private Task<List<ImportDraft>> ReadAsync() => _store.ParseAllAsync("releve.pdf", CaisseEpargneGenerator.Pdf(September), _caisse);
+    /// <summary>The statements of both accounts, read once.</summary>
+    private Task<List<ImportDraft>> ReadAsync() => read.GetAsync("releve.pdf", store => store.ParseAllAsync("releve.pdf", Pdf.Value, AddCaisse(store)));
 
     [Fact]
     public async Task ParseAsync_PdfOfTwoAccounts_GivesOneBalancedStatementInEurosEach()
@@ -55,9 +54,11 @@ public sealed class CaisseEpargneImportTests : IDisposable
     [Fact]
     public async Task ParseAsync_PdfSavedBefore_SaysBothAccountsAreAlreadyImported()
     {
-        _store.CommitAll(await ReadAsync(), bank: _caisse);
+        using var store = new TestStore();
+        var caisse = AddCaisse(store);
+        store.CommitAll(await store.ParseAllAsync("releve.pdf", Pdf.Value, caisse), bank: caisse);
 
-        var again = await ReadAsync();
+        var again = await store.ParseAllAsync("releve.pdf", Pdf.Value, caisse);
 
         Assert.All(again, d => Assert.True(d.AlreadyImported));
     }

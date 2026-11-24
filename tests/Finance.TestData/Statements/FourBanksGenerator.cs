@@ -31,7 +31,12 @@ public static class FourBanksGenerator
         return Encoding.UTF8.GetBytes(sb.ToString());
     }
 
-    public static List<Statement> Statements()
+    private static readonly Lazy<List<Statement>> Drawn = new(Draw);
+
+    /// <summary>Every statement of the four banks, drawn once per test run (a new list of the same statements each call).</summary>
+    public static List<Statement> Statements() => [.. Drawn.Value];
+
+    private static List<Statement> Draw()
     {
         const string N = "Northwind Bank", E = "Banque Exemple", C = "Contoso Bank", W = "Wise";
         Statement Canada(string account, AccountKind kind, string file, byte[] bytes) => new(account, N, "Canada", BankingSystem.NorthAmerica, "CAD", kind, file, bytes);

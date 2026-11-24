@@ -5,8 +5,9 @@ namespace ProductivityApp.Finance.UnitTests.Classification;
 
 public class ClassifierTests
 {
-    private static readonly Classifier NorthAmerica = new([], BankingSystem.NorthAmerica);
-    private static readonly Classifier France = new([], BankingSystem.France);
+    // A classifier keeps what it read of each label: one of its own for each test, which may run beside others.
+    private static Classifier NorthAmerica => new([], BankingSystem.NorthAmerica);
+    private static Classifier France => new([], BankingSystem.France);
 
     [Theory]
     [InlineData("TIM HORTONS #2345 MONTREAL QC", -3.25, "Tim Hortons", "restaurants")]
@@ -50,17 +51,6 @@ public class ClassifierTests
         var result = NorthAmerica.Classify(label, (decimal)amount);
 
         Assert.Equal(category, result.CategoryId);
-    }
-
-    [Theory]
-    [InlineData("RETRAIT GUICHET 4412", -60.0, "Cash withdrawal")]
-    [InlineData("FRAIS MENSUELS DU COMPTE", -4.95, "Bank fees")]
-    [InlineData("Deposit 76543210 MB-Email Money Trf", 100.0, "Interac e-Transfer")]
-    public void Classify_BankMovement_ReturnsAPlainBrandName(string label, double amount, string brand)
-    {
-        var result = NorthAmerica.Classify(label, (decimal)amount);
-
-        Assert.Equal(brand, result.Brand);
     }
 
     [Theory]
@@ -132,22 +122,16 @@ public class ClassifierTests
     [InlineData("F COTIS EUROCOMPTE DUO CONFORT", -11.50, "fees")]
     [InlineData("VIR SEPA LOYER SCI EXEMPLE", -720.0, "housing")]
     [InlineData("VERSEMENT ASSURANCE VIE", -100.0, "investments")]
+    [InlineData("VIR LIVRET A", -200.0, "transfers")]          // savings books: between own accounts
+    [InlineData("VIREMENT LDDS", -200.0, "transfers")]
+    [InlineData("VERSEMENT LEP", -200.0, "transfers")]
+    [InlineData("FACTURE CARTE DU 30/09/25", -412.50, "cardpayments")]   // the month of a deferred debit card
+    [InlineData("PRLV FACTURE CARTE 0925", -642.10, "cardpayments")]
     public void Classify_FrenchCardPaymentOrBankMovement_ReturnsItsCategory(string label, double amount, string category)
     {
         var result = France.Classify(label, (decimal)amount);
 
         Assert.Equal(category, result.CategoryId);
-    }
-
-    [Theory]
-    [InlineData("VIR LIVRET A")]
-    [InlineData("VIREMENT LDDS")]
-    [InlineData("VERSEMENT LEP")]
-    public void Classify_FrenchSavingsBookMovement_IsATransferBetweenOwnAccounts(string label)
-    {
-        var result = France.Classify(label, -200m);
-
-        Assert.Equal(Categories.Transfers, result.CategoryId);
     }
 
     [Theory]
@@ -161,27 +145,13 @@ public class ClassifierTests
     }
 
     [Theory]
-    [InlineData("FACTURE CARTE DU 30/09/25", -412.50)]
-    [InlineData("PRLV FACTURE CARTE 0925", -642.10)]
-    public void Classify_FrenchMonthlyDebitOfADeferredDebitCard_IsACardPayment(string label, double amount)
-    {
-        var result = France.Classify(label, (decimal)amount);
-
-        Assert.Equal(Categories.CardPayments, result.CategoryId);
-    }
-
-    [Fact]
-    public void Classify_FrenchDeferredDebitCardPayment_IsNamedDeferredDebitCard()
-    {
-        var result = France.Classify("FACTURE CARTE DU 30/09/25", -412.50m);
-
-        Assert.Equal("Deferred debit card", result.Brand);
-    }
-
-    [Theory]
-    [InlineData(BankingSystem.France, "VIR SEPA", -50.0, "Bank transfer")]
+    [InlineData(BankingSystem.NorthAmerica, "RETRAIT GUICHET 4412", -60.0, "Cash withdrawal")]
+    [InlineData(BankingSystem.NorthAmerica, "FRAIS MENSUELS DU COMPTE", -4.95, "Bank fees")]
+    [InlineData(BankingSystem.NorthAmerica, "Deposit 76543210 MB-Email Money Trf", 100.0, "Interac e-Transfer")]
     [InlineData(BankingSystem.NorthAmerica, "PAIEMENT VISA MERCI", -300.0, "Credit card payment")]
-    public void Classify_PlainTransferOrCardPayment_IsNamedAfterTheBankingSystem(BankingSystem system, string label, double amount, string brand)
+    [InlineData(BankingSystem.France, "VIR SEPA", -50.0, "Bank transfer")]
+    [InlineData(BankingSystem.France, "FACTURE CARTE DU 30/09/25", -412.50, "Deferred debit card")]
+    public void Classify_BankMovementOrPlainPayment_IsNamedPlainlyInItsBankingSystem(BankingSystem system, string label, double amount, string brand)
     {
         var classifier = new Classifier([], system);
 

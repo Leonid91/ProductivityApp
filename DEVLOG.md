@@ -1567,3 +1567,44 @@ real app with `tools/e2e/perf.mjs`.
 - Known: on a new browser profile (the first start after installing), when the Calendar is the first page to draw the
   drop-down triangle of its currency lists, one frame waits for the graphics card's program of that shape (80 fps, once;
   the program is then kept in the profile). In the frame rate script's run, opened after Analytics, it does not happen.
+
+## November 24th, 2026 - The test suites reorganised, without branches, and faster - Commit 58
+
+### Changed
+- Every test file is named after the production file it tests, in the same folder (`Pdf/LineBuilder.cs` →
+  `Pdf/LineBuilderTests.cs`); a class tested under several aspects has one file per aspect named after it
+  (`ImportServiceCicTests`, `SummaryServiceCicTests`). Unit tests act on one production function each; tests that
+  chain two classes (table files then the statement reader) or touch files moved to the integration tests.
+- Every test is named `Method_StateUnderTest_ExpectedBehavior`, the UI tests `function_State_Expected`.
+- Near-identical tests became theories (classifier names and categories, CSV currencies, decoding, OFX of French
+  banks, weekends, savings and card statements, table formats, currency of table cells); theory cases are named by a
+  short key, never by the bytes of a file.
+- No `if`, `else`, `switch`, `?:`, `??` or loop in any test, helper, fixture or oracle: the cases come as theory data,
+  helpers are one method per flow (`TestStore.ImportAsync` / `ImportAtAsync` / `ImportIntoAsync`), fakes answer from
+  tables. The expected contents of the real statements and the 150 invented diagrams and 300 invented timeline periods
+  are data files (`Statements/Real/expected.json`, `Diagrams/*.json`), made once from the code that computed them.
+  One `?.` remains, in `TestStore.ConvertWith`: it mirrors the app's own conversion wiring (AppServices).
+- Tests run against the engine's Release build, with optimised test code, every test in parallel with every other
+  (10 threads on 12), the garbage collector in conserve-memory mode; results that tests only read (a file read, a
+  month imported and reported) are made once per class (`ReadOnce`); generated PDFs are drawn once per run.
+
+### Fixed
+- `ClassifierTests` shared two classifiers between tests: a classifier's cache of labels is not thread-safe, so tests
+  running at the same time could corrupt it. Each test makes its own.
+- The Excel and OpenDocument files made by the tests carried the time they were made: made twice two seconds apart,
+  the app (which knows a file by its bytes) took them for two files. They carry a fixed date.
+
+### Measured (3 runs each, the old and the new suite in turns, the runner's start-up of about 335 ms removed)
+- Unit tests, all: 17.59 → 1.84 ms per test (9.6× faster), CPU 35.63 → 14.85 ms per test (2.4× less), peak memory
+  106 → 130 MB. Windows target: 17.90 → 2.03 ms per test (8.8×), CPU 36.30 → 15.58 ms per test, 107 → 125 MB.
+- Integration tests, all: 41.04 → 22.77 ms per test (1.8×), CPU 170.90 → 106.29 ms per test (1.6× less), peak memory
+  213 → 320 MB. Windows target: 47.67 → 23.52 ms per test (2.0×), CPU 182.44 → 113.51 ms per test, 382 → 403 MB.
+- UI tests: 35.14 → 8.82 ms per test (4.0×).
+- More memory at once because tests run side by side; conserve-memory mode and 10 threads instead of 12 took the
+  increase of the integration tests from +198 MB to +107 MB at the same speed.
+
+### Checked
+- Unit 2610/2610, integration 567 (2 skipped where the machine has no text recognition, as before), UI 28/28, on both
+  targets, 60 timed runs without a failure. 0 compiler warnings. Every old test is still there, merged into a theory,
+  split or renamed; 14 checks of the test data itself were dropped (their expectations are now the data checked).
+- Not yet reworked: the end-to-end and frame-rate scripts (`tests/Finance.EndToEndTests`, `Finance.PerformanceTests`).

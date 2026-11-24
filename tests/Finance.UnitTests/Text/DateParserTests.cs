@@ -43,13 +43,24 @@ public class DateParserTests
     [Theory]
     [InlineData("12.50")]
     [InlineData("SOLDE")]
-    [InlineData("31/02")]
     [InlineData("45/12")]
-    public void TryParse_TextThatIsNotARealDate_GivesNoDate(string text)
+    public void TryParse_TextThatIsNotADate_ReturnsFalse(string text)
     {
-        var parsed = DateParser.TryParse(text, out var date);
+        var parsed = DateParser.TryParse(text, out _);
 
-        Assert.True(!parsed || date.ToDate(DateOrder.DayMonth, 2025) is null, text);
+        Assert.False(parsed, text);
+    }
+
+    [Theory]
+    [InlineData("31/02")]
+    [InlineData("30/02")]
+    public void ToDate_DayThatTheMonthDoesNotHave_ReturnsNull(string text)
+    {
+        DateParser.TryParse(text, out var date);
+
+        var result = date.ToDate(DateOrder.DayMonth, 2025);
+
+        Assert.Null(result);
     }
 
     [Fact]

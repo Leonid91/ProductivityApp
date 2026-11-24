@@ -1,0 +1,8 @@
+<Project>
+  <!-- The engine every test project runs against is its Release build (optimised), whatever the tests are built as:
+       the tests check the code as it ships, and the engine's heavy work (the money-moved diagram's layout, statements
+       read) runs at full speed. The app and the tools keep the engine of their own configuration. -->
+  <ItemGroup>
+    <ProjectReference Update="$(MSBuildThisFileDirectory)..\src\Finance.Core\Finance.Core.csproj" SetConfiguration="Configuration=Release" />
+  </ItemGroup>
+</Project>

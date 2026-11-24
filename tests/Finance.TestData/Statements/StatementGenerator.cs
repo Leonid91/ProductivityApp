@@ -124,7 +124,19 @@ public static class StatementGenerator
     private static string FrMoney(decimal v) => v.ToString("#,##0.00", Fr).Replace(' ', ' ').Replace(' ', ' ');
     private static string EnMoney(decimal v) => v.ToString("#,##0.00", CultureInfo.InvariantCulture);
 
-    public static byte[] Render(Spec spec)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<byte[]>> Rendered = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The statement printed as a PDF. A statement of the same content is drawn once per test run: every caller gets the
+    /// same bytes, which nobody writes to.
+    /// </summary>
+    public static byte[] Render(Spec spec) => Rendered.GetOrAdd(Key(spec), _ => new Lazy<byte[]>(() => Draw(spec))).Value;
+
+    /// <summary>Everything a statement prints from: two specs of the same key print the same PDF.</summary>
+    private static string Key(Spec s) => string.Join('|', s.Style, s.BankName, s.Start, s.End, s.Opening.ToString(CultureInfo.InvariantCulture), s.Currency,
+        string.Join(';', s.Transactions.Select(t => string.Join('/', t.Date.DayNumber, t.Label, t.Amount.ToString(CultureInfo.InvariantCulture), t.SecondLine))));
+
+    private static byte[] Draw(Spec spec)
     {
         QuestPDF.Settings.License = LicenseType.Community;
         return Document.Create(c => c.Page(page =>

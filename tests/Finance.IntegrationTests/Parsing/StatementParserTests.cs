@@ -4,7 +4,7 @@ using ProductivityApp.Finance.Pdf;
 using ProductivityApp.Finance.Text;
 using static ProductivityApp.Finance.Testing.StatementGenerator;
 
-namespace ProductivityApp.Finance.IntegrationTests.Pdf;
+namespace ProductivityApp.Finance.IntegrationTests.Parsing;
 
 /// <summary>Statements printed as PDF (made here with invented operations), read by the PDF reader and the statement parser together.</summary>
 public class StatementParserTests
@@ -137,10 +137,9 @@ public class StatementParserTests
         Assert.Equal("EUR", parse.Currency);
     }
 
-    [Fact]
+    [Fact(SkipUnless = nameof(PdfReader.OcrAvailable), SkipType = typeof(PdfReader), Skip = "No text recognition on this machine (Windows: no recognition language installed; Linux: no Tesseract).")]
     public async Task Parse_ScannedStatement_IsReadByTextRecognitionAndBalances()
     {
-        Assert.SkipUnless(PdfReader.OcrAvailable, "No text recognition on this machine (Windows: no recognition language installed; Linux: no Tesseract).");
         var spec = Sample(Style.FrenchDebitCredit, count: 18, seed: 5);
         var pages = await PdfReader.ReadAsync(AsScan(Render(spec)), TestContext.Current.CancellationToken);
 

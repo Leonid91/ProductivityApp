@@ -19,8 +19,13 @@ public static class RealStatements
 
     public sealed record Row(int Page, double Baseline, double Size, char Font, IReadOnlyList<(double X, string Text)> Letters);
 
-    /// <summary>The recording itself.</summary>
-    public static IReadOnlyList<Row> Rows(string name)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, IReadOnlyList<Row>> Recorded = new(StringComparer.Ordinal);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<byte[]>> Drawn = new(StringComparer.Ordinal);
+
+    /// <summary>The recording itself (read once per test run).</summary>
+    public static IReadOnlyList<Row> Rows(string name) => Recorded.GetOrAdd(name, ReadRows);
+
+    private static IReadOnlyList<Row> ReadRows(string name)
     {
         using var stream = typeof(RealStatements).Assembly.GetManifestResourceStream($"Real.{name}.txt")
             ?? throw new ArgumentException($"No recording {name}", nameof(name));
@@ -74,8 +79,11 @@ public static class RealStatements
     }
 
     /// <summary>The statement as a PDF: every letter at its place, in Arial as the banks print (or a font with Arial's
-    /// widths where the system has no Arial), as narrow as the row's.</summary>
-    public static byte[] Pdf(string name)
+    /// widths where the system has no Arial), as narrow as the row's. Drawn once per test run: every caller gets the same
+    /// bytes, which nobody writes to.</summary>
+    public static byte[] Pdf(string name) => Drawn.GetOrAdd(name, n => new Lazy<byte[]>(() => Draw(n))).Value;
+
+    private static byte[] Draw(string name)
     {
         var builder = new PdfDocumentBuilder();
         var regular = builder.AddTrueTypeFont(Font("arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf"));

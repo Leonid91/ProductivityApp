@@ -105,16 +105,12 @@ public class HolidaysTests
         Assert.Equal(template, result);
     }
 
-    [Fact]
-    public void ParseWeekend_NothingChosen_ReturnsTheDefaultWeekend() => Assert.Equal(Holidays.DefaultWeekend, Holidays.ParseWeekend(null));
-
-    [Fact]
-    public void ParseWeekend_EmptyChoice_ReturnsNoWeekend() => Assert.Empty(Holidays.ParseWeekend(""));
-
     [Theory]
+    [InlineData(null, new[] { DayOfWeek.Saturday, DayOfWeek.Sunday })]   // nothing chosen: the usual weekend
+    [InlineData("", new DayOfWeek[0])]                                   // chosen empty: no weekend
     [InlineData("5,6,7", new[] { DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday })]
     [InlineData("1, 9, x", new[] { DayOfWeek.Monday })]
-    public void ParseWeekend_ChosenDays_KeepsTheValidOnes(string setting, DayOfWeek[] days)
+    public void ParseWeekend_ChosenDaysOrNone_KeepsTheValidOnes(string? setting, DayOfWeek[] days)
     {
         var result = Holidays.ParseWeekend(setting);
 

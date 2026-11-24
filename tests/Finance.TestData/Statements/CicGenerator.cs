@@ -210,6 +210,13 @@ public static class CicGenerator
         return Latin9().GetBytes(sb.ToString());
     }
 
+    /// <summary>An entry of a fixed date: the same file, to the byte, every time it is made (the app knows a file by its bytes).</summary>
+    private static ZipArchiveEntry Dated(ZipArchiveEntry entry)
+    {
+        entry.LastWriteTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        return entry;
+    }
+
     /// <summary>The Excel export: the accounts, then a sheet per account (title lines, the operations, the balance).</summary>
     public static byte[] Xlsx(Statement s)
     {
@@ -269,7 +276,7 @@ public static class CicGenerator
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
             foreach (var (name, text) in entries)
             {
-                using var w = new StreamWriter(zip.CreateEntry(name).Open(), new UTF8Encoding(false));
+                using var w = new StreamWriter(Dated(zip.CreateEntry(name)).Open(), new UTF8Encoding(false));
                 w.Write(text);
             }
         return ms.ToArray();

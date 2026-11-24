@@ -235,9 +235,18 @@ public sealed class ExchangeRatesTests : IDisposable
 
     // ------------------------------------------------------------------------------------------------ downloading
 
-    private static async Task<string?> UpdateAsync(ExchangeRates rates, string id, HttpStatusCode code, string body, Exception? fault = null)
+    /// <summary>The error of a download whose address answers <paramref name="code"/> and <paramref name="body"/>.</summary>
+    private static async Task<string?> UpdateAsync(ExchangeRates rates, string id, HttpStatusCode code, string body)
     {
-        using var web = new FakeWeb(code, body, fault);
+        using var web = new FakeWeb(code, body);
+        using var client = web.Client();
+        return (await rates.UpdateAsync(id, client, TestContext.Current.CancellationToken)).Error;
+    }
+
+    /// <summary>The error of a download whose connection fails with <paramref name="fault"/>.</summary>
+    private static async Task<string?> UpdateAsync(ExchangeRates rates, string id, Exception fault)
+    {
+        using var web = new BrokenWeb(fault);
         using var client = web.Client();
         return (await rates.UpdateAsync(id, client, TestContext.Current.CancellationToken)).Error;
     }
@@ -278,7 +287,7 @@ public sealed class ExchangeRatesTests : IDisposable
     {
         var rates = new ExchangeRates(_store.Db, () => "boc");
 
-        var error = await UpdateAsync(rates, "boc", HttpStatusCode.OK, "", new InvalidOperationException("disk full"));
+        var error = await UpdateAsync(rates, "boc", new InvalidOperationException("disk full"));
 
         Assert.Equal("The rates could not be downloaded: disk full", error);
         Assert.Null(rates.Views().Single(v => v.Id == "boc").Latest);
@@ -307,12 +316,15 @@ public sealed class ExchangeRatesTests : IDisposable
         Assert.Equal("The address must be a full web address starting with https://.", error);
     }
 
-    private static FakeWeb EveryBank() => new(u => (HttpStatusCode.OK, u.Host switch
+    /// <summary>Each central bank's site answers its own file (any other site is not in the table: the test fails).</summary>
+    private static readonly Dictionary<string, string> FileOfSite = new()
     {
-        "www.ecb.europa.eu" => RateFiles.EuropeanCentralBank,
-        "www.bankofcanada.ca" => RateFiles.BankOfCanada,
-        _ => RateFiles.FederalReserve,
-    }));
+        ["www.ecb.europa.eu"] = RateFiles.EuropeanCentralBank,
+        ["www.bankofcanada.ca"] = RateFiles.BankOfCanada,
+        ["www.federalreserve.gov"] = RateFiles.FederalReserve,
+    };
+
+    private static FakeWeb EveryBank() => new(u => (HttpStatusCode.OK, FileOfSite[u.Host]));
 
     [Fact]
     public async Task UpdateAllAsync_NothingDownloadedYet_DownloadsEveryBankOnceAndReadsItsRates()

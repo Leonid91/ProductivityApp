@@ -19,8 +19,8 @@ public class TransferTimelineTests
         Movement("2026-01-02", "Chequing", "Alpha Bank", "Card", "Alpha Bank", 800m),
         Movement("2026-01-05", "Chequing", "Alpha Bank", "Savings", "Beta Bank", 1000m),
         Movement("2026-01-08", "Savings", "Beta Bank", "Investing", "Beta Bank", 2000m),
-        Movement("2026-01-11", "Card", "Alpha Bank", Outside, null, 600m),
-        Movement("2026-01-13", Outside, null, "Chequing", "Alpha Bank", 500m),
+        MovementOut("2026-01-11", "Card", "Alpha Bank", 600m),
+        MovementIn("2026-01-13", "Chequing", "Alpha Bank", 500m),
     ], D("2026-01-01"), D("2026-01-14"));
 
     [Fact]
@@ -113,7 +113,7 @@ public class TransferTimelineTests
         var across = Movement("2026-03-04", "Compte", "Banque Exemple", "Chequing", "Alpha Bank", 800m, lost: 12.5m) with
         { Sent = 500m, SentCurrency = "EUR", Received = 787.5m, ReceivedCurrency = "CAD" };
 
-        var result = TransferTimeline.Build([across, Movement("2026-03-09", "Chequing", "Alpha Bank", Outside, null, 10m)], D("2026-03-01"), D("2026-03-31"));
+        var result = TransferTimeline.Build([across, MovementOut("2026-03-09", "Chequing", "Alpha Bank", 10m)], D("2026-03-01"), D("2026-03-31"));
 
         var between = result.Events.Single(x => x.Kind == "between");
         Assert.Equal((12.5m, 500m, "EUR", 787.5m, "CAD"), (between.Lost, between.Sent, between.SentCurrency, between.Received, between.ReceivedCurrency));
@@ -131,7 +131,7 @@ public class TransferTimelineTests
     [InlineData("2026-05-05", "2026-05-05", "day", 1)]
     public void Build_PeriodOfAnyLength_UsesStepsThatFitIt(string from, string to, string unit, int slots)
     {
-        var result = TransferTimeline.Build([Movement(from, "Chequing", "Alpha Bank", Outside, null, 10m), Movement(to, Outside, null, "Chequing", "Alpha Bank", 20m)], D(from), D(to));
+        var result = TransferTimeline.Build([MovementOut(from, "Chequing", "Alpha Bank", 10m), MovementIn(to, "Chequing", "Alpha Bank", 20m)], D(from), D(to));
 
         Assert.Equal((unit, slots, from), (result.Unit, result.Slots.Count, result.Slots[0]));
         Assert.Equal((0, slots - 1), (result.Events.Single(e => e.Amount == 10m).Slot, result.Events.Single(e => e.Amount == 20m).Slot));
@@ -143,7 +143,7 @@ public class TransferTimelineTests
         var result = TransferTimeline.Build([
             Movement("2025-12-30", "Chequing", "Alpha Bank", "Savings", "Alpha Bank", 10m),
             Movement("2026-02-02", "Savings", "Alpha Bank", "Chequing", "Alpha Bank", 20m),
-            Movement("not a date", "Chequing", "Alpha Bank", Outside, null, 30m),
+            MovementOut("not a date", "Chequing", "Alpha Bank", 30m),
         ], D("2026-01-01"), D("2026-01-31"));
 
         Assert.Equal([0, 30, 0], new[] { 10m, 20m, 30m }.Select(a => result.Events.Single(e => e.Amount == a).Slot));
@@ -171,7 +171,7 @@ public class TransferTimelineTests
         var result = TransferTimeline.Build([
             Movement("2026-03-02", "Chequing", "Bank A", "Savings", "Bank A", 1000m),
             Movement("2026-03-05", "Savings", "Bank A", "Chequing", "Bank A", 300m),
-            Movement("2026-03-09", "Chequing", "Bank A", Outside, null, 500m),
+            MovementOut("2026-03-09", "Chequing", "Bank A", 500m),
         ], D("2026-03-01"), D("2026-03-10"));
 
         var chequing = result.Lanes.Single(l => l.Name == "Chequing");
@@ -197,7 +197,7 @@ public class TransferTimelineTests
 
     // ------------------------------------------------------------------------------------------- 300 invented periods
 
-    public static TheoryData<int> InventedPeriods => [.. Enumerable.Range(20261111, 300)];
+    public static TheoryData<int> InventedPeriods => [.. TimelinePeriods.InventedSeeds];
 
     [Theory]
     [MemberData(nameof(InventedPeriods))]
@@ -213,7 +213,8 @@ public class TransferTimelineTests
         Assert.Equal(movements.Where(m => m.ToOutside).Sum(m => m.Amount), t.SentOutside);
         Assert.Equal(movements.Where(m => m.FromOutside).Sum(m => m.Amount), t.ReceivedOutside);
         Assert.Equal(movements.Where(m => !m.FromOutside && !m.ToOutside && m.FromBank == m.ToBank).Sum(m => m.Amount), t.Inside);
-        Assert.Equal(movements.Any(m => m.Lost is not null) ? movements.Sum(m => m.Lost ?? 0) : null, t.Lost);
+        Assert.Equal(movements.Any(m => m.Lost.HasValue), t.Lost.HasValue);
+        Assert.Equal(movements.Sum(m => m.Lost.GetValueOrDefault()), t.Lost.GetValueOrDefault());
     }
 
     [Theory]
@@ -227,7 +228,7 @@ public class TransferTimelineTests
         var used = movements.SelectMany(m => new[] { (m.FromAccount, m.FromOutside), (m.ToAccount, m.ToOutside) }).Where(a => !a.Item2).Select(a => a.Item1).Distinct().Count();
         Assert.Equal(used, t.Lanes.Count(l => !l.Outside));
         Assert.InRange(t.Lanes.Count(l => l.Outside), 0, 1);
-        Assert.True(!t.Lanes.Any(l => l.Outside) || t.Lanes[^1].Outside);
+        Assert.Equal(t.Lanes.OrderBy(l => l.Outside).Select(l => l.Id), t.Lanes.Select(l => l.Id));
         Assert.Equal(t.Banks.Count, t.Banks.Select(b => b.Name).Distinct().Count());
         Assert.Equal(t.Lanes.Count(l => !l.Outside), t.Banks.Sum(b => b.Count));
         Assert.All(t.Banks, b => Assert.All(t.Lanes.Skip(b.First).Take(b.Count), l => Assert.Equal(b.Name, l.Bank)));
@@ -257,12 +258,23 @@ public class TransferTimelineTests
         Assert.True(D(t.Slots[^1]) <= to);
         Assert.Equal(t.Slots.Order(StringComparer.Ordinal), t.Slots);
         Assert.InRange(t.Slots.Count, 1, 200);
+        // Each step ends where the next starts; the last one at the end of the period.
+        var ends = t.Slots.Skip(1).Select(D).Append(to.AddDays(1)).ToList();
         Assert.All(t.Events, e =>
         {
             Assert.InRange(e.Slot, 0, t.Slots.Count - 1);
-            Assert.True(D(t.Slots[e.Slot]) <= D(e.Date) && (e.Slot == t.Slots.Count - 1 || D(e.Date) < D(t.Slots[e.Slot + 1])), e.Date);
+            Assert.InRange(D(e.Date), D(t.Slots[e.Slot]), ends[e.Slot].AddDays(-1));
         });
     }
+
+    /// <summary>The kind of a movement by its two lines: (one of them the outside, both of one bank).</summary>
+    private static readonly Dictionary<(bool Outside, bool SameBank), string> KindOf = new()
+    {
+        [(true, true)] = "outside",
+        [(true, false)] = "outside",
+        [(false, true)] = "inside",
+        [(false, false)] = "between",
+    };
 
     [Theory]
     [MemberData(nameof(InventedPeriods))]
@@ -276,7 +288,7 @@ public class TransferTimelineTests
         {
             Assert.NotEqual(e.From, e.To);
             var (a, b) = (t.Lanes[e.From], t.Lanes[e.To]);
-            Assert.Equal(a.Outside || b.Outside ? "outside" : a.Bank == b.Bank ? "inside" : "between", e.Kind);
+            Assert.Equal(KindOf[(a.Outside | b.Outside, a.Bank == b.Bank)], e.Kind);
         });
         Assert.Equal(t.Events.Count, t.Events.Select(e => (e.Slot, e.From, e.To)).Distinct().Count());
     }
@@ -289,21 +301,18 @@ public class TransferTimelineTests
 
         var t = TransferTimeline.Build(movements, from, to);
 
-        for (var li = 0; li < t.Lanes.Count; li++)
+        Assert.All(Enumerable.Range(0, t.Lanes.Count), li =>
         {
             var l = t.Lanes[li];
             Assert.Equal(t.Slots.Count, l.Levels.Count);
             Assert.True(l.Start >= 0 && l.Levels.All(v => v >= 0));
             Assert.Equal(0m, Math.Min(l.Start, l.Levels.Min()));
-            var expected = new List<decimal>();
-            var level = l.Start;
-            for (var sl = 0; sl < t.Slots.Count; sl++)
-            {
-                level += t.Events.Where(e => e.Slot == sl && e.To == li).Sum(TransferTimeline.Arrived) - t.Events.Where(e => e.Slot == sl && e.From == li).Sum(e => e.Amount);
-                expected.Add(level);
-            }
+            // After each step: the start, plus what arrived, less what went out, in that step and every one before.
+            var expected = Enumerable.Range(0, t.Slots.Count).Select(sl => l.Start
+                + t.Events.Where(e => e.Slot <= sl && e.To == li).Sum(TransferTimeline.Arrived)
+                - t.Events.Where(e => e.Slot <= sl && e.From == li).Sum(e => e.Amount));
             Assert.Equal(expected, l.Levels);
-        }
+        });
         Assert.Equal(t.Lanes.Sum(l => l.Start) - t.Events.Sum(e => e.Amount - TransferTimeline.Arrived(e)), t.Lanes.Sum(l => l.Levels[^1]));
     }
 

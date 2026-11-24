@@ -11,7 +11,7 @@ public class FlowDiagramTests
 {
     public static TheoryData<string> RealLayouts => [.. MovementLayouts.RealNames];
 
-    public static TheoryData<int> InventedLayouts => [.. Enumerable.Range(20261110, 150)];
+    public static TheoryData<int> InventedLayouts => [.. MovementLayouts.InventedSeeds];
 
     [Theory]
     [MemberData(nameof(RealLayouts))]
