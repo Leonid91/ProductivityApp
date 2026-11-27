@@ -9,6 +9,7 @@ import { api, type TransactionInput, type TransactionView } from '../api'
 import { AmountCell, AmountMenu, DateCell, NO_AMOUNT_FILTER, amountFiltering, amountPasses, byAmount, type AmountSort } from './amounts'
 import { useApp } from '../AppContext'
 import { formatDate, formatExample, moneyBeside, plural } from '../format'
+import { useAmountsHidden } from '../mask'
 import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill, MenuDivider, Money } from './common'
 import { choiceItems, countChoices, hiding, shownByTags, tagChoices, type Choice } from './filters'
@@ -114,6 +115,7 @@ interface RowActs { setCategory: (t: TransactionView, id: string) => void; learn
 
 /** One line of the table (drawn again only when its operation or the table's settings change). */
 const TxRow = memo(function TxRow({ t, currency, frequency, act }: { t: TransactionView; currency: string; frequency: boolean; act: RowActs }) {
+  useAmountsHidden()
   const { settings, category } = useApp()
   const theme = useTheme()
   const transfer = category(t.categoryId).kind === 'transfer'

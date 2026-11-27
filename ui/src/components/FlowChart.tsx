@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Box, Typography, useTheme } from '@mui/material'
 import type { FlowDiagram, Flow } from '../api'
 import { money } from '../format'
+import { useAmountsHidden } from '../mask'
 
 /**
  * Where the money moved over the period: transfers, card payments and investments only (spending always goes out).
@@ -11,6 +12,7 @@ import { money } from '../format'
  * from the outside.
  */
 export function FlowChart({ diagram, flows, currency }: { diagram: FlowDiagram; flows: Flow[]; currency: string }) {
+  useAmountsHidden()
   const theme = useTheme()
   const [hover, setHover] = useState<number | null>(null)
   const dark = theme.palette.mode === 'dark'

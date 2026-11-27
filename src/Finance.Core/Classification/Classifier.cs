@@ -338,12 +338,64 @@ public sealed class Classifier
         return string.Join(' ', words);
     }
 
+    private static readonly string[] SalaryWords = ["SALAIRE", "PAIE", "PAYROLL", "SALARY", "REMUNERATION", "DEPOT DE PAIE"];
+
+    /// <summary>Income that is not a salary, named as such: interest, dividends, public benefits and pensions.</summary>
+    private static readonly string[] OtherIncomeWords =
+    [
+        "INTERET", "INTERETS", "INTEREST", "DIVIDENDE", "DIVIDEND", "ALLOCATION", "PENSION", "CASHBACK", "REMISE", "PRESTATION", "CAF", "GST", "TPS",
+        "CCB", "RRQ", "QPP", "CPP", "OAS", "RETRAITE", "CHOMAGE", "ASSURANCE EMPLOI", "EMPLOYMENT INSURANCE", "POLE EMPLOI", "FRANCE TRAVAIL", "CPAM",
+        "RECEIVER GENERAL", "RECEVEUR GENERAL", "GOUV", "GOVT",
+    ];
+    private static readonly string[] RefundWords = ["REMBOURSEMENT", "REFUND", "RETOUR", "AVOIR", "RETURN"];
+
+    /// <summary>
+    /// The wording (or the bank's category) names income that is not a salary: interest, a dividend, a benefit, a
+    /// pension, a refund. Never taken for a salary, however regularly it comes.
+    /// </summary>
+    public static bool NamesOtherIncome(string rawLabel, string bankCategory)
+    {
+        var padded = " " + Normalize(rawLabel) + " ";
+        if (OtherIncomeWords.Concat(RefundWords).Any(w => padded.Contains(" " + w + " ", StringComparison.Ordinal))) return true;
+        // The bank's heading for income in general ("Revenus") says nothing either way.
+        var bank = TextNorm.Fold(bankCategory ?? "").Trim();
+        return BankCategories.Map(bankCategory ?? "", 1) is Categories.OtherIncome or "refunds" && bank is not ("REVENUS" or "REVENU" or "INCOME");
+    }
+
+    /// <summary>Legal forms of companies: money sent by a company, not by a person.</summary>
+    private static readonly string[] CompanyWords =
+        ["SAS", "SASU", "SARL", "EURL", "SA", "SNC", "SE", "INC", "LTD", "LTEE", "CORP", "CORPORATION", "LLC", "LLP", "GMBH", "AG", "BV", "NV", "PLC", "LIMITED", "CIE", "SPA", "SRL", "SL", "ULC"];
+
+    /// <summary>The wording names a company paying (a transfer received from "ACME SAS" may be a salary; one from a person is not).</summary>
+    public static bool NamesCompany(string rawLabel)
+    {
+        var padded = " " + Normalize(rawLabel) + " ";
+        return CompanyWords.Any(w => padded.Contains(" " + w + " ", StringComparison.Ordinal));
+    }
+
+    /// <summary>Words of a pay that change from one pay to the next ("SALAIRE OCTOBRE", "PAIE PERIODE 21"): not the payer.</summary>
+    private static readonly HashSet<string> PayWords =
+    [
+        "JANVIER", "FEVRIER", "MARS", "AVRIL", "MAI", "JUIN", "JUILLET", "AOUT", "SEPTEMBRE", "OCTOBRE", "NOVEMBRE", "DECEMBRE",
+        "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
+        "JAN", "FEV", "FEB", "MAR", "AVR", "APR", "JUN", "JUIL", "JUL", "AOU", "AUG", "SEP", "SEPT", "OCT", "NOV", "DEC",
+        "MOTIF", "PAIE", "SALAIRE", "SALARY", "PAYROLL", "PERIODE", "PERIOD", "PAY",
+    ];
+
+    /// <summary>Who pays a salary: the words of the wording that stay the same from one pay to the next.</summary>
+    public static string PayerKey(string rawLabel) =>
+        string.Join(' ', Normalize(rawLabel).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => !w.Any(char.IsDigit) && !Noise.Contains(w) && !Cities.Contains(w) && !PayWords.Contains(w) && (w.Length > 1 || w is "&" or "+"))
+            .Take(3));
+
     private static readonly (string Category, string[] Words, int Sign)[] KeywordRules =
     [
-        ("salary", ["SALAIRE", "PAIE", "PAYROLL", "SALARY", "DEPOT DIRECT", "DIRECT DEP", "DIRECT DEPOSIT", "REMUNERATION", "DEPOT DE PAIE"], 1),
+        // A direct deposit by itself says nothing of who pays (an employer, the government): a salary is then learned
+        // from the history (see Services.SalaryDetector).
+        ("salary", SalaryWords, 1),
         ("cash", ["RETRAIT", "DAB", "GAB", "ATM", "ABM", "WITHDRAWAL", "GUICHET", "RETRAIT DAB", "CASH"], -1),
-        ("otherincome", ["INTERET", "INTERETS", "INTEREST", "DIVIDENDE", "DIVIDEND", "ALLOCATION", "PENSION", "CASHBACK", "REMISE", "PRESTATION", "CAF", "GST", "TPS", "DEPOT", "DEPOSIT"], 1),
-        ("refunds", ["REMBOURSEMENT", "REFUND", "RETOUR", "AVOIR", "RETURN"], 1),
+        ("otherincome", [.. OtherIncomeWords, "DEPOT", "DEPOSIT"], 1),
+        ("refunds", RefundWords, 1),
         ("fees", ["FRAIS", "FEE", "FEES", "SERVICE CHARGE", "INTERET", "INTERETS", "INTEREST", "COMMISSION", "COTISATION", "COTIS", "AGIOS", "ANNUAL FEE", "PENALITE", "NSF"], -1),
         ("housing", ["LOYER", "RENT", "HYPOTHEQUE", "MORTGAGE", "CONDO", "SYNDIC", "COPROPRIETE"], 0),
         ("insurance", ["ASSURANCE", "ASSURANCES", "INSURANCE", "MUTUELLE"], 0),

@@ -1530,6 +1530,68 @@ try {
   check('Analytics: the net salary per working day, per hour and per year', salaryOk && salaryShown.day === `Net salary per day ${moneyCad(sal.perDay)}` && salaryShown.hour === `Per hour ${moneyCad(sal.perHour)}` && salaryShown.year === `Per year ${moneyCad(sal.perYear)}`,
     `${JSON.stringify(salaryShown)} ${JSON.stringify(sal)}`)
   await shot(p, '24j-analytics-salary.png')
+
+  {
+    // The eye of the menu: every amount of the page (totals, operations, charts, salary) reads as dots, and comes back.
+    const amountsOnPage = `(() => { const texts = [document.querySelector('main').innerText, ...[...document.querySelectorAll('main svg text, main svg title')].map((t) => t.textContent)].join(' '); return { money: (texts.match(/[$€£]\\s?\\d|\\d%/g) ?? []).length, dots: (texts.match(/•••••/g) ?? []).length } })()`
+    const eye = await p.eval(`(() => { const e = document.querySelector('nav [data-hide-amounts]'); const c = document.querySelector('nav [data-global-currency]'); const r = e.getBoundingClientRect(); const q = c.getBoundingClientRect(); return { label: e.getAttribute('aria-label'), next: e.nextElementSibling === c, size: [r.width, r.height], currency: [q.width, q.height], above: r.bottom <= q.top + 0.5 } })()`)
+    check('the eye: in the menu just above the currency, the size of the other buttons', eye.label === 'Hide amounts' && eye.next && eye.above && eye.size.join() === eye.currency.join(), JSON.stringify(eye))
+    const shownBefore = await p.eval(amountsOnPage)
+    await p.click('nav [data-hide-amounts]')
+    await p.waitFor(`document.querySelector('nav [data-hide-amounts]').getAttribute('aria-pressed') === 'true'`, 5000, 'amounts hidden')
+    await sleep(600)
+    const hiddenAnalytics = await p.eval(amountsOnPage)
+    const salaryHidden = await p.eval(`document.querySelector('section[data-period="2025-12-01"] [data-salary-hour]').innerText.replace(/\\s+/g, ' ').trim()`)
+    check('the eye: no amount left on Analytics (charts and salary included)', shownBefore.money > 0 && hiddenAnalytics.money === 0 && hiddenAnalytics.dots > 0 && salaryHidden === 'Per hour •••••',
+      `${JSON.stringify(shownBefore)} ${JSON.stringify(hiddenAnalytics)} ${salaryHidden}`)
+    await shot(p, '24k-amounts-hidden-analytics.png')
+    // A chart's tooltip: the amounts of the bar under the mouse are hidden too.
+    const dec = 'section[data-period="2025-12-01"]'
+    let hiddenTip = ''
+    for (let attempt = 0; attempt < 8 && !hiddenTip; attempt++) {
+      await bringIntoView(p, `${dec} [data-bars]`)
+      await sleep(500)
+      const bar = await p.eval(`(() => { const r = [...(document.querySelector('${dec} [data-bars]')?.querySelectorAll('rect.MuiBarChart-element') ?? [])].filter(r => r.getBoundingClientRect().height > 2).sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0]?.getBoundingClientRect(); return r ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null })()`)
+      if (!bar) continue
+      for (const [dx, dy] of [[-2, -2], [0, 0], [1, 1]]) { await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bar.x + dx, y: bar.y + dy }); await sleep(150) }
+      if (await p.waitFor(`!!document.querySelector('.MuiChartsTooltip-root')`, 2000, 'bar tooltip').then(() => true, () => false))
+        hiddenTip = await p.eval(`document.querySelector('.MuiChartsTooltip-root').innerText`)
+    }
+    check('the eye: a chart tooltip hides its amounts', hiddenTip.includes('•••••') && !/[$€£]\s?\d/.test(hiddenTip), hiddenTip)
+    await shot(p, '24k-amounts-hidden-tooltip.png')
+    await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
+    await p.clickText('Statements', { selector: 'nav button' })
+    await p.waitFor(`document.querySelector('section h2') !== null`, 20000, 'statements')
+    await sleep(800)
+    const hiddenStatements = await p.eval(amountsOnPage)
+    check('the eye: no amount left on Statements', hiddenStatements.money === 0 && hiddenStatements.dots > 0, JSON.stringify(hiddenStatements))
+    await shot(p, '24k-amounts-hidden-statements.png')
+    // The operations of a month unfolded: their amounts too.
+    await p.click('[data-fold-everything]')
+    await p.waitFor(`document.querySelectorAll('section[data-period="2025-12-01"] table tbody tr').length > 3`, 30000, 'December unfolded')
+    await sleep(800)
+    const hiddenTables = await p.eval(amountsOnPage)
+    check('the eye: no amount left in the tables of operations', hiddenTables.money === 0 && hiddenTables.dots > 20, JSON.stringify(hiddenTables))
+    await p.eval(`document.querySelector('section[data-period="2025-12-01"] table tbody tr').scrollIntoView({ block: 'center' })`)
+    await sleep(600)
+    await shot(p, '24k-amounts-hidden-operations.png')
+    await p.click('[data-fold-everything]')
+    await sleep(800)
+    await p.clickText('Calendar', { selector: 'nav button' })
+    await p.waitFor(`document.querySelector('main [data-month-total], main .cal-amount') !== null`, 20000, 'calendar')
+    await sleep(600)
+    const hiddenCalendar = await p.eval(amountsOnPage)
+    check('the eye: no amount left on the calendar', hiddenCalendar.money === 0 && hiddenCalendar.dots > 0, JSON.stringify(hiddenCalendar))
+    await shot(p, '24k-amounts-hidden-calendar.png')
+    check('the eye: kept for the next start', (await p.engine('app.init')).settings.hideAmounts === 'true')
+    await p.click('nav [data-hide-amounts]')
+    await p.waitFor(`document.querySelector('nav [data-hide-amounts]').getAttribute('aria-pressed') === 'false'`, 5000, 'amounts shown')
+    await sleep(600)
+    const shownAgain = await p.eval(amountsOnPage)
+    check('the eye again: the amounts come back', shownAgain.money > 0 && shownAgain.dots === 0 && (await p.engine('app.init')).settings.hideAmounts === 'false', JSON.stringify(shownAgain))
+    await p.clickText('Analytics', { selector: 'nav button' })
+    await p.waitFor(`document.querySelector('section[data-period="2025-12-01"] [data-salary]') !== null`, 20000, 'the salary in December again')
+  }
   await p.engine('settings.set', { key: 'currency', value: 'EUR' })
   const salEur = (await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })).salary
   check('the salary in the display currency (euros)', salEur && salEur.net < sal.net * 0.75 && salEur.net > sal.net * 0.55 && salEur.businessDays === sal.businessDays, `${salEur?.net} EUR, ${sal.net} CAD`)

@@ -245,8 +245,40 @@ public sealed class ImportService(Database db, Func<string> defaultCurrency, Tra
                 Page = r.Page, Top = r.Top,
             };
         }).ToList();
+        LearnSalaries(draft);
 
         MarkDuplicates(draft, draft.AccountId);
+    }
+
+    /// <summary>
+    /// The salaries of the file, as they will be once it is imported: its rows read with the operations already kept
+    /// (the pays of the months before make a pay cycle with the file's).
+    /// </summary>
+    private void LearnSalaries(ImportDraft draft)
+    {
+        var accounts = db.Accounts().ToDictionary(a => a.Id);
+        var lines = new List<SalaryDetector.Line>();
+        var kept = db.AllTransactions();
+        for (var i = 0; i < kept.Count; i++)
+        {
+            var t = kept[i];
+            var system = accounts.GetValueOrDefault(t.AccountId)?.System ?? BankingSystem.NorthAmerica;
+            var label = t.RawLabel.Length > 0 ? t.RawLabel : t.Brand;
+            if (SalaryDetector.Candidate(t.Amount, t.CategoryId, t.CategorySource, t.LinkedId is not null, label, t.BankCategory, system))
+                lines.Add(new SalaryDetector.Line(-1 - i, t.Date, t.Amount, t.Currency, Classifier.PayerKey(label)));
+        }
+        var currency = draft.ChosenCurrency is { Length: 3 } chosen ? chosen : defaultCurrency();
+        foreach (var r in draft.Rows)
+            if (SalaryDetector.Candidate(r.Amount, r.CategoryId, r.CategorySource, false, r.Label, r.BankCategory, draft.System))
+                lines.Add(new SalaryDetector.Line(r.Index, r.Date, r.Amount, currency, Classifier.PayerKey(r.Label)));
+        foreach (var i in SalaryDetector.Find(lines))
+        {
+            if (i < 0) continue;
+            var r = draft.Rows[i];
+            if (r.CategoryId == "salary") continue;
+            r.CategoryId = "salary";
+            r.CategorySource = ValueSource.Detected;
+        }
     }
 
     /// <summary>Days apart the same operation can be dated in two files of one account (the day of the purchase, the day the bank posted it).</summary>

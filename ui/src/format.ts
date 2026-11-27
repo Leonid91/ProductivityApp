@@ -1,3 +1,6 @@
+import { useMemo } from 'react'
+import { amountsHidden, MASK, useAmountsHidden } from './mask'
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
 /** "2025-10-03" -> parts, without going through Date (no time zone surprises). */
@@ -59,12 +62,19 @@ function numberFormat(currency: string, compact: boolean, whole = false): Intl.N
   return f
 }
 
-/** −$45.20, +$2,140.55 (with sign) or $45.20. Uses a true minus sign. */
+/** −$45.20, +$2,140.55 (with sign) or $45.20. Uses a true minus sign. Hidden amounts (the eye of the menu) read as dots. */
 export function money(value: number, currency: string, opts: { sign?: boolean; compact?: boolean; whole?: boolean } = {}): string {
+  if (amountsHidden()) return MASK
   const abs = numberFormat(currency, opts.compact ?? false, opts.whole ?? false).format(Math.abs(value))
   if (value < 0 && abs.replace(/[^1-9]/g, '') !== '') return '−' + abs
   if (opts.sign && value > 0) return '+' + abs
   return abs
+}
+
+/** {@link money}, another function once the amounts are hidden or shown: what a memo writes with it is written again. */
+export function useMoney(): typeof money {
+  const hidden = useAmountsHidden()
+  return useMemo(() => (hidden ? () => MASK : money), [hidden])
 }
 
 /**
@@ -79,6 +89,7 @@ export function moneyBeside(value: number, currency: string, other: string, opts
 
 /** A share with two decimals (0.29%, 88.50%): a small share never reads as 0%. */
 export function percent(share: number): string {
+  if (amountsHidden()) return MASK
   return `${(share * 100).toFixed(2)}%`
 }
 

@@ -1608,3 +1608,55 @@ real app with `tools/e2e/perf.mjs`.
   targets, 60 timed runs without a failure. 0 compiler warnings. Every old test is still there, merged into a theory,
   split or renamed; 14 checks of the test data itself were dropped (their expectations are now the data checked).
 - Not yet reworked: the end-to-end and frame-rate scripts (`tests/Finance.EndToEndTests`, `Finance.PerformanceTests`).
+
+
+## November 27th, 2026 - The salary learned from the pay cycle; an eye that hides the amounts - Commit 59
+
+### Added
+- The salary is learned from the history (`Services/SalaryDetector.cs`): money one payer sends again and again on a pay
+  cycle (every week, every two weeks, twice a month or every month, a few days early or late) at about the same amount
+  is a salary, whatever the bank wrote ("Dépôt direct EXEMPLE", "VIR SEPA RECU /DE EXEMPLE SAS"). Three pays make a
+  cycle. A payment of the same payer off the cycle or far from the usual amount (expenses paid back, a one-off) stays
+  Other income, as does income named as something else (interest, dividends, benefits, pensions, refunds, government
+  payments). A transfer received is taken for a pay only from a company (SAS, SARL, Inc, Ltd...). The category source of
+  a salary learned this way is `Detected`. The import's preview shows them already, read with the pays imported before.
+- What the person chooses always wins: a category set on an operation, or for a brand in Settings > Definitions >
+  Brands (its pencil), is never learned over. An employer filed as Other income stays Other income; a payer filed as
+  Salary is a salary.
+- The eye of the menu, just above the currency button and of its size: every amount of the pages (totals and the share
+  Expenses / earnings, operations, charts and their tooltips, the salary, the calendar, the import's preview) reads as dots, and comes back with a
+  second click. Kept for the next start (setting `hideAmounts`).
+
+### Changed
+- A direct deposit alone ("Dépôt direct", "Direct deposit") is no longer a salary by its words: it is Other income until
+  its pay cycle is seen. "Salaire", "Paie", "Payroll", "Salary", "Rémunération" still make a salary at once.
+- The net salary per day, per hour and per year: each pay is for the days since the pay before it from the same payer
+  (one pay cycle for the first one), and a period counts the share of those days it holds. A month with three pays of a
+  pay every two weeks no longer counts three pays: October of 14-day pays of 2,000 counts 2,000 × 31 / 14. The working
+  days are the days the pays are for, within the period: the month under way counts up to its last pay. A payer's only
+  pay is for the whole period, as before.
+- The rules version is raised: every operation is classified again at the next start.
+
+### Measured
+- Frame rate before and after (6 runs of each build taken in turns, twice, the app off-screen with ten years of
+  operations, 240 Hz screen), average fps, median: 240 → 240 in every scene (idle, scrolling months, width changing,
+  just after switching to Year, scrolling years, ten years, category picker, calendar, brands list), 239 to 240 for
+  both builds. The lowest frame of a run is one frame and jumps between about 60, 120 and 220 fps from one run to the
+  next of the same build; medians of the second round, before → after: idle 213 → 217, scrolling months 217 → 120,
+  width changing 119 → 119, just after switching to Year 217 → 220, scrolling years 215 → 211, ten years 222 → 218,
+  category picker 119 → 119, calendar 217 → 217, brands list 70 → 80 (first round: scrolling months 119 → 120). No scene
+  is lower in the new build in both rounds.
+- The eye: one subscription for the whole page (a context): a row of a long list coming into view reads it at no cost.
+
+### Checked
+- End-to-end: 263/263 in WebView2 (the released configuration) and 263/263 in WebKit (the macOS and Linux window's
+  engine), with new checks: the eye's place and size, no amount left on Analytics (charts, a chart's tooltip and the
+  salary), on Statements, in the tables of operations and on the calendar, the choice kept for the next start, and the
+  amounts back. Unit 5280/5280, integration 1154 (2 skipped where the machine has no text recognition, as before), both
+  targets together; page 28/28. 0 compiler warnings.
+- Tests of the salary learned: every pay cycle (weekly, every two weeks, the 15th and the last day, monthly moved by
+  weekends), a missed pay, expenses paid back off the cycle, an amount far from the usual one, two employers, two
+  currencies, payments on no cycle, income named as something else, transfers from a company or a person, the person's
+  choices, an import of five months then of the next pay, the import's preview, and a brand filed by the person.
+- The released Windows exe started in a sandbox: interface drawn, operations classified again (rules version 7), no
+  warning or error in its log.

@@ -3,6 +3,7 @@ import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, 
 import { api, type Account, type Bank, type Category, type InitInfo, type Settings, type Tag, type TagData } from './api'
 import { categoryTree, savedOrder, type TreeEntry } from './components/order'
 import { pageOpened, record } from './actionLog'
+import { setAmountsHidden } from './mask'
 
 export type Page = 'statements' | 'analytics' | 'logs' | 'calendar' | 'import' | 'settings'
 
@@ -65,7 +66,8 @@ export function useApp(): AppState {
 }
 
 export function AppProvider({ info, children, onTheme }: { info: InitInfo; children: ReactNode; onTheme: (t: 'light' | 'dark') => void }) {
-  const [settings, setSettings] = useState<Settings>(info.settings)
+  // The amounts are hidden from the first drawing when they were hidden when the app was closed.
+  const [settings, setSettings] = useState<Settings>(() => { setAmountsHidden(info.settings.hideAmounts === 'true'); return info.settings })
   const [accounts, setAccounts] = useState<Account[]>([])
   const [banks, setBanks] = useState<Bank[]>([])
   const [categories, setCategories] = useState<Category[]>(info.categories)

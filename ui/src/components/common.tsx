@@ -9,6 +9,7 @@ import Check from '@mui/icons-material/CheckRounded'
 import type { Category, CategoryKind } from '../api'
 import { useApp } from '../AppContext'
 import { money } from '../format'
+import { useAmountsHidden } from '../mask'
 import { CategoryIcon, categoryIconOf } from './CategoryIcon'
 import { Mark } from './plain'
 
@@ -37,6 +38,7 @@ export function LazyTooltip({ children, enterDelay = 100, ...props }: Omit<Toolt
 }
 
 export function Money({ value, currency, sign, style, muted }: { value: number; currency: string; sign?: boolean; style?: CSSProperties; muted?: boolean }) {
+  useAmountsHidden()
   const theme = useTheme()
   const color = muted ? theme.palette.text.secondary : value > 0 && sign ? theme.palette.money.positive : theme.palette.text.primary
   return (

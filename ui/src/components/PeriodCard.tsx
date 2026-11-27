@@ -12,6 +12,7 @@ import CurrencyExchange from '@mui/icons-material/CurrencyExchangeRounded'
 import { api, globalTransactions, type Category, type Conversion, type ConversionLine, type Granularity, type PeriodReport, type PeriodSummary, type SalaryRate, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, moneyBeside, plural } from '../format'
+import { amountsHidden, MASK, useAmountsHidden } from '../mask'
 // The charts (the largest library of the interface) are not needed to start: their code is read when the browser is
 // idle after start-up, or when a period first shows its analytics. Once read, they are drawn at once (no waiting state).
 type ChartsModule = typeof import('./Charts') & typeof import('./CategoryLines')
@@ -53,7 +54,7 @@ function Stat({ label, value, color, bg, note, className, ...rest }: { label: st
   )
 }
 
-const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`)
+const percent = (share: number | null) => (amountsHidden() ? MASK : share === null ? '—' : `${Math.round(share * 100)}%`)
 const rate = (v: number) => v.toLocaleString('en-CA', { maximumFractionDigits: 6 })
 
 /**
@@ -61,6 +62,7 @@ const rate = (v: number) => v.toLocaleString('en-CA', { maximumFractionDigits: 6
  * the expenses as a share of the earnings (above 100% more was spent than earned).
  */
 function Totals({ summary, currency }: { summary: PeriodSummary; currency: string }) {
+  useAmountsHidden()
   const theme = useTheme()
   const m = theme.palette.money
   const balanceColor = summary.balance > 0 ? m.positive : summary.balance < 0 ? m.negative : m.zero
@@ -281,6 +283,7 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
   /** The net salary of the period, written under the Income chart. */
   salary?: SalaryRate | null
 }) {
+  useAmountsHidden()
   const { category, settings } = useApp()
   const theme = useTheme()
   const c = useCharts(view === 'analytics')
@@ -392,6 +395,7 @@ const Body = memo(function Body({ summary, view, keep, currency, granularity, on
  * weekend is a working day (holidays are paid), each of the hours of a week entered in Settings shared by its days.
  */
 function SalaryLine({ salary, currency }: { salary: SalaryRate; currency: string }) {
+  useAmountsHidden()
   const tip = `${money(salary.net, currency)} of salary over ${plural(salary.workingDays, 'working day')} (weekends left out, holidays paid), `
     + `${salary.hoursPerDay} hours a day (${salary.hoursPerWeek} a week). A year: ${salary.yearWorkingDays} working days.`
   return (
@@ -408,6 +412,7 @@ function SalaryLine({ salary, currency }: { salary: SalaryRate; currency: string
 
 /** One bank's currency converted: totals before and after, the rates, and every rate by day on demand. */
 function ConversionRow({ line }: { line: ConversionLine }) {
+  useAmountsHidden()
   const { settings, go } = useApp()
   const [open, setOpen] = useState(false)
   const range = line.lowestRate === null ? '—'
@@ -450,6 +455,7 @@ function ConversionRow({ line }: { line: ConversionLine }) {
 
 /** How the amounts of every bank together were converted: where the rates come from, the method, each currency before and after. */
 const ConversionPanel = memo(function ConversionPanel({ conversion }: { conversion: Conversion }) {
+  useAmountsHidden()
   const { settings, fail, dataChanged, notify, go } = useApp()
   const [updating, setUpdating] = useState(false)
   const missing = conversion.lines.filter((l) => l.unconverted > 0)

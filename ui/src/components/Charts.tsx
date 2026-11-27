@@ -4,6 +4,7 @@ import { PieChart } from '@mui/x-charts/PieChart'
 import { BarChart } from '@mui/x-charts/BarChart'
 import type { Bar, Slice } from '../api'
 import { money, percent } from '../format'
+import { useAmountsHidden } from '../mask'
 import { useKept } from '../keep'
 
 /**
@@ -31,6 +32,7 @@ export function sliceColor(colors: string[], other: string, slice: Slice, index:
 
 /** Donut with a legend that carries names, amounts and shares in text colours. */
 export const ExpensePie = memo(function ExpensePie({ title, slices, currency, empty = 'No expenses', footer }: { title: string; slices: Slice[]; currency: string; empty?: string; footer?: ReactNode }) {
+  useAmountsHidden()
   const theme = useTheme()
   const { series, other } = theme.palette.chart
   const total = slices.reduce((s, x) => s + x.amount, 0)
@@ -88,6 +90,7 @@ export const ExpensePie = memo(function ExpensePie({ title, slices, currency, em
  * expenses in red, both drawn upwards. Either can be unticked.
  */
 export const IncomeExpenseBars = memo(function IncomeExpenseBars({ bars, unit, currency, keep }: { bars: Bar[]; unit: 'day' | 'month' | 'year'; currency: string; keep: string }) {
+  useAmountsHidden()
   const theme = useTheme()
   const [show, setShow] = useKept(keep, { income: true, expenses: true })
   const per = unit === 'day' ? 'day' : unit === 'month' ? 'month' : 'year'

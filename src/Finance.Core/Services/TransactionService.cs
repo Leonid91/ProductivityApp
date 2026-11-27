@@ -218,6 +218,33 @@ public sealed class TransactionService(Database db)
     /// </summary>
     public TransferMatcher.Converter? Convert { get; set; }
 
+    /// <summary>
+    /// Files as salaries the operations <see cref="SalaryDetector"/> recognises in <paramref name="all"/>; returns the
+    /// ones changed.
+    /// </summary>
+    public static List<Transaction> LearnSalaries(IReadOnlyList<Transaction> all, IReadOnlyDictionary<long, Account> accounts)
+    {
+        var lines = new List<SalaryDetector.Line>();
+        for (var i = 0; i < all.Count; i++)
+        {
+            var t = all[i];
+            var system = accounts.GetValueOrDefault(t.AccountId)?.System ?? BankingSystem.NorthAmerica;
+            var label = t.RawLabel.Length > 0 ? t.RawLabel : t.Brand;
+            if (SalaryDetector.Candidate(t.Amount, t.CategoryId, t.CategorySource, t.LinkedId is not null, label, t.BankCategory, system))
+                lines.Add(new SalaryDetector.Line(i, t.Date, t.Amount, t.Currency, Classifier.PayerKey(label)));
+        }
+        var changed = new List<Transaction>();
+        foreach (var i in SalaryDetector.Find(lines))
+        {
+            var t = all[i];
+            if (t.CategoryId == "salary") continue;
+            t.CategoryId = "salary";
+            t.CategorySource = ValueSource.Detected;
+            changed.Add(t);
+        }
+        return changed;
+    }
+
     public int ReapplyRules()
     {
         var before = db.AllTransactions().ToDictionary(t => t.Id, t => (t.Brand, t.BrandSource, t.CategoryId, t.CategorySource));
@@ -242,6 +269,7 @@ public sealed class TransactionService(Database db)
                 if (dirty) changed.Add(t);
             }
             TransferMatcher.Link(db, Convert);
+            changed.AddRange(LearnSalaries(db.AllTransactions(), accounts));
         }
         finally
         {

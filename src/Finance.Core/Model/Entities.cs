@@ -8,6 +8,8 @@ public enum ValueSource
     Bank = 5,
     /// <summary>Recognised as the other half of a movement between two of the person's own accounts.</summary>
     Linked = 6,
+    /// <summary>Learned from the history: a salary, paid again and again on a pay cycle (see Services.SalaryDetector).</summary>
+    Detected = 7,
 }
 
 /// <summary>Bank is a chequing / current account (with a debit card).</summary>

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
+using ProductivityApp.Finance.Classification;
 using ProductivityApp.Finance.Model;
 using ProductivityApp.Finance.Storage;
 
@@ -316,7 +317,7 @@ public sealed class SummaryService(Database db)
             Conversion = new Conversion(global, status.Source, status.Base, status.Url, status.UpdatedAt, status.Latest, lines),
             Unconverted = [.. all.Where(t => t.Currency != global && !everyConversion.ContainsKey(t.Id)).Select(t => t.Id)],
             BusinessDays = holidays?.BusinessDays(from, to),
-            Salary = holidays is null ? null : SalaryOf(everything, from, to, holidays),
+            Salary = holidays is null ? null : SalaryOf(PaysAround(from, to, global, rates, source), from, to, holidays),
         };
     }
 
@@ -330,13 +331,55 @@ public sealed class SummaryService(Database db)
         }
     }
 
-    /// <summary>See <see cref="SalaryRate"/>; <paramref name="txs"/> are in the display currency.</summary>
+    /// <summary>The longest a pay is taken to be for: a pay after a longer gap is for its own cycle only.</summary>
+    private const int LongestPayDays = 45;
+
+    /// <summary>
+    /// The salaries paid in the period and in the weeks around it (a pay just after the period is partly for its last
+    /// days), in the display currency.
+    /// </summary>
+    private List<Transaction> PaysAround(DateOnly from, DateOnly to, string global, ExchangeRates rates, RateSource source)
+    {
+        var pays = db.Transactions(from.AddDays(-2 * LongestPayDays), to.AddDays(2 * LongestPayDays)).Where(t => IsSalary(t.CategoryId)).ToList();
+        return ConvertAll(pays, global, rates, source, "Salary").Converted;
+    }
+
+    /// <summary>
+    /// See <see cref="SalaryRate"/>; <paramref name="txs"/> are in the display currency. A pay is for the days since the
+    /// pay before it from the same payer (one pay cycle when it is the first one): its share of the period is the share
+    /// of those days in it, so a month with three pays of a pay every two weeks counts what was earned in that month. The
+    /// working days are those the pays are for, within the period: the month under way counts up to its last pay.
+    /// </summary>
     public static SalaryRate? SalaryOf(IEnumerable<Transaction> txs, DateOnly from, DateOnly to, Holidays holidays)
     {
-        var net = txs.Where(t => IsSalary(t.CategoryId)).Sum(t => t.Amount);
+        var net = 0m;
+        DateOnly? first = null, last = null;
+        foreach (var payer in txs.Where(t => IsSalary(t.CategoryId)).GroupBy(t => Classifier.PayerKey(t.RawLabel.Length > 0 ? t.RawLabel : t.Brand)))
+        {
+            var dates = payer.Select(t => t.Date.DayNumber).Distinct().Order().ToList();
+            var gaps = dates.Zip(dates.Skip(1), (a, b) => b - a).Order().ToList();
+            var cycle = gaps.Count > 0 && gaps[gaps.Count / 2] <= LongestPayDays ? gaps[gaps.Count / 2] : 0;
+            foreach (var t in payer)
+            {
+                var day = t.Date.DayNumber;
+                var before = dates.LastOrDefault(d => d < day, int.MinValue);
+                var length = before != int.MinValue && day - before <= Math.Max(cycle * 3 / 2, cycle + 3) && cycle > 0 ? day - before : Math.Max(cycle, 1);
+                var start = day - length + 1;
+                var lo = Math.Max(start, from.DayNumber);
+                var hi = Math.Min(day, to.DayNumber);
+                if (hi < lo) continue;
+                net += t.Amount * (hi - lo + 1) / length;
+                // A pay without a cycle (the only one of its payer) is for the whole period.
+                if (cycle == 0) (lo, hi) = (from.DayNumber, to.DayNumber);
+                first = first is { } f && f.DayNumber <= lo ? f : DateOnly.FromDayNumber(lo);
+                last = last is { } l && l.DayNumber >= hi ? l : DateOnly.FromDayNumber(hi);
+            }
+        }
+        if (first is not { } paidFrom || last is not { } paidTo) return null;
+        net = Math.Round(net, 2, MidpointRounding.AwayFromZero);
         var weekend = holidays.Weekend();
         // Holidays are paid: only the weekend days are left out.
-        var days = Holidays.WorkingDays(from, to, weekend);
+        var days = Holidays.WorkingDays(paidFrom, paidTo, weekend);
         var perWeek = holidays.WorkingDaysPerWeek();
         if (net <= 0 || days <= 0 || perWeek <= 0) return null;
         var weekHours = holidays.WeekHours();

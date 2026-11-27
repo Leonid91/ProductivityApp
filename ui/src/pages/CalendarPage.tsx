@@ -7,7 +7,7 @@ import ChevronRight from '@mui/icons-material/ChevronRightRounded'
 import Add from '@mui/icons-material/AddRounded'
 import { api, globalTransactions, type Holiday, type PeriodSummary, type RateUse, type TransactionView } from '../api'
 import { useApp } from '../AppContext'
-import { daysInMonth, formatDate, iso, money, moneyBeside, monthName, parts, today } from '../format'
+import { daysInMonth, formatDate, iso, money, moneyBeside, monthName, parts, today, useMoney } from '../format'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { Money, useCategoryColor } from '../components/common'
 import { MonthGrid, type DayEntry } from '../components/MonthGrid'
@@ -105,6 +105,7 @@ function RatesCard({ pair, currencies, onPair, rates, day, source }: {
  * the checked calendars (Definitions > Holidays) are written on their day.
  */
 export function CalendarPage() {
+  const moneyOf = useMoney()
   const { settings, setSetting, dataVersion, fail, category } = useApp()
   const colorOf = useCategoryColor()
   // Settings: transfers and card statement payments hidden by default, investments shown.
@@ -199,12 +200,12 @@ export function CalendarPage() {
     return [...off, ...rated, ...summary.series.flatMap((b) => {
       const moved = (hideMoves ? 0 : b.moved) + (hideCard ? 0 : b.cardPaid) + (hideInvest ? 0 : b.invested)
       return [
-        ...(b.earnings > 0 ? [amount('i' + b.key, b.key, 'in', money(b.earnings, currency, { sign: true }))] : []),
-        ...(b.expenses > 0 ? [amount('e' + b.key, b.key, 'out', money(-b.expenses, currency))] : []),
-        ...(moved > 0 ? [amount('m' + b.key, b.key, 'move', '⇄ ' + money(moved, currency))] : []),
+        ...(b.earnings > 0 ? [amount('i' + b.key, b.key, 'in', moneyOf(b.earnings, currency, { sign: true }))] : []),
+        ...(b.expenses > 0 ? [amount('e' + b.key, b.key, 'out', moneyOf(-b.expenses, currency))] : []),
+        ...(moved > 0 ? [amount('m' + b.key, b.key, 'move', '⇄ ' + moneyOf(moved, currency))] : []),
       ]
     })]
-  }, [summary, merged, currency, hideCard, hideMoves, hideInvest, rates, rateTo])
+  }, [summary, merged, currency, hideCard, hideMoves, hideInvest, rates, rateTo, moneyOf])
   // The grid is drawn again only when what it shows changes (not when the dialog opens or a rate is picked).
   const dayClass = useCallback((d: string, dow: number) => [d === day ? 'selected-day' : '', holidayDays.has(d) ? 'holiday-day' : '', weekend.has(dow === 0 ? 7 : dow) ? 'weekend-day' : ''].filter(Boolean).join(' '), [day, holidayDays, weekend])
   const headClass = useCallback((dow: number) => (weekend.has(dow === 0 ? 7 : dow) ? 'weekend-head' : ''), [weekend])

@@ -84,6 +84,27 @@ public class ClassifierTests
         Assert.Equal(key, result);
     }
 
+    [Theory]
+    [InlineData("VIR SEPA RECU /DE EXEMPLE SAS /MOTIF SALAIRE OCTOBRE 2026", "EXEMPLE")]
+    [InlineData("VIR SEPA RECU /DE EXEMPLE SAS /MOTIF SALAIRE NOVEMBRE 2026", "EXEMPLE")]
+    [InlineData("DEPOT DIRECT EXEMPLE INC PAIE 21", "DEPOT DIRECT EXEMPLE")]
+    public void PayerKey_WordingOfAPay_KeepsOnlyWhoPays(string label, string payer)
+    {
+        var result = Classifier.PayerKey(label);
+
+        Assert.Equal(payer, result);
+    }
+
+    [Theory]
+    [InlineData("DEPOT DIRECT EXEMPLE INC", 2140.55, "otherincome")]
+    [InlineData("DIRECT DEPOSIT EXAMPLE CORP", 2140.55, "otherincome")]
+    public void Classify_DirectDepositAlone_IsOtherIncomeUntilItsPayCycleIsSeen(string label, double amount, string category)
+    {
+        var result = NorthAmerica.Classify(label, (decimal)amount);
+
+        Assert.Equal(category, result.CategoryId);
+    }
+
     [Fact]
     public void Classify_PointOfSaleWordingOfTwoShops_KeepsTwoMerchants()
     {

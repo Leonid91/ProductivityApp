@@ -43,6 +43,8 @@ internal sealed class AppServices : IDisposable
         ["calendarFirstDay"] = "0",
         ["dateFormat"] = Formatting.DateFormats[0],
         ["theme"] = "light",
+        // Every amount of the pages hidden ("true"), by the eye of the menu.
+        ["hideAmounts"] = "false",
         ["reportsFolder"] = "",
         // Transfers, card payments and investments: in their own folded table ("separate"), their own open table
         // ("table"), left out ("hidden"), or among the other operations ("inline").
@@ -68,7 +70,7 @@ internal sealed class AppServices : IDisposable
     };
 
     /// <summary>Raised whenever classification rules change, so existing operations are classified again at start.</summary>
-    private const string RulesVersion = "6";
+    private const string RulesVersion = "7";
 
     public AppServices(string dataDir, string started = "")
     {
@@ -186,7 +188,7 @@ internal sealed class AppServices : IDisposable
                 throw new DirectoryNotFoundException("This folder does not exist.");
             case "periodTransfers" when value is not ("separate" or "table" or "hidden" or "inline"):
                 throw new ArgumentException("Unknown choice.");
-            case "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAllCategories" or "pieShowAllBrands" or "chartsTopLevel" when value is not ("true" or "false"):
+            case "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAllCategories" or "pieShowAllBrands" or "chartsTopLevel" or "hideAmounts" when value is not ("true" or "false"):
                 throw new ArgumentException("Unknown choice.");
             case "hoursPerWeek" when !int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var hours) || hours is < 1 or > 168:
                 throw new ArgumentException("The hours of a week are a whole number from 1 to 168.");
@@ -202,7 +204,7 @@ internal sealed class AppServices : IDisposable
             // The order the person gave the rows of a table: a list of row keys.
             case not null when key.StartsWith("order.", StringComparison.Ordinal) && (key.Length > 60 || value.Length > 200_000 || !IsStringList(value)):
                 throw new ArgumentException("Invalid row order.");
-            case "currency" or "ratesSource" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers"
+            case "currency" or "ratesSource" or "dateFormat" or "theme" or "reportsFolder" or "window" or "periodTransfers" or "hideAmounts"
                 or "calendarHideCardPayments" or "calendarHideTransfers" or "calendarHideInvestments" or "pieShowAllCategories" or "pieShowAllBrands" or "chartsTopLevel"
                 or "hoursPerWeek" or "calendarRates"
                 or "section.expense" or "section.income" or "section.transfer" or "weekendDays" or "calendarFirstDay":

@@ -4,7 +4,8 @@ import OpenInFull from '@mui/icons-material/OpenInFullRounded'
 import Close from '@mui/icons-material/CloseRounded'
 import type { TimelineEvent, TimelineLane, TransferTimeline as Timeline } from '../api'
 import { useApp } from '../AppContext'
-import { formatDate, money, moneyBeside, monthName, parts, plural } from '../format'
+import { formatDate, money, moneyBeside, monthName, parts, plural, useMoney } from '../format'
+import { useAmountsHidden } from '../mask'
 import { Legend } from './FlowChart'
 
 /**
@@ -271,6 +272,7 @@ function mix(color: string, paper: string, share: number) {
 
 /** The drawing of the transfers over time (see layoutTimeline): as wide as it needs, scrolled sideways when wider than its room. */
 function Drawing({ t, currency, fit: fitted = false, big = false }: { t: Timeline; currency: string; fit?: boolean; big?: boolean }) {
+  const moneyOf = useMoney()
   const theme = useTheme()
   const { settings } = useApp()
   const [hover, setHover] = useState<number | null>(null)
@@ -296,9 +298,9 @@ function Drawing({ t, currency, fit: fitted = false, big = false }: { t: Timelin
 
   const lay = useMemo(() => layoutTimeline(t, (e) => [
     when(t, e, settings.dateFormat, true) + (e.count > 1 ? ` · ${e.count}` : ''),
-    `→ ${money(e.amount, currency)}`,
+    `→ ${moneyOf(e.amount, currency)}`,
     `${t.lanes[e.from].name} → ${t.lanes[e.to].name}`,
-  ], { width: fitted ? 1000 : width, fit: fitted, big }), [t, currency, settings.dateFormat, width, fitted, big])
+  ], { width: fitted ? 1000 : width, fit: fitted, big }), [t, currency, settings.dateFormat, width, fitted, big, moneyOf])
   const { W, X0, X1 } = lay
   // Wider than its room: the names of the accounts on the left and what they gained or gave on the right stay in sight.
   const scrolls = !fitted && W > width + 1
@@ -433,6 +435,7 @@ function Drawing({ t, currency, fit: fitted = false, big = false }: { t: Timelin
  * than its room (the PDF).
  */
 export function TransferTimelineChart({ timeline: t, currency, fit = false }: { timeline: Timeline; currency: string; fit?: boolean }) {
+  useAmountsHidden()
   const [whole, setWhole] = useState(false)
   const totals = (
     <Box sx={{ display: 'flex', gap: 2.5, flexWrap: 'wrap', mt: 0.75, mb: 1.5 }}>

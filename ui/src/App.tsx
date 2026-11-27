@@ -14,11 +14,14 @@ import UploadFile from '@mui/icons-material/UploadFileRounded'
 import UploadFileOutlined from '@mui/icons-material/UploadFileOutlined'
 import LightMode from '@mui/icons-material/LightModeOutlined'
 import DarkMode from '@mui/icons-material/DarkModeOutlined'
+import Visibility from '@mui/icons-material/VisibilityOutlined'
+import VisibilityOff from '@mui/icons-material/VisibilityOffOutlined'
 import Settings from '@mui/icons-material/SettingsRounded'
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import { api, currencies, type InitInfo } from './api'
 import { AppProvider, useApp, type Page } from './AppContext'
 import { makeTheme } from './theme'
+import { AmountsHiddenProvider, setAmountsHidden, useAmountsHidden } from './mask'
 import { ResizeEdges, TitleBar, useMaximized } from './components/WindowChrome'
 import { PeriodsPage } from './pages/PeriodsPage'
 // The pages other than Statements and Analytics are loaded when first opened: the app starts with less to read.
@@ -58,7 +61,7 @@ function RailItem({ label, icon, selected, onClick }: { label: string; icon: Rea
   )
 }
 
-/** The round buttons of the menu (display currency, light or dark mode): one size. */
+/** The round buttons of the menu (amounts hidden, display currency, light or dark mode): one size. */
 const railButton = { width: 40, height: 40, color: 'text.secondary' } as const
 
 /**
@@ -96,6 +99,29 @@ function CurrencyButton() {
         ))}
       </Menu>
     </>
+  )
+}
+
+/**
+ * The eye of the menu: hides every amount of the pages (totals, operations, charts, salary, calendar), and shows them
+ * again. Kept for the next start.
+ */
+function HideAmountsButton() {
+  const { setSetting } = useApp()
+  const hidden = useAmountsHidden()
+  const label = hidden ? 'Show amounts' : 'Hide amounts'
+  return (
+    <Tooltip title={label} placement="right">
+      <IconButton
+        data-hide-amounts
+        aria-label={label}
+        aria-pressed={hidden}
+        onClick={() => { setAmountsHidden(!hidden); void setSetting('hideAmounts', hidden ? 'false' : 'true') }}
+        sx={railButton}
+      >
+        {hidden ? <VisibilityOff /> : <Visibility />}
+      </IconButton>
+    </Tooltip>
   )
 }
 
@@ -149,6 +175,7 @@ function Shell() {
             <RailItem key={n.page} label={n.label} icon={page === n.page ? n.active : n.icon} selected={page === n.page} onClick={() => go(n.page)} />
           ))}
           <Box sx={{ flex: 1 }} />
+          <HideAmountsButton />
           <CurrencyButton />
           <Tooltip title={dark ? 'Light mode' : 'Dark mode'} placement="right">
             <IconButton aria-label={dark ? 'Light mode' : 'Dark mode'} onClick={() => void setSetting('theme', dark ? 'light' : 'dark')} sx={railButton}>
@@ -198,7 +225,9 @@ export default function App() {
       <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="en">
         {info ? (
           <AppProvider info={info} onTheme={setMode}>
-            <Shell />
+            <AmountsHiddenProvider>
+              <Shell />
+            </AmountsHiddenProvider>
           </AppProvider>
         ) : (
           <Box sx={{ height: '100vh', display: 'grid', placeItems: 'center', color: 'text.secondary' }}>{error}</Box>

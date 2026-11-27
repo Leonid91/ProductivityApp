@@ -6,6 +6,7 @@ import { api, type MovementView, type TransactionInput, type TransactionView } f
 import { AmountCell, AmountMenu, DateCell, NO_AMOUNT_FILTER, amountFiltering, amountPasses, byAmount, type AmountSort } from './amounts'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural } from '../format'
+import { useAmountsHidden } from '../mask'
 import { CategoryIcon } from './CategoryIcon'
 import { CategoryPill } from './common'
 import { choiceItems, countChoices, hiding, shownByTags, tagChoices } from './filters'
@@ -33,6 +34,7 @@ function Place({ name, outside, type }: { name: string; outside: boolean; type: 
 
 /** One movement (drawn again only when it changes). */
 const MoveRow = memo(function MoveRow({ m, tx, currency, act }: { m: MovementView; tx: TransactionView | undefined; currency: string; act: MoveActs }) {
+  useAmountsHidden()
   const { settings, category } = useApp()
   const theme = useTheme()
   return (

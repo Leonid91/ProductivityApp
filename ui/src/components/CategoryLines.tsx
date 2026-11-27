@@ -4,6 +4,7 @@ import { LineChart } from '@mui/x-charts/LineChart'
 import type { Slice, TransactionView } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, parts, monthName } from '../format'
+import { useAmountsHidden } from '../mask'
 import { categoryLines } from '../lines'
 import { useKept } from '../keep'
 import { sliceColor, tooltipOnPage } from './Charts'
@@ -34,6 +35,7 @@ export const CategoryLines = memo(function CategoryLines({ keep, from, to, trans
 }) {
   const theme = useTheme()
   const { category, settings } = useApp()
+  useAmountsHidden()
   const { series: palette, other } = theme.palette.chart
   const [kept, setShown] = useKept<Shown | null>(keep, null)
   const shown: Shown = kept ?? { total: false, selected: true, categories: categories.slice(0, 5).map((c) => c.key) }

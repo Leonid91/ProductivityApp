@@ -10,6 +10,7 @@ import DocumentScanner from '@mui/icons-material/DocumentScannerRounded'
 import { accountKinds, api, currencies, dateFormats, type AccountKind, type DateFormat, type Draft, type DraftEdit } from '../api'
 import { useApp } from '../AppContext'
 import { formatDate, money, plural, shortDate } from '../format'
+import { useAmountsHidden } from '../mask'
 import { CategoryPill, Money } from './common'
 import { TemplateEditor } from './TemplateEditor'
 import { TagList, useCategoryTags } from './tags'
@@ -158,6 +159,7 @@ const DraftLine = memo(function DraftLine({ row: r, edit: e, currency, dateForma
 
 /** The state of a read statement; amounts in <currency>, the currency of the account it is imported into. */
 export function StatusChip({ draft, currency }: { draft: Draft; currency: string }) {
+  useAmountsHidden()
   if (draft.alreadyImported) return <Chip size="small" color="default" label="Already imported" />
   switch (draft.status) {
     case 'verified':
@@ -177,6 +179,7 @@ export function StatusChip({ draft, currency }: { draft: Draft; currency: string
 
 /** The balance check in plain words: what the file says it starts and ends with, and what its lines add up to. */
 function BalanceCheck({ draft, currency }: { draft: Draft; currency: string }) {
+  useAmountsHidden()
   const { settings } = useApp()
   const d = (x: string | null) => (x ? formatDate(x, settings.dateFormat) : '')
   const m = (v: number, sign = false) => money(v, currency, { sign })
@@ -222,6 +225,7 @@ function BalanceCheck({ draft, currency }: { draft: Draft; currency: string }) {
 
 /** A statement read from a PDF, waiting for the person to check it and save it. */
 export function DraftCard({ draft: initial, onDone }: { draft: Draft; onDone: (saved: boolean) => void }) {
+  useAmountsHidden()
   const { accounts, banks, settings, notify, fail, dataChanged, refreshAccounts, refreshBanks, askScope, category } = useApp()
   const [draft, setDraft] = useState(initial)
   // Nothing is chosen for the person: the file waits until they say which account it belongs to.

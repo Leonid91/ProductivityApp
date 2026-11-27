@@ -53,21 +53,33 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
 
     // ------------------------------------------------------------------------------------------------ salary per day and hour
 
-    /// <summary>December 2026: two salaries of 2,000, a refund and a purchase, with a euro rate of 1.5.</summary>
+    /// <summary>
+    /// A pay of 2,000 every two weeks from November 20 2026 to January 1 2027 (the last one partly for December's last
+    /// days), a refund and a purchase in December, with a euro rate of 1.5.
+    /// </summary>
     private (Holidays Holidays, ExchangeRates Rates) DecemberWithSalaries()
+    {
+        var (holidays, rates, account) = DecemberPaidUpTo18th();
+        _store.Enter(account, "2027-01-01", 2000m, "Employer", "salary");
+        return (holidays, rates);
+    }
+
+    /// <summary>The same up to the pay of December 18: the month under way, its next pay not come yet.</summary>
+    private (Holidays Holidays, ExchangeRates Rates, long Account) DecemberPaidUpTo18th()
     {
         var holidays = New();
         holidays.Save("ca", Utf8(HolidayFiles.FederalJson(2026)), Downloaded);
         holidays.Save("qc", Utf8(HolidayFiles.QuebecJson(2026)), Downloaded);
         var account = _store.AddAccount();
+        _store.Enter(account, "2026-11-20", 2000m, "Employer", "salary");
         _store.Enter(account, "2026-12-04", 2000m, "Employer", "salary");
         _store.Enter(account, "2026-12-18", 2000m, "Employer", "salary");
         _store.Enter(account, "2026-12-10", 150m, "Refund", "otherincome");
         _store.Enter(account, "2026-12-11", -80m, "Market", "groceries");
         var rates = new ExchangeRates(_store.Db, () => "ecb");
         // Downloaded after the salaries (rates are known up to the day of their download).
-        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2026-12-01,1.5000,"), new DateOnly(2026, 12, 31));
-        return (holidays, rates);
+        rates.Save(RateSource.Ecb, Utf8("Date,CAD,\n2026-11-02,1.5000,"), new DateOnly(2027, 1, 31));
+        return (holidays, rates, account);
     }
 
     private SalaryRate? Salary(Holidays holidays, ExchangeRates rates, string currency = "CAD", int month = 12) =>
@@ -80,8 +92,50 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
 
         var salary = Salary(holidays, rates)!;
 
-        // 4,000 of salary (not the refund) over December's 23 days Monday to Friday, 8 hours a day.
-        Assert.Equal((4000m, 23, 8m, 173.91m, 21.74m), (salary.Net, salary.WorkingDays, salary.HoursPerDay, salary.PerDay, salary.PerHour));
+        // Each pay is for the 14 days up to it: December's 31 days are 4 days of the pay of December 4, the pay of
+        // December 18, and 13 days of the pay of January 1. 2,000 x 31 / 14 (not the refund), over December's 23 days
+        // Monday to Friday, 8 hours a day.
+        Assert.Equal((4428.57m, 23, 8m, 192.55m, 24.07m), (salary.Net, salary.WorkingDays, salary.HoursPerDay, salary.PerDay, salary.PerHour));
+    }
+
+    [Fact]
+    public void Report_MonthWithThreePays_CountsTheDaysItWasPaidFor()
+    {
+        var holidays = New();
+        var account = _store.AddAccount();
+        _store.Enter(account, "2026-09-18", 2000m, "Employer", "salary");
+        _store.Enter(account, "2026-10-02", 2000m, "Employer", "salary");
+        _store.Enter(account, "2026-10-16", 2000m, "Employer", "salary");
+        _store.Enter(account, "2026-10-30", 2000m, "Employer", "salary");
+        _store.Enter(account, "2026-11-13", 2000m, "Employer", "salary");
+
+        var october = Salary(holidays, new ExchangeRates(_store.Db), month: 10)!;
+
+        // Three pays are dated in October, but October is 31 days of 14-day pays: 2,000 x 31 / 14, like December.
+        Assert.Equal((4428.57m, 22), (october.Net, october.WorkingDays));
+    }
+
+    [Fact]
+    public void Report_MonthUnderWay_CountsTheDaysUpToItsLastPay()
+    {
+        var (holidays, rates, _) = DecemberPaidUpTo18th();
+
+        var salary = Salary(holidays, rates)!;
+
+        // December 1 to 18: 4 days of the pay of December 4 and the pay of December 18, over 14 days Monday to Friday.
+        Assert.Equal((2571.43m, 14, 183.67m), (salary.Net, salary.WorkingDays, salary.PerDay));
+    }
+
+    [Fact]
+    public void Report_OnlyPayOfItsPayer_IsForTheWholePeriod()
+    {
+        var holidays = New();
+        var account = _store.AddAccount();
+        _store.Enter(account, "2026-12-15", 2300m, "Employer", "salary");
+
+        var salary = Salary(holidays, new ExchangeRates(_store.Db))!;
+
+        Assert.Equal((2300m, 23, 100m), (salary.Net, salary.WorkingDays, salary.PerDay));
     }
 
     [Fact]
@@ -91,8 +145,8 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
 
         var salary = Salary(holidays, rates)!;
 
-        // 2026: 261 days Monday to Friday. 4,000 / 23 x 261.
-        Assert.Equal((261m, 45391.30m), (salary.YearWorkingDays, salary.PerYear));
+        // 2026: 261 days Monday to Friday. 4,428.57 / 23 x 261.
+        Assert.Equal((261m, 50254.64m), (salary.YearWorkingDays, salary.PerYear));
     }
 
     [Fact]
@@ -102,7 +156,8 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
 
         var salary = Salary(holidays, rates, "EUR")!;
 
-        Assert.Equal((2666.66m, 115.94m, 14.49m), (salary.Net, salary.PerDay, salary.PerHour));
+        // Each pay is 1,333.33 euros (2,000 / 1.5 to the cent): 1,333.33 x 31 / 14.
+        Assert.Equal((2952.37m, 128.36m, 16.05m), (salary.Net, salary.PerDay, salary.PerHour));
     }
 
     [Fact]
@@ -113,7 +168,7 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
         _hoursPerWeek = "37.5";
 
         var salary = Salary(holidays, rates)!;
-        Assert.Equal((7.5m, 173.91m, 23.19m, 37.5m), (salary.HoursPerDay, salary.PerDay, salary.PerHour, salary.HoursPerWeek));
+        Assert.Equal((7.5m, 192.55m, 25.67m, 37.5m), (salary.HoursPerDay, salary.PerDay, salary.PerHour, salary.HoursPerWeek));
     }
 
     [Fact]
@@ -124,7 +179,7 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
         _weekend = "5,6,7";
 
         var salary = Salary(holidays, rates)!;
-        Assert.Equal((19, 10m, 210.53m, 21.05m), (salary.WorkingDays, salary.HoursPerDay, salary.PerDay, salary.PerHour));
+        Assert.Equal((19, 10m, 233.08m, 23.31m), (salary.WorkingDays, salary.HoursPerDay, salary.PerDay, salary.PerHour));
     }
 
     [Fact]
@@ -132,6 +187,7 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
     {
         var (holidays, rates) = DecemberWithSalaries();
 
-        Assert.Null(Salary(holidays, rates, month: 11));
+        // The first pay, November 20, is for November 7 to 20: nothing of October.
+        Assert.Null(Salary(holidays, rates, month: 10));
     }
 }
