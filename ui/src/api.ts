@@ -269,7 +269,7 @@ export interface Holiday { day: string; name: string; location: string; observed
  * (the hours of a week in Settings shared by the working days of the week); per year, the same daily pay over the
  * working days of a year.
  */
-export interface SalaryRate { net: number; workingDays: number; hoursPerDay: number; perDay: number; perHour: number; yearWorkingDays: number; perYear: number; hoursPerWeek: number }
+export interface SalaryRate { net: number; workingDays: number; hoursPerDay: number; perDay: number; perHour: number; yearWorkingDays: number; perYear: number; hoursPerWeek: number; perTwoWeeks: number; perMonth: number }
 
 export interface PeriodIndex { months: MonthEntry[]; years: number[]; currencies: string[]; first: string | null; last: string | null }
 

@@ -399,13 +399,17 @@ function SalaryLine({ salary, currency }: { salary: SalaryRate; currency: string
   const tip = `${money(salary.net, currency)} of salary over ${plural(salary.workingDays, 'working day')} (weekends left out, holidays paid), `
     + `${salary.hoursPerDay} hours a day (${salary.hoursPerWeek} a week). A year: ${salary.yearWorkingDays} working days.`
   return (
-    <Box data-salary title={tip} sx={{ mt: 2, pt: 1.75, borderTop: 1, borderColor: 'divider', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1 }}>
-      {([['Net salary per day', salary.perDay, 'data-salary-day'], ['Per hour', salary.perHour, 'data-salary-hour'], ['Per year', salary.perYear, 'data-salary-year']] as const).map(([label, v, attr]) => (
-        <Box key={label} {...{ [attr]: '' }}>
-          <Typography variant="body2" color="text.secondary">{label}</Typography>
-          <Typography className="tnum" sx={{ fontWeight: 650, fontSize: 17 }}>{money(v, currency)}</Typography>
-        </Box>
-      ))}
+    <Box data-salary title={tip} sx={{ mt: 2, pt: 1.75, borderTop: 1, borderColor: 'divider' }}>
+      <Typography variant="body2" sx={{ fontWeight: 650, mb: 0.75 }}>Net salary</Typography>
+      <Box data-salary-rates sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 1 }}>
+        {([['Per hour', salary.perHour, 'data-salary-hour'], ['Per day', salary.perDay, 'data-salary-day'], ['Per two weeks', salary.perTwoWeeks, 'data-salary-two-weeks'],
+          ['Per month', salary.perMonth, 'data-salary-month'], ['Per year', salary.perYear, 'data-salary-year']] as const).map(([label, v, attr]) => (
+          <Box key={label} {...{ [attr]: '' }}>
+            <Typography variant="body2" color="text.secondary" noWrap>{label}</Typography>
+            <Typography className="tnum" sx={{ fontWeight: 650, fontSize: 17 }}>{money(v, currency)}</Typography>
+          </Box>
+        ))}
+      </Box>
     </Box>
   )
 }

@@ -150,6 +150,17 @@ public sealed class SummaryServiceHolidaysTests : IDisposable
     }
 
     [Fact]
+    public void Report_SalariesOfAMonth_GivesThePayOfTwoWeeksAndOfAMonth()
+    {
+        var (holidays, rates) = DecemberWithSalaries();
+
+        var salary = Salary(holidays, rates)!;
+
+        // Two weeks: 4,428.57 / 23 x 10 working days. A month: a twelfth of 4,428.57 / 23 x 261.
+        Assert.Equal((1925.47m, 4187.89m), (salary.PerTwoWeeks, salary.PerMonth));
+    }
+
+    [Fact]
     public void Report_SalariesInAnotherDisplayCurrency_ConvertsEachSalaryAtItsDaysRate()
     {
         var (holidays, rates) = DecemberWithSalaries();

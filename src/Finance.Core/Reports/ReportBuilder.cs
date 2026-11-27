@@ -94,7 +94,7 @@ public static class ReportBuilder
             {
                 Start(true);
                 if (p.Analytics && r.Salary is { } pay)
-                    col.Item().Text($"Your net salary is {Formatting.Money(pay.PerDay, r.Currency)} per working day, {Formatting.Money(pay.PerHour, r.Currency)} per hour and {Formatting.Money(pay.PerYear, r.Currency)} per year.").FontSize(10);
+                    col.Item().Text($"Your net salary is {Formatting.Money(pay.PerHour, r.Currency)} per hour, {Formatting.Money(pay.PerDay, r.Currency)} per working day, {Formatting.Money(pay.PerTwoWeeks, r.Currency)} per two weeks, {Formatting.Money(pay.PerMonth, r.Currency)} per month and {Formatting.Money(pay.PerYear, r.Currency)} per year.").FontSize(10);
                 foreach (var bank in r.Banks)
                 {
                     col.Item().PaddingTop(4).Text(bank.Native == bank.Currency ? $"{bank.Name} · {bank.Currency}" : $"{bank.Name} · {bank.Native} → {bank.Currency}").FontSize(14).SemiBold();

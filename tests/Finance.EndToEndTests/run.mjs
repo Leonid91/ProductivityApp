@@ -1521,14 +1521,20 @@ try {
   const decReport = await p.engine('periods.report', { from: '2025-12-01', to: '2025-12-31', granularity: 'month' })
   const sal = decReport.salary
   const salaryOk = sal && sal.workingDays > 0 && sal.hoursPerDay === 8 && Math.abs(sal.perDay - sal.net / sal.workingDays) < 0.006 && Math.abs(sal.perHour - sal.net / (sal.workingDays * 8)) < 0.006 && Math.abs(sal.perYear - sal.net / sal.workingDays * sal.yearWorkingDays) < 0.006
+    && Math.abs(sal.perTwoWeeks - sal.net / sal.workingDays * 10) < 0.006 && Math.abs(sal.perMonth - sal.net / sal.workingDays * sal.yearWorkingDays / 12) < 0.006
   await p.clickText('Statements', { selector: 'nav button' })
   await p.clickText('Analytics', { selector: 'nav button' })
   await p.waitFor(`document.querySelector('section[data-period="2025-12-01"] [data-salary]') !== null`, 20000, 'the salary in December')
   await p.eval(`document.querySelector('section[data-period="2025-12-01"]').scrollIntoView({ block: 'start' })`)
   await sleep(600)
-  const salaryShown = await p.eval(`(() => { const s = document.querySelector('section[data-period="2025-12-01"] [data-salary]'); const v = (a) => s.querySelector('[' + a + ']')?.innerText.replace(/\\s+/g, ' ').trim(); return { day: v('data-salary-day'), hour: v('data-salary-hour'), year: v('data-salary-year') } })()`)
-  check('Analytics: the net salary per working day, per hour and per year', salaryOk && salaryShown.day === `Net salary per day ${moneyCad(sal.perDay)}` && salaryShown.hour === `Per hour ${moneyCad(sal.perHour)}` && salaryShown.year === `Per year ${moneyCad(sal.perYear)}`,
+  const salaryShown = await p.eval(`(() => { const s = document.querySelector('section[data-period="2025-12-01"] [data-salary]'); const v = (a) => s.querySelector('[' + a + ']')?.innerText.replace(/\\s+/g, ' ').trim(); return { title: s.querySelector('p').innerText, order: [...s.querySelector('[data-salary-rates]').children].map((c) => c.querySelector('p')?.innerText), hour: v('data-salary-hour'), day: v('data-salary-day'), twoWeeks: v('data-salary-two-weeks'), month: v('data-salary-month'), year: v('data-salary-year') } })()`)
+  check('Analytics: the net salary per hour, per day, per two weeks, per month and per year, in that order', salaryOk
+    && salaryShown.title === 'Net salary' && salaryShown.order.join() === 'Per hour,Per day,Per two weeks,Per month,Per year'
+    && salaryShown.hour === `Per hour ${moneyCad(sal.perHour)}` && salaryShown.day === `Per day ${moneyCad(sal.perDay)}`
+    && salaryShown.twoWeeks === `Per two weeks ${moneyCad(sal.perTwoWeeks)}` && salaryShown.month === `Per month ${moneyCad(sal.perMonth)}` && salaryShown.year === `Per year ${moneyCad(sal.perYear)}`,
     `${JSON.stringify(salaryShown)} ${JSON.stringify(sal)}`)
+  await p.eval(`document.querySelector('section[data-period="2025-12-01"] [data-salary]').scrollIntoView({ block: 'center' })`)
+  await sleep(600)
   await shot(p, '24j-analytics-salary.png')
 
   {

@@ -1660,3 +1660,21 @@ real app with `tools/e2e/perf.mjs`.
   choices, an import of five months then of the next pay, the import's preview, and a brand filed by the person.
 - The released Windows exe started in a sandbox: interface drawn, operations classified again (rules version 7), no
   warning or error in its log.
+
+## November 27th, 2026 - The net salary per two weeks and per month - Commit 60
+
+### Added
+- Analytics, under the Income chart: the net salary per two weeks (the pay of a working day over two weeks of working
+  days) and per month (a twelfth of the pay of a year). The five figures read in increasing order under one title, Net
+  salary: per hour, per day, per two weeks, per month, per year. The exported PDF names them in the same order.
+
+### Measured
+- Frame rate before and after (3 runs of each build taken in turns, the app off-screen with ten years of operations,
+  240 Hz screen), average fps, median: 240 → 240 in every scene. The lowest frame of a run moves between about 60,
+  120 and 220 fps from one run to the next of the same build (scrolling years 213 → 119 here, 210 → 213 in the rounds of
+  Commit 59); this change only draws the salary under the Income chart of Analytics.
+
+### Checked
+- End-to-end: 263/263 in WebView2 (the released configuration) and in WebKit, the salary check now reading the title,
+  the order and the five figures. Unit 5280/5280, integration 1156 (2 skipped where the machine has no text
+  recognition, as before), both targets together; page 28/28. 0 compiler warnings.

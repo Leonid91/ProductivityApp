@@ -120,9 +120,11 @@ public sealed record Conversion(string To, string Source, string Base, string Ur
 /// (<see cref="Net"/>, every bank together; no other income) over the period's working days (<see cref="WorkingDays"/>:
 /// every day but the weekend days; holidays are paid, so they count) of <see cref="HoursPerDay"/> hours (the hours of
 /// a week entered in Settings, shared by the working days of the week); per year: the same daily pay over
-/// <see cref="YearWorkingDays"/>, the working days of a year of the period (on average when it runs over several years).
+/// <see cref="YearWorkingDays"/>, the working days of a year of the period (on average when it runs over several years);
+/// per two weeks: the daily pay over two weeks of working days; per month: a twelfth of the pay of a year.
 /// </summary>
-public sealed record SalaryRate(decimal Net, int WorkingDays, decimal HoursPerDay, decimal PerDay, decimal PerHour, decimal YearWorkingDays, decimal PerYear, decimal HoursPerWeek);
+public sealed record SalaryRate(decimal Net, int WorkingDays, decimal HoursPerDay, decimal PerDay, decimal PerHour, decimal YearWorkingDays, decimal PerYear, decimal HoursPerWeek,
+    decimal PerTwoWeeks, decimal PerMonth);
 
 /// <summary>A period bank by bank, then every bank together, all in the global display currency.</summary>
 public sealed record PeriodReport
@@ -389,7 +391,9 @@ public sealed class SummaryService(Database db)
         return new SalaryRate(net, days, Math.Round(hoursPerDay, 2),
             Math.Round(net / days, 2, MidpointRounding.AwayFromZero),
             Math.Round(net / (days * hoursPerDay), 2, MidpointRounding.AwayFromZero), Math.Round(yearDays, 1),
-            Math.Round(net / days * yearDays, 2, MidpointRounding.AwayFromZero), weekHours);
+            Math.Round(net / days * yearDays, 2, MidpointRounding.AwayFromZero), weekHours,
+            Math.Round(net / days * 2 * perWeek, 2, MidpointRounding.AwayFromZero),
+            Math.Round(net / days * yearDays / 12, 2, MidpointRounding.AwayFromZero));
     }
 
     /// <summary>
